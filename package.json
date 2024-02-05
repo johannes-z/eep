@@ -1,16 +1,17 @@
 {
+  "private": true,
   "name": "eep",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "workspaces": [
+    "client",
+    "server"
+  ],
   "scripts": {
     "dev": "ts-node-dev  ./main.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "dependencies": {
-  },
-  "devDependencies": {
-  }
+  "dependencies": {},
+  "devDependencies": {}
 }

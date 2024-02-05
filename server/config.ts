@@ -1,3 +1,5 @@
+import { EEPProfiles } from "./eep-profiles"
+
 interface Device {
   key: string
   sourceId: number
@@ -25,7 +27,7 @@ export const config: IConfig = {
           key: 'vent',
           sourceId: 0xffe76681,
           targetId: 0x0513cefe,
-          protocol: 'D2-50-00'
+          protocol: EEPProfiles.D2_50_00
         }
       ]
     },
@@ -37,7 +39,7 @@ export const config: IConfig = {
           key: 'vent',
           sourceId: 0xffe76681 + 1,
           targetId: 0x05126787,
-          protocol: 'D2-50-00'
+          protocol: EEPProfiles.D2_50_00
         }
       ]
     },
@@ -49,7 +51,7 @@ export const config: IConfig = {
           key: 'vent',
           sourceId: 0xffe76681 + 2,
           targetId: 0x05149bb5,
-          protocol: 'D2-50-00'
+          protocol: EEPProfiles.D2_50_00
         }
       ]
     },
@@ -61,7 +63,7 @@ export const config: IConfig = {
           key: 'vent',
           sourceId: 0xffe76681 + 3,
           targetId: 0x0513cdf8,
-          protocol: 'D2-50-00'
+          protocol: EEPProfiles.D2_50_00
         }
       ]
     }

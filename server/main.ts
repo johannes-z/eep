@@ -3,12 +3,11 @@ import { changeState } from './api/D2-50-00/changeState'
 import { config } from './config'
 import { toHex } from './util/toHex'
 
-import SerialPort from 'serialport'
-const port = new SerialPort('COM3', { baudRate: 57600 })
+import { SerialPort } from 'serialport'
+import { EEPProfiles } from './eep-profiles'
+const port = new SerialPort({ path: 'COM3', baudRate: 57600 })
 
 const app = express()
-
-console.log(0xfafafa)
 
 app.get('/:room/:device/:value', function (req, res) {
   console.log(req.params)
@@ -23,7 +22,7 @@ app.get('/:room/:device/:value', function (req, res) {
   const { protocol, sourceId, targetId } = deviceConfig
 
   switch (protocol) {
-    case 'D2-50-00': {
+    case EEPProfiles.D2_50_00: {
       const payload = changeState(toHex(sourceId), toHex(targetId), parseInt(value))
       port.write(payload)
     }

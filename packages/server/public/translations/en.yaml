@@ -1,0 +1,6 @@
+---
+configuration:
+  adapter:
+    name: Adapter
+    description: >-
+      The path to the serial device, can either a local device /dev/serial/by-id/..., or tcp://address:port

@@ -1,5 +1,5 @@
 ---
-version: "1.2.2"
+version: "1.2.3"
 slug: "node_server"
 name: "EnOcean Binding"
 description: "Starts a node.js webserver, exposing a Web API to control EnOcean WRLs"

@@ -48,6 +48,8 @@ export async function initialize(addonConfig) {
 
   app.get('/:room/:device/:value', function (req, res) {
     const { room, device, value } = req.params
+    console.log('Received request with params:')
+    console.log({ room, device, value })
     const roomConfig = config.rooms
       .find(r => r.id.toUpperCase() === room.toUpperCase())
 
@@ -58,9 +60,27 @@ export async function initialize(addonConfig) {
 
     switch (protocol) {
       case 'D2-50-00': {
-        const payload = changeState(toHex(sourceId), toHex(targetId), parseInt(value))
+        let state = parseInt(value)
+        if (Number.isNaN(state)) {
+          switch (value) {
+            case 'Auto':
+              state = 11
+              break
+            case 'Intake':
+              state = 13
+              break
+            case 'Exhaust':
+              state = 14
+              break
+            default:
+              state = 11
+          }
+        }
+        const payload = changeState(toHex(sourceId), toHex(targetId), state)
+        console.log('Sending payload:', payload)
         // @ts-expect-error ignore
         socket.write(payload)
+        return res.sendStatus(200)
       }
     }
 
@@ -69,5 +89,3 @@ export async function initialize(addonConfig) {
 
   app.listen(3000)
 }
-
-initialize()

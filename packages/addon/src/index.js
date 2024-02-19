@@ -1,4 +1,13 @@
 const { initialize } = require('@eep/server')
 
-const addonConfig = require('/data/config.json')
-initialize(addonConfig)
+initialize({
+  adapter: process.env.ADAPTER
+})
+
+const fs = require('fs');
+
+fs.readdir('./data', (err, files) => {
+  files.forEach(file => {
+    console.log(file);
+  });
+});

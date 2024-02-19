@@ -18,7 +18,7 @@ const pkg = require('../package.json');
     platform: 'node',
     external: [
       '../node_modules/*',
-      '/data/config.json',
+      './options',
     ],
     format: 'cjs',
   });

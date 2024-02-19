@@ -7,7 +7,7 @@ import { SerialPort } from 'serialport'
 import { Socket } from 'net'
 import { isTcpPath, parseTcpPath } from './util'
 
-function getSocketConnection(path: string): Promise<SerialPort | Socket> {
+export function getSocketConnection(path: string): Promise<SerialPort | Socket> {
   if (!isTcpPath(path)) return Promise.resolve(new SerialPort({ path, baudRate: 57600 }))
 
   const info = parseTcpPath(path);
@@ -38,8 +38,7 @@ function getSocketConnection(path: string): Promise<SerialPort | Socket> {
   });
 }
 
-async function initialize() {
-  const addonConfig = require("/data/options.json")
+export async function initialize(addonConfig) {
   if (!addonConfig || !addonConfig.adapter) {
     throw new Error("Adapter not configured");
   }
@@ -69,7 +68,6 @@ async function initialize() {
   })
 
   app.listen(3000)
-
 }
 
 initialize()

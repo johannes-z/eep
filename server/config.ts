@@ -9,7 +9,7 @@ interface Device {
 
 interface Room {
   id: string
-  name: string
+  name?: string
   devices: Device[]
 }
 

@@ -4,9 +4,8 @@ import { config } from './config'
 import { toHex } from './util/toHex'
 
 import { SerialPort } from 'serialport'
-import {Socket} from 'net'
+import { Socket } from 'net'
 import { isTcpPath, parseTcpPath } from './util'
-
 
 function getSocketConnection(path: string): Promise<SerialPort | Socket> {
   if (!isTcpPath(path)) return Promise.resolve(new SerialPort({ path, baudRate: 57600 }))
@@ -22,9 +21,9 @@ function getSocketConnection(path: string): Promise<SerialPort | Socket> {
     });
 
     // eslint-disable-next-line
-      socketPort.on('ready', async function () {
-        resolve(socketPort);
-      });
+    socketPort.on('ready', async function () {
+      resolve(socketPort);
+    });
 
     socketPort.once('close', () => {
       console.log('Port closed')
@@ -39,10 +38,12 @@ function getSocketConnection(path: string): Promise<SerialPort | Socket> {
   });
 }
 
-const path = 'tcp://192.168.0.49:20109' // '/dev/ttyUSB0'
-
-async function initialize () {
-  const socket = await getSocketConnection(path)
+async function initialize() {
+  const addonConfig = require("/data/options.json")
+  if (!addonConfig || !addonConfig.adapter) {
+    throw new Error("Adapter not configured");
+  }
+  const socket = await getSocketConnection(addonConfig.adapter)
 
   const app = express()
 
@@ -50,12 +51,12 @@ async function initialize () {
     const { room, device, value } = req.params
     const roomConfig = config.rooms
       .find(r => r.id.toUpperCase() === room.toUpperCase())
-  
+
     const deviceConfig = roomConfig?.devices
       .find(d => d.key.toUpperCase() === device.toUpperCase())
     if (!deviceConfig) return res.sendStatus(400)
     const { protocol, sourceId, targetId } = deviceConfig
-  
+
     switch (protocol) {
       case 'D2-50-00': {
         const payload = changeState(toHex(sourceId), toHex(targetId), parseInt(value))
@@ -63,12 +64,12 @@ async function initialize () {
         socket.write(payload)
       }
     }
-  
+
     return res.sendStatus(204)
   })
-  
+
   app.listen(3000)
-  
+
 }
 
 initialize()

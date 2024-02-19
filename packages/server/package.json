@@ -20,7 +20,7 @@
   "devDependencies": {
     "@types/node": "^18.19.17",
     "@types/serialport": "^8.0.5",
-    "esbuild": "^0.20.0",
+    "esbuild": "^0.20.1",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.3.3"
   }

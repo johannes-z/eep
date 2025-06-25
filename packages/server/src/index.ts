@@ -6,6 +6,8 @@ import { toHex } from './util/toHex'
 import { SerialPort } from 'serialport'
 import { Socket } from 'net'
 import { isTcpPath, parseTcpPath } from './util'
+import { Server } from 'http'
+import { exit } from 'process'
 
 export function getSocketConnection(path: string): Promise<SerialPort | Socket> {
   if (!isTcpPath(path)) return Promise.resolve(new SerialPort({ path, baudRate: 57600 }))
@@ -27,7 +29,13 @@ export function getSocketConnection(path: string): Promise<SerialPort | Socket> 
 
     socketPort.once('close', () => {
       console.log('Port closed')
+      reject(new Error(`Socket connection closed`));
     });
+
+    socketPort.once('end', () => {
+      console.log('Socket ended');
+      reject(new Error(`Socket connection ended`));
+    })
 
     socketPort.on('error', function () {
       console.log('Socket error');
@@ -40,52 +48,72 @@ export function getSocketConnection(path: string): Promise<SerialPort | Socket> 
 
 export async function initialize(addonConfig) {
   if (!addonConfig || !addonConfig.adapter) {
-    throw new Error("Adapter not configured");
+    console.error("Adapter not configured");
+    process.exit(1);
   }
-  const socket = await getSocketConnection(addonConfig.adapter)
 
-  const app = express()
+  let server: Server;
+  let socket: SerialPort | Socket;
 
-  app.get('/:room/:device/:value', function (req, res) {
-    const { room, device, value } = req.params
-    console.log('Received request with params:')
-    console.log({ room, device, value })
-    const roomConfig = config.rooms
-      .find(r => r.id.toUpperCase() === room.toUpperCase())
+  try {
+    socket = await getSocketConnection(addonConfig.adapter);
 
-    const deviceConfig = roomConfig?.devices
-      .find(d => d.key.toUpperCase() === device.toUpperCase())
-    if (!deviceConfig) return res.sendStatus(400)
-    const { protocol, sourceId, targetId } = deviceConfig
+    // Monitor socket for runtime disconnects
+    const handleFatalSocketError = (reason: string) => {
+      console.error(`Fatal socket issue: ${reason}. Exiting to trigger Watchdog.`);
+      process.exit(1);
+    };
 
-    switch (protocol) {
-      case 'D2-50-00': {
-        let state = parseInt(value)
-        if (Number.isNaN(state)) {
-          switch (value) {
-            case 'Auto':
-              state = 11
-              break
-            case 'Intake':
-              state = 13
-              break
-            case 'Exhaust':
-              state = 14
-              break
-            default:
-              state = 11
-          }
-        }
-        const payload = changeState(toHex(sourceId), toHex(targetId), state)
-        console.log('Sending payload:', payload)
-        // @ts-expect-error ignore
-        socket.write(payload)
-        return res.sendStatus(200)
-      }
+    if (socket instanceof Socket) {
+      socket.on('close', () => handleFatalSocketError('close'));
+      socket.on('end', () => handleFatalSocketError('end'));
+      socket.on('error', (err) => {
+        console.error('Socket runtime error:', err);
+        handleFatalSocketError('error');
+      });
     }
 
-    return res.sendStatus(204)
-  })
+    const app = express();
 
-  app.listen(3000)
+    app.get('/:room/:device/:value', function (req, res) {
+      const { room, device, value } = req.params;
+      console.log('Received request with params:', { room, device, value });
+
+      const roomConfig = config.rooms.find(r => r.id.toUpperCase() === room.toUpperCase());
+      const deviceConfig = roomConfig?.devices.find(d => d.key.toUpperCase() === device.toUpperCase());
+
+      if (!deviceConfig) return res.sendStatus(400);
+
+      const { protocol, sourceId, targetId } = deviceConfig;
+
+      switch (protocol) {
+        case 'D2-50-00': {
+          let state = parseInt(value);
+          if (Number.isNaN(state)) {
+            switch (value) {
+              case 'Auto': state = 11; break;
+              case 'Intake': state = 13; break;
+              case 'Exhaust': state = 14; break;
+              default: state = 11;
+            }
+          }
+          const payload = changeState(toHex(sourceId), toHex(targetId), state);
+          console.log('Sending payload:', payload);
+          // @ts-expect-error socket is either SerialPort or Socket
+          socket.write(payload);
+          return res.sendStatus(200);
+        }
+      }
+
+      return res.sendStatus(204);
+    });
+
+    server = app.listen(3000, () => {
+      console.log('Addon server listening on port 3000');
+    });
+
+  } catch (error) {
+    console.error("Initialization error:", error);
+    process.exit(1);
+  }
 }

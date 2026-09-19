@@ -1,0 +1,93 @@
+{
+  "devices": [
+    {
+      "key": "vent",
+      "sourceId": 4293355137,
+      "targetId": 85184254,
+      "protocol": "D2-50-00",
+      "roomId": "E04",
+      "roomName": "Living Room",
+      "name": "Living Room vent",
+      "paired": true,
+      "supportedFunctions": [
+        "off",
+        "level1",
+        "level2",
+        "level3",
+        "level4",
+        "automatic",
+        "supplyOnly",
+        "exhaustOnly"
+      ],
+      "availability": "unknown"
+    },
+    {
+      "key": "vent",
+      "sourceId": 4293355138,
+      "targetId": 85092231,
+      "protocol": "D2-50-00",
+      "roomId": "E05",
+      "roomName": "Office",
+      "name": "E05 Vent",
+      "paired": true,
+      "supportedFunctions": [
+        "off",
+        "level1",
+        "level2",
+        "level3",
+        "level4",
+        "automatic",
+        "supplyOnly",
+        "exhaustOnly"
+      ],
+      "availability": "online",
+      "desiredState": {
+        "isOn": true,
+        "percentage": 50,
+        "d2Value": 2
+      }
+    },
+    {
+      "key": "vent",
+      "sourceId": 4293355139,
+      "targetId": 85236661,
+      "protocol": "D2-50-00",
+      "roomId": "E06",
+      "roomName": "Guest Room",
+      "name": "Guest Room vent",
+      "paired": true,
+      "supportedFunctions": [
+        "off",
+        "level1",
+        "level2",
+        "level3",
+        "level4",
+        "automatic",
+        "supplyOnly",
+        "exhaustOnly"
+      ],
+      "availability": "unknown"
+    },
+    {
+      "key": "vent",
+      "sourceId": 4293355140,
+      "targetId": 85183992,
+      "protocol": "D2-50-00",
+      "roomId": "E07",
+      "roomName": "Bed Room",
+      "name": "Bed Room vent",
+      "paired": true,
+      "supportedFunctions": [
+        "off",
+        "level1",
+        "level2",
+        "level3",
+        "level4",
+        "automatic",
+        "supplyOnly",
+        "exhaustOnly"
+      ],
+      "availability": "unknown"
+    }
+  ]
+}

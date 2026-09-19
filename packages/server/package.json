@@ -2,27 +2,29 @@
   "name": "@eep/server",
   "version": "1.0.0",
   "description": "",
+  "keywords": [],
+  "license": "ISC",
+  "author": "",
   "main": "dist/index.js",
   "scripts": {
-    "start": "node dist/index.js",
-    "build": "esbuild --bundle src/index.ts --outfile=./dist/index.js --platform=node --external:./node_modules/* --external:/data/options.json",
-    "dev": "ts-node-dev ./src/index.ts"
+    "build": "bun scripts/build.js && bun build ./src/index.ts --outdir ./dist --target bun --external bun-serialport && bun build ./src/main.ts --outdir ./dist --target bun --external bun-serialport",
+    "dev": "bun --watch ./src/main.ts",
+    "start": "bun dist/main.js",
+    "test": "bun test ./src",
+    "typecheck": "bunx tsc --noEmit -p tsconfig.json"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
-    "express": "^4.21.2",
-    "polycrc": "^1.1.1",
-    "serialport": "^12.0.0",
-    "ws": "^8.18.2"
+    "bun-serialport": "0.2.0",
+    "mqtt": "^5.16.0",
+    "polycrc": "1.1.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@types/express": "^4.17.23",
-    "@types/node": "^18.19.112",
-    "@types/serialport": "^8.0.5",
-    "esbuild": "^0.20.2",
-    "ts-node-dev": "^2.0.0",
-    "typescript": "^5.8.3"
+    "@types/bun": "1.4.2",
+    "@types/node": "26.6.2",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "7.0.2"
   }
 }

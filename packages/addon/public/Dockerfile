@@ -5,18 +5,15 @@ ENV LANG C.UTF-8
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 RUN apk add --no-cache \
-    nodejs \
-    npm \
-    make \
-    gcc \
-    g++ \
-    python3 \
-    linux-headers \
+    curl \
+    unzip \
     udev
 
-COPY package.json /
-COPY index.js /
-RUN cd / && npm install --unsafe-perm
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="/root/.bun/bin:${PATH}"
+
+COPY . /
+RUN cd / && bun install --production
 
 COPY run.sh /
 RUN chmod a+x /run.sh

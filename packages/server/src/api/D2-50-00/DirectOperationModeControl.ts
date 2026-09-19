@@ -5,6 +5,8 @@ export enum DirectOperationModeControl {
   Level3 = 3,
   Level4 = 4,
   Automatic = 11,
+  AutomaticOnDemand = 12,
   SupplyOnly = 13,
   ExhaustOnly = 14,
+  NoAction = 15,
 }

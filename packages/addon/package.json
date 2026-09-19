@@ -2,21 +2,16 @@
   "name": "@eep/addon",
   "version": "1.0.0",
   "description": "",
+  "keywords": [],
+  "license": "ISC",
+  "author": "",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "build": "node scripts/build.js"
+    "build": "bun scripts/build.js && bun build ./src/index.js --outfile ./dist/index.js --bundle --target bun --external bun-serialport",
+    "dev": "bun --watch ./src/index.js",
+    "start": "bun index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
-    "@eep/server": "workspace:*",
-    "express": "^4.21.2",
-    "polycrc": "^1.1.1",
-    "serialport": "^12.0.0"
-  },
-  "devDependencies": {
-    "esbuild": "^0.20.2"
+    "bun-serialport": "0.2.0"
   }
 }

@@ -1,14 +1,17 @@
-export function isTcpPath (path: string): boolean {
-  // tcp path must be:
-  // tcp://<host>:<port>
-  const regex = /^(?:tcp:\/\/)[\w.-]+[:][\d]+$/gm
-  return regex.test(path)
+const tcpPathPattern = /^tcp:\/\/([\w.-]+):(\d{1,5})$/;
+
+export function isTcpPath(path: string): boolean {
+  const match = tcpPathPattern.exec(path);
+  if (!match) return false;
+  const port = Number(match[2]);
+  return port >= 1 && port <= 65_535;
 }
 
-export function parseTcpPath (path: string): {host: string; port: number} {
-  const str = path.replace('tcp://', '')
+export function parseTcpPath(path: string): { host: string; port: number } {
+  const match = tcpPathPattern.exec(path);
+  if (!match || !isTcpPath(path)) throw new Error(`Invalid TCP adapter path: ${path}`);
   return {
-    host: str.substring(0, str.indexOf(':')),
-    port: Number(str.substring(str.indexOf(':') + 1))
-  }
+    host: match[1],
+    port: Number(match[2]),
+  };
 }

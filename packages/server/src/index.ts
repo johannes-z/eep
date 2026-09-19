@@ -1,119 +1,220 @@
-import express from 'express'
-import { changeState } from './api/D2-50-00/changeState'
-import { config } from './config'
-import { toHex } from './util/toHex'
+import { join } from 'node:path';
+import homepage from '../public/index.html';
 
-import { SerialPort } from 'serialport'
-import { Socket } from 'net'
-import { isTcpPath, parseTcpPath } from './util'
-import { Server } from 'http'
-import { exit } from 'process'
+import {
+  resolveServerConfig,
+  validateMqttConfig,
+  type AddonConfig,
+  type TransportSettings,
+} from './config';
+import { createRequestHandler, type MqttStatus, type RequestTransport } from './app/requestHandler';
+import { sendDeviceCommand } from './devices/commands';
+import { DeviceRegistry } from './devices/registry';
+import { TeachInManager, type TeachInCandidate } from './devices/teachin';
+import { defaultMqttSettings, type MqttSettings } from './mqtt';
+import { MqttRuntime } from './integrations/mqtt/client';
+import {
+  loadHomeAssistantSettings,
+  loadMqttSettings,
+  loadTransportSettings,
+  saveHomeAssistantSettings,
+  saveMqttSettings,
+  saveTransportSettings,
+} from './settings';
+import { openTransport } from './transport/adapters';
+import { buildUteTeachInResponse } from './transport/esp3';
+import { TransportRuntime } from './transport/runtime';
 
-export function getSocketConnection(path: string): Promise<SerialPort | Socket> {
-  if (!isTcpPath(path)) return Promise.resolve(new SerialPort({ path, baudRate: 57600 }))
+export { createRequestHandler, sendDeviceCommand };
+export type { RequestTransport };
 
-  const info = parseTcpPath(path);
-  const socketPort = new Socket();
-  socketPort.setNoDelay(true);
-  socketPort.setKeepAlive(true, 15000);
-
-  return new Promise((resolve, reject): void => {
-    socketPort.on('connect', function () {
-      console.log('Socket connected');
-    });
-
-    // eslint-disable-next-line
-    socketPort.on('ready', async function () {
-      resolve(socketPort);
-    });
-
-    socketPort.once('close', () => {
-      console.log('Port closed')
-      reject(new Error(`Socket connection closed`));
-    });
-
-    socketPort.once('end', () => {
-      console.log('Socket ended');
-      reject(new Error(`Socket connection ended`));
-    })
-
-    socketPort.on('error', function () {
-      console.log('Socket error');
-      reject(new Error(`Error while opening socket`));
-    });
-
-    socketPort.connect(info.port, info.host);
-  });
+export async function getSocketConnection(path: string): Promise<RequestTransport> {
+  const settings: TransportSettings = {
+    type: path.startsWith('tcp://') ? 'tcp' : 'serial',
+    adapter: '',
+    path,
+    baudRate: 57600,
+    disableLed: false,
+    rtscts: false,
+  };
+  return openTransport(settings);
 }
 
-export async function initialize(addonConfig) {
-  if (!addonConfig || !addonConfig.adapter) {
-    console.error("Adapter not configured");
-    process.exit(1);
-  }
+export function getMqttSettings(
+  addonConfig: AddonConfig,
+  stored: Partial<MqttSettings> = {},
+): MqttSettings | undefined {
+  const configured = addonConfig.mqtt ?? {};
+  const url =
+    stored.url ??
+    configured.url ??
+    process.env.MQTT_URL ??
+    (process.env.MQTT_HOST
+      ? `${process.env.MQTT_TLS === 'true' ? 'mqtts' : 'mqtt'}://${process.env.MQTT_HOST}:${process.env.MQTT_PORT ?? '1883'}`
+      : undefined);
+  if (!url) return undefined;
+  const versionValue = Number(process.env.MQTT_VERSION ?? 4);
+  const version: 3 | 4 | 5 =
+    versionValue === 3 || versionValue === 4 || versionValue === 5 ? versionValue : 4;
+  const settings: MqttSettings = {
+    url,
+    username:
+      stored.username ?? configured.username ?? process.env.MQTT_USERNAME ?? process.env.MQTT_USER,
+    password: stored.password ?? configured.password ?? process.env.MQTT_PASSWORD,
+    tls: stored.tls ?? configured.tls ?? process.env.MQTT_TLS === 'true',
+    discoveryPrefix:
+      stored.discoveryPrefix ??
+      configured.discoveryPrefix ??
+      process.env.MQTT_DISCOVERY_PREFIX ??
+      'homeassistant',
+    baseTopic: stored.baseTopic ?? configured.baseTopic ?? process.env.MQTT_BASE_TOPIC ?? 'eep',
+    clientId: stored.clientId ?? configured.clientId ?? process.env.MQTT_CLIENT_ID,
+    keepalive: stored.keepalive ?? configured.keepalive ?? Number(process.env.MQTT_KEEPALIVE ?? 60),
+    ca: stored.ca ?? configured.ca ?? process.env.MQTT_CA,
+    cert: stored.cert ?? configured.cert ?? process.env.MQTT_CERT,
+    key: stored.key ?? configured.key ?? process.env.MQTT_KEY,
+    rejectUnauthorized:
+      stored.rejectUnauthorized ??
+      configured.rejectUnauthorized ??
+      process.env.MQTT_REJECT_UNAUTHORIZED !== 'false',
+    forceDisableRetain:
+      stored.forceDisableRetain ??
+      configured.forceDisableRetain ??
+      process.env.MQTT_FORCE_DISABLE_RETAIN === 'true',
+    includeDeviceInformation:
+      stored.includeDeviceInformation ??
+      configured.includeDeviceInformation ??
+      process.env.MQTT_INCLUDE_DEVICE_INFORMATION !== 'false',
+    maximumPacketSize:
+      stored.maximumPacketSize ??
+      configured.maximumPacketSize ??
+      Number(process.env.MQTT_MAXIMUM_PACKET_SIZE ?? 1048576),
+    version: stored.version ?? configured.version ?? version,
+  };
+  validateMqttConfig(settings);
+  return settings;
+}
 
-  let server: Server;
-  let socket: SerialPort | Socket;
+function createTeachInResponder(
+  getSocket: () => RequestTransport,
+  controllerId: number,
+): (candidate: TeachInCandidate) => Promise<void> {
+  return async (candidate): Promise<void> => {
+    await getSocket().write(
+      buildUteTeachInResponse(controllerId, candidate.targetId, candidate.requestPayload),
+    );
+  };
+}
 
+export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
   try {
-    socket = await getSocketConnection(addonConfig.adapter);
+    const initialConfig = resolveServerConfig(addonConfig);
+    const dataDir = initialConfig.dataDir;
+    const registry = await DeviceRegistry.load(join(dataDir, 'states.json'));
+    const settingsPath = join(dataDir, 'settings.json');
+    const storedMqttSettings = await loadMqttSettings(settingsPath);
+    const storedTransportSettings = await loadTransportSettings(settingsPath);
+    const storedHomeAssistantSettings = await loadHomeAssistantSettings(settingsPath);
+    const serverConfig = resolveServerConfig({
+      ...addonConfig,
+      transport: { ...storedTransportSettings, ...addonConfig.transport },
+      homeAssistant: { ...storedHomeAssistantSettings, ...addonConfig.homeAssistant },
+    });
+    let activeMqttSettings = getMqttSettings(
+      { ...addonConfig, mqtt: serverConfig.mqtt },
+      storedMqttSettings,
+    );
+    let homeAssistantSettings = serverConfig.homeAssistant;
+    const mqttStatus: MqttStatus = { connected: false };
 
-    // Monitor socket for runtime disconnects
-    const handleFatalSocketError = (reason: string) => {
+    const configuredControllerId = registry.list()[0]?.sourceId ?? 0;
+    const controllerId = serverConfig.controllerId ?? configuredControllerId;
+    const handleFatalSocketError = (reason: string): void => {
       console.error(`Fatal socket issue: ${reason}. Exiting to trigger Watchdog.`);
       process.exit(1);
     };
+    let transportRuntime: TransportRuntime;
+    const teachIn = new TeachInManager(
+      registry,
+      controllerId,
+      createTeachInResponder(() => transportRuntime.current, controllerId),
+    );
+    transportRuntime = new TransportRuntime(
+      await openTransport(serverConfig.transport),
+      registry,
+      teachIn,
+      handleFatalSocketError,
+    );
+    await transportRuntime.start();
 
-    if (socket instanceof Socket) {
-      socket.on('close', () => handleFatalSocketError('close'));
-      socket.on('end', () => handleFatalSocketError('end'));
-      socket.on('error', (err) => {
-        console.error('Socket runtime error:', err);
-        handleFatalSocketError('error');
-      });
-    }
+    const mqttRuntime = new MqttRuntime(
+      registry,
+      (device, value) => sendDeviceCommand(transportRuntime.current, registry, device, value),
+      mqttStatus,
+    );
+    const applyMqttSettings = async (settings: MqttSettings): Promise<void> => {
+      activeMqttSettings = settings;
+      await mqttRuntime.apply(settings, homeAssistantSettings);
+    };
+    const applyHomeAssistantSettings = async (
+      settings: typeof homeAssistantSettings,
+    ): Promise<void> => {
+      homeAssistantSettings = settings;
+      if (activeMqttSettings) await applyMqttSettings(activeMqttSettings);
+    };
 
-    const app = express();
+    const applyTransportSettings = async (
+      settings: typeof serverConfig.transport,
+    ): Promise<void> => {
+      await transportRuntime.replace(settings);
+    };
 
-    app.get('/:room/:device/:value', function (req, res) {
-      const { room, device, value } = req.params;
-      console.log('Received request with params:', { room, device, value });
+    const server = Bun.serve({
+      routes: { '/': homepage as never, '/index.html': homepage as never },
+      development: process.env.NODE_ENV !== 'production',
+      hostname: serverConfig.host,
+      port: serverConfig.port,
+      fetch: createRequestHandler(() => transportRuntime.current, {
+        registry,
+        teachIn,
+        webRoot: serverConfig.webRoot,
+        transportSettings: serverConfig.transport,
+        saveTransportSettings: (settings) => saveTransportSettings(settingsPath, settings),
+        applyTransportSettings,
+        homeAssistantSettings: serverConfig.homeAssistant,
+        saveHomeAssistantSettings: (settings) => saveHomeAssistantSettings(settingsPath, settings),
+        applyHomeAssistantSettings,
+        mqttSettings: activeMqttSettings ?? defaultMqttSettings(),
+        saveMqttSettings: (settings) => saveMqttSettings(settingsPath, settings),
+        applyMqttSettings,
+        mqttStatus: () => ({ ...mqttStatus }),
+      }),
+    });
 
-      const roomConfig = config.rooms.find(r => r.id.toUpperCase() === room.toUpperCase());
-      const deviceConfig = roomConfig?.devices.find(d => d.key.toUpperCase() === device.toUpperCase());
+    if (activeMqttSettings) await applyMqttSettings(activeMqttSettings);
 
-      if (!deviceConfig) return res.sendStatus(400);
-
-      const { protocol, sourceId, targetId } = deviceConfig;
-
-      switch (protocol) {
-        case 'D2-50-00': {
-          let state = parseInt(value);
-          if (Number.isNaN(state)) {
-            switch (value) {
-              case 'Auto': state = 11; break;
-              case 'Intake': state = 13; break;
-              case 'Exhaust': state = 14; break;
-              default: state = 11;
-            }
-          }
-          const payload = changeState(toHex(sourceId), toHex(targetId), state);
-          console.log('Sending payload:', payload);
-          // @ts-expect-error socket is either SerialPort or Socket
-          socket.write(payload);
-          return res.sendStatus(200);
+    let shutdownPromise: Promise<void> | undefined;
+    const shutdown = async (): Promise<void> => {
+      if (shutdownPromise) return shutdownPromise;
+      shutdownPromise = (async () => {
+        try {
+          await mqttRuntime.stop();
+          await transportRuntime.stop();
+          await server.stop();
+        } catch (error) {
+          console.error('Shutdown error:', error);
+        } finally {
+          process.exit(0);
         }
-      }
+      })();
+      return shutdownPromise;
+    };
+    process.once('SIGINT', () => void shutdown());
+    process.once('SIGTERM', () => void shutdown());
 
-      return res.sendStatus(204);
-    });
-
-    server = app.listen(3000, () => {
-      console.log('Addon server listening on port 3000');
-    });
-
+    console.log(`Server listening on port ${server.port}`);
   } catch (error) {
-    console.error("Initialization error:", error);
-    process.exit(1);
+    console.error('Initialization error:', error);
+    throw error;
   }
 }

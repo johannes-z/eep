@@ -1,0 +1,10 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "ignorePatterns": ["**/dist/**", "**.gen.*"],
+  "semi": true,
+  "singleQuote": true,
+  "singleAttributePerLine": true,
+  "experimentalSortPackageJson": {
+    "sortScripts": true
+  }
+}

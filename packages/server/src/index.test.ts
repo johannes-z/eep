@@ -1,0 +1,245 @@
+import { expect, mock, test } from 'bun:test';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { defaultMqttSettings } from './mqtt';
+import type { TransportSettings } from './config';
+import { DeviceRegistry } from './devices/registry';
+
+void mock.module('bun-serialport', () => ({
+  SerialPort: class {
+    on() {
+      return this;
+    }
+
+    async open() {}
+
+    async write() {}
+  },
+}));
+
+const { createRequestHandler } = await import('./index');
+
+class FakeTransport {
+  writes: Uint8Array[] = [];
+
+  write(payload: Uint8Array): void {
+    this.writes.push(payload);
+  }
+}
+
+test('returns 200 and writes a payload for a configured device', async () => {
+  const transport = new FakeTransport();
+  const handler = createRequestHandler(transport);
+
+  const response = await handler(new Request('http://localhost/E04/VENT/Intake'));
+
+  expect(response.status).toBe(200);
+  expect(transport.writes).toHaveLength(1);
+  expect(transport.writes[0]).toBeInstanceOf(Uint8Array);
+  expect(transport.writes[0][6]).toBe(0xd2);
+  expect(transport.writes[0][7]).toBe(13);
+});
+
+test('rejects command bodies with unsafe value coercions', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-command-'));
+  const registry = await DeviceRegistry.load(join(directory, 'states.json'));
+  const handler = createRequestHandler(new FakeTransport(), { registry });
+
+  for (const body of [{ isOn: 'false' }, { value: null }, { percentage: '50' }]) {
+    const response = await handler(
+      new Request('http://localhost/api/devices/85184254/command', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
+    expect(response.status).toBe(400);
+  }
+});
+
+test('rejects presets that are not configured for a device', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-command-capability-'));
+  const transport = new FakeTransport();
+  const registry = await DeviceRegistry.load(join(directory, 'states.json'));
+  const handler = createRequestHandler(transport, { registry });
+
+  const response = await handler(
+    new Request('http://localhost/api/devices/85184254/command', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ preset: 'Automatic on demand' }),
+    }),
+  );
+
+  expect(response.status).toBe(400);
+  expect(await response.json()).toMatchObject({
+    error: 'Device does not support function for value: 12',
+  });
+  expect(transport.writes).toHaveLength(0);
+});
+
+test('does not control a device removed from the persisted registry', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-handler-'));
+  const registry = await DeviceRegistry.load(join(directory, 'states.json'));
+  await registry.remove(0x0513cefe);
+  const transport = new FakeTransport();
+  const handler = createRequestHandler(transport, { registry });
+
+  const response = await handler(new Request('http://localhost/E04/vent/Intake'));
+
+  expect(response.status).toBe(400);
+  expect(transport.writes).toHaveLength(0);
+});
+
+test('rejects unknown devices and unsupported requests', async () => {
+  const handler = createRequestHandler(new FakeTransport());
+
+  expect((await handler(new Request('http://localhost/E04/unknown/Auto'))).status).toBe(400);
+  expect(
+    (await handler(new Request('http://localhost/E04/vent/Auto', { method: 'POST' }))).status,
+  ).toBe(405);
+  expect((await handler(new Request('http://localhost/E04/vent'))).status).toBe(404);
+});
+
+test('lists the devices from the initial states', async () => {
+  const handler = createRequestHandler(new FakeTransport());
+  const response = await handler(new Request('http://localhost/api/devices'));
+  const devices = (await response.json()) as Array<{ targetId: number }>;
+
+  expect(response.status).toBe(200);
+  expect(devices).toHaveLength(4);
+  expect(devices.map((device) => device.targetId)).toContain(0x0513cefe);
+});
+
+test('renames and persists a device', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-device-name-'));
+  const statePath = join(directory, 'states.json');
+  const registry = await DeviceRegistry.load(statePath);
+  const handler = createRequestHandler(new FakeTransport(), { registry });
+
+  const response = await handler(
+    new Request('http://localhost/api/devices/85184254', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Living Room Vent' }),
+    }),
+  );
+
+  expect(response.status).toBe(200);
+  expect((await response.json()).name).toBe('Living Room Vent');
+  const restored = await DeviceRegistry.load(statePath);
+  expect(restored.findByTargetId(0x0513cefe)?.name).toBe('Living Room Vent');
+});
+
+test('serves the browser console', async () => {
+  const handler = createRequestHandler(new FakeTransport());
+  const response = await handler(new Request('http://localhost/'));
+
+  expect(response.status).toBe(200);
+  expect(await response.text()).toContain('eep / EnOcean bridge');
+});
+
+test('reads and updates MQTT settings without exposing the password', async () => {
+  let savedSettings = defaultMqttSettings();
+  let appliedSettings: typeof savedSettings | undefined;
+  const handler = createRequestHandler(new FakeTransport(), {
+    mqttSettings: { ...savedSettings, password: 'secret' },
+    saveMqttSettings: async (settings) => {
+      savedSettings = settings;
+    },
+    applyMqttSettings: async (settings) => {
+      appliedSettings = settings;
+    },
+  });
+
+  const initial = await handler(new Request('http://localhost/api/mqtt'));
+  expect(initial.status).toBe(200);
+  expect(await initial.json()).toMatchObject({ password: '', passwordConfigured: true });
+
+  const response = await handler(
+    new Request('http://localhost/api/mqtt', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        server: 'mqtt://broker.local:1883',
+        user: 'homeassistant',
+        base_topic: 'eep-bridge',
+        keepalive: 30,
+        version: 5,
+      }),
+    }),
+  );
+
+  expect(response.status).toBe(200);
+  expect(savedSettings).toMatchObject({
+    url: 'mqtt://broker.local:1883',
+    username: 'homeassistant',
+    password: 'secret',
+    baseTopic: 'eep-bridge',
+    keepalive: 30,
+    version: 5,
+  });
+  expect(appliedSettings).toMatchObject(savedSettings);
+});
+
+test('reads and updates general transport settings', async () => {
+  let savedSettings: TransportSettings = {
+    type: 'serial',
+    adapter: 'zstack',
+    path: '/dev/ttyUSB0',
+    baudRate: 115200,
+    disableLed: false,
+    rtscts: false,
+  };
+  const handler = createRequestHandler(new FakeTransport(), {
+    transportSettings: savedSettings,
+    saveTransportSettings: async (settings) => {
+      savedSettings = settings;
+    },
+  });
+
+  const initial = await handler(new Request('http://localhost/api/settings'));
+  expect(await initial.json()).toMatchObject({
+    adapter: 'zstack',
+    port: '/dev/ttyUSB0',
+    baudrate: 115200,
+    disable_led: false,
+    rtscts: false,
+  });
+
+  const response = await handler(
+    new Request('http://localhost/api/settings', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        type: 'serial',
+        adapter: 'zstack',
+        port: '/dev/ttyUSB1',
+        baudrate: 57600,
+        disable_led: true,
+        rtscts: true,
+      }),
+    }),
+  );
+
+  expect(response.status).toBe(200);
+  expect(savedSettings).toMatchObject({ path: '/dev/ttyUSB1', baudRate: 57600, rtscts: true });
+  expect(await response.json()).toMatchObject({ restartRequired: true });
+});
+
+test('rejects unsupported Home Assistant event settings', async () => {
+  const handler = createRequestHandler(new FakeTransport());
+  const response = await handler(
+    new Request('http://localhost/api/homeassistant', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ experimental_event_entities: true }),
+    }),
+  );
+
+  expect(response.status).toBe(400);
+  expect(await response.json()).toMatchObject({
+    error: 'event entities and legacy action sensors are not supported yet',
+  });
+});

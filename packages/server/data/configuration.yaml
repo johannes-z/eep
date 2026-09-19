@@ -8,7 +8,7 @@ mqtt:
   rejectUnauthorized: true
   includeDeviceInformation: true
   version: 4
-  username: __EEP_SECRET__mqtt_username
+  username: !secret mqtt_username
   password: !secret mqtt_password
   tls: false
   forceDisableRetain: false

@@ -6,7 +6,7 @@ import type { MqttSettings } from './mqtt';
 
 export interface PersistedConfiguration {
   version?: 1;
-  mqtt?: Partial<MqttSettings>;
+  mqtt?: Record<string, unknown>;
   transport?: Partial<TransportSettings>;
   homeassistant?: Partial<HomeAssistantSettings>;
   devices?: Record<string, unknown>;
@@ -74,30 +74,36 @@ async function resolveSecrets(
   configuration: PersistedConfiguration,
   filePath: string,
 ): Promise<PersistedConfiguration> {
-  const password = configuration.mqtt?.password;
-  if (typeof password !== 'string') return configuration;
-
-  let resolvedPassword: string | undefined;
-  if (password.startsWith(secretMarker)) {
-    const key = password.slice(secretMarker.length);
-    const secrets = await readSecretFile(join(dirname(filePath), 'secrets.yaml'));
-    if (typeof secrets[key] !== 'string' || !secrets[key]) {
-      throw new Error(`Missing secret: ${key}`);
+  const mqtt = configuration.mqtt;
+  if (!mqtt) return configuration;
+  const resolvedMqtt = { ...mqtt };
+  let changed = false;
+  for (const field of ['username', 'password'] as const) {
+    const value = mqtt[field];
+    if (typeof value !== 'string') continue;
+    if (value.startsWith(secretMarker)) {
+      const key = value.slice(secretMarker.length);
+      const secrets = await readSecretFile(join(dirname(filePath), 'secrets.yaml'));
+      if (!Object.prototype.hasOwnProperty.call(secrets, key)) {
+        throw new Error(`Missing secret: ${key}`);
+      }
+      (resolvedMqtt as Record<string, unknown>)[field] = secrets[key];
+      changed = true;
+    } else if (value.startsWith(includeMarker)) {
+      const includedPath = join(dirname(filePath), value.slice(includeMarker.length));
+      const included = Bun.YAML.parse(await readFile(includedPath, 'utf8'));
+      if (typeof included !== 'string' || !included) {
+        throw new Error(`Included secret must be a scalar: ${includedPath}`);
+      }
+      resolvedMqtt[field] = included;
+      changed = true;
     }
-    resolvedPassword = secrets[key];
-  } else if (password.startsWith(includeMarker)) {
-    const includedPath = join(dirname(filePath), password.slice(includeMarker.length));
-    const included = Bun.YAML.parse(await readFile(includedPath, 'utf8'));
-    if (typeof included !== 'string' || !included) {
-      throw new Error(`Included secret must be a scalar: ${includedPath}`);
-    }
-    resolvedPassword = included;
   }
 
-  if (resolvedPassword === undefined) return configuration;
+  if (!changed) return configuration;
   return {
     ...configuration,
-    mqtt: { ...configuration.mqtt, password: resolvedPassword },
+    mqtt: resolvedMqtt,
   };
 }
 
@@ -120,7 +126,7 @@ async function readConfiguration(filePath: string): Promise<PersistedConfigurati
   }
 }
 
-async function writeSecretFile(filePath: string, value: string): Promise<void> {
+async function writeSecretFile(filePath: string, key: string, value: string): Promise<void> {
   await mkdir(dirname(filePath), { recursive: true });
   const temporaryPath = join(dirname(filePath), `.${randomUUID()}.secrets.yaml`);
   try {
@@ -130,7 +136,7 @@ async function writeSecretFile(filePath: string, value: string): Promise<void> {
     } catch (error) {
       if (!(error as Error).message.startsWith('Missing secrets file:')) throw error;
     }
-    secrets.mqtt_password = value;
+    secrets[key] = value;
     await writeFile(temporaryPath, stringifyYaml(secrets), 'utf8');
     await rename(temporaryPath, filePath);
   } catch (error) {
@@ -152,14 +158,20 @@ async function writeConfiguration(
       homeAssistant?: unknown;
     };
     delete data.homeAssistant;
-    if (typeof data.mqtt?.password === 'string' && data.mqtt.password) {
-      await writeSecretFile(join(dirname(filePath), 'secrets.yaml'), data.mqtt.password);
-      data.mqtt = { ...data.mqtt, password: `${secretMarker}mqtt_password` };
+    const secretFilePath = join(dirname(filePath), 'secrets.yaml');
+    for (const [field, key] of [
+      ['username', 'mqtt_username'],
+      ['password', 'mqtt_password'],
+    ] as const) {
+      if (typeof data.mqtt?.[field] === 'string' && data.mqtt[field]) {
+        await writeSecretFile(secretFilePath, key, data.mqtt[field]);
+        data.mqtt = { ...data.mqtt, [field]: `${secretMarker}${key}` };
+      }
     }
-    const serialized = stringifyYaml(data).replaceAll(
-      `${secretMarker}mqtt_password`,
-      '!secret mqtt_password',
-    );
+    let serialized = stringifyYaml(data);
+    for (const key of ['mqtt_username', 'mqtt_password']) {
+      serialized = serialized.replaceAll(`${secretMarker}${key}`, `!secret ${key}`);
+    }
     await writeFile(temporaryPath, serialized, 'utf8');
     await rename(temporaryPath, filePath);
   } catch (error) {
@@ -199,7 +211,7 @@ export async function loadMqttSettings(
 
 export async function saveMqttSettings(filePath: string, settings: MqttSettings): Promise<void> {
   await updateSettings(filePath, (stored) => {
-    stored.mqtt = settings;
+    stored.mqtt = { ...settings };
   });
 }
 

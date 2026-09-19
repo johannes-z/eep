@@ -26,17 +26,19 @@ The HTTP API has no built-in authentication; keep it on a trusted network or pla
 - `MQTT_USERNAME`, `MQTT_PASSWORD`: broker credentials.
 - `HA_ENABLED`, `HA_DISCOVERY_TOPIC`, `HA_STATUS_TOPIC`: Home Assistant discovery settings.
 
-Keep the MQTT password in the ignored `DATA_DIR/secrets.yaml` file and reference it from
-`configuration.yaml` with the `!secret mqtt_password` tag:
+Keep the MQTT credentials in the ignored `DATA_DIR/secrets.yaml` file and reference them from
+`configuration.yaml` with `!secret` tags:
 
 ```yaml
 # secrets.yaml
+mqtt_username: replace-me
 mqtt_password: replace-me
 ```
 
 ```yaml
 # configuration.yaml
 mqtt:
+	username: !secret mqtt_username
 	password: !secret mqtt_password
 ```
 

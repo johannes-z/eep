@@ -6,6 +6,7 @@ import type { HomeAssistantSettings, TransportSettings } from './config';
 import { defaultMqttSettings } from './mqtt';
 import {
   loadHomeAssistantSettings,
+  loadConfiguration,
   loadMqttSettings,
   loadTransportSettings,
   saveHomeAssistantSettings,
@@ -73,22 +74,38 @@ test('resolves secrets and keeps passwords out of configuration.yaml', async () 
   const directory = await mkdtemp(join(tmpdir(), 'eep-settings-secrets-'));
   const filePath = join(directory, 'configuration.yaml');
   const secretsPath = join(directory, 'secrets.yaml');
-  await Bun.write(secretsPath, 'mqtt_password: test-password\n');
+  await Bun.write(secretsPath, 'mqtt_username: test-user\nmqtt_password: test-password\n');
   await Bun.write(
     filePath,
-    'version: 1\nmqtt:\n  url: mqtt://broker.local:1883\n  password: !secret mqtt_password\n',
+    'version: 1\nmqtt:\n  url: mqtt://broker.local:1883\n  username: !secret mqtt_username\n  password: !secret mqtt_password\n',
   );
 
-  expect(await loadMqttSettings(filePath)).toMatchObject({ password: 'test-password' });
+  expect(await loadMqttSettings(filePath)).toMatchObject({
+    username: 'test-user',
+    password: 'test-password',
+  });
 
   await saveMqttSettings(filePath, {
     ...defaultMqttSettings(),
     url: 'mqtt://broker.local:1883',
+    username: 'test-user',
     password: 'updated-password',
   });
 
   const configuration = await readFile(filePath, 'utf8');
+  expect(configuration).toContain('username: !secret mqtt_username');
   expect(configuration).toContain('password: !secret mqtt_password');
-  expect(configuration).not.toContain('updated-password');
+  expect(configuration).not.toContain('__EEP_SECRET__');
+  expect(configuration).not.toContain('test-user');
   expect(await readFile(secretsPath, 'utf8')).toContain('updated-password');
+});
+
+test('resolves arbitrary YAML values from secret references', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-settings-arbitrary-secret-'));
+  const filePath = join(directory, 'configuration.yaml');
+  await Bun.write(join(directory, 'secrets.yaml'), 'mqtt_username: false\n');
+  await Bun.write(filePath, 'version: 1\nmqtt:\n  username: !secret mqtt_username\n');
+
+  const configuration = await loadConfiguration(filePath);
+  expect(configuration.mqtt?.username).toBe(false);
 });

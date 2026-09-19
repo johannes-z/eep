@@ -46,6 +46,20 @@ Each device in `DATA_DIR/states.json` can restrict the functions exposed by its 
 
 Omit `level4` or `automaticOnDemand` when the device does not support them. Home Assistant discovery, web controls, command validation, and percentage-to-speed mapping all use this list. Existing `supportedPresets` state is migrated when it is loaded.
 
+## Permit join and UTE
+
+Permit join is available from the web console and, when MQTT/Home Assistant is enabled, as the
+discovered `Permit join` switch. Both controls operate the same learning session.
+
+Automatic joining uses the EEP Universal Teach-In (UTE) D4 telegram format. The server accepts
+valid UTE teach-in queries for profiles present in its profile registry and acknowledges
+bidirectional requests immediately. Unsupported EEPs receive the UTE `EEP not supported`
+response; teach-out, malformed, and reserved requests are not added as candidates. Adding a
+candidate in the web console stores its metadata and enables normal profile-based operation.
+
+UTE responses require a non-zero controller ID. Set `CONTROLLER_ID`, or keep at least one device
+with a valid persisted `sourceId`, before using Permit join.
+
 ## Docker
 
 Build with `packages/server` as the Docker context:

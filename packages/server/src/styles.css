@@ -139,6 +139,7 @@ select:focus-visible {
   color: #555b63;
   font-size: 12px;
   text-align: left;
+  text-decoration: none;
 }
 
 .nav-item:hover {
@@ -163,13 +164,20 @@ select:focus-visible {
 
 .sidebar-footer {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 9px;
   margin-top: auto;
   padding: 14px 11px 0;
   border-top: 1px solid var(--line);
   color: var(--muted);
   font-size: 10px;
+}
+
+.sidebar-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .main-content {
@@ -232,6 +240,14 @@ select:focus-visible {
 
 .status-dot.online {
   background: var(--success);
+}
+
+.status-dot.warning {
+  background: var(--warning);
+}
+
+.status-dot.error {
+  background: var(--danger);
 }
 
 .pair-button,
@@ -911,9 +927,15 @@ select:focus-visible {
     overflow-x: auto;
   }
 
-  .nav-heading,
-  .sidebar-footer {
+  .nav-heading {
     display: none;
+  }
+
+  .sidebar-footer {
+    flex-direction: row;
+    flex-wrap: wrap;
+    margin-top: 4px;
+    padding: 8px 6px 0;
   }
 
   .nav-item {

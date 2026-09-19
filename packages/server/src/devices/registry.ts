@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import type { Device, DeviceTeachInInfo } from '../config';
 import {
-  getDefaultSupportedFunctions,
-  getProtocolFunctionByValue,
-  getProtocolFunctions,
-} from '../api/functions';
-import { isD2ControlValue, normalizeD2FanPreset, type D2FanState } from '../api/D2-50-00/fan';
-import type { Device } from '../config';
+  createDefaultProfileRegistry,
+  normalizeProfileId,
+  type ProfileRegistry,
+} from '../profiles';
+import type { JsonValue } from '../profiles/types';
 import initialStates from '../states.json';
 
 interface PersistedDevice extends Omit<Device, 'sourceId' | 'targetId'> {
@@ -21,9 +21,53 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function isJsonValue(value: unknown): value is JsonValue {
+  if (
+    value === null ||
+    typeof value === 'boolean' ||
+    typeof value === 'number' ||
+    typeof value === 'string'
+  ) {
+    return true;
+  }
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  return isRecord(value) && Object.values(value).every(isJsonValue);
+}
+
 function readText(value: unknown, field: string): string {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`Invalid ${field}`);
   return value.trim();
+}
+
+function validateTeachInInfo(value: unknown): DeviceTeachInInfo {
+  if (!isRecord(value)) throw new Error('Invalid teachIn');
+  const channel = value.channel;
+  const manufacturerId = value.manufacturerId;
+  if (
+    typeof channel !== 'number' ||
+    !Number.isInteger(channel) ||
+    channel < 0 ||
+    channel > 255 ||
+    typeof manufacturerId !== 'number' ||
+    !Number.isInteger(manufacturerId) ||
+    manufacturerId < 0 ||
+    manufacturerId > 0x7ff
+  ) {
+    throw new Error('Invalid teachIn channel or manufacturerId');
+  }
+  if (value.direction !== 'unidirectional' && value.direction !== 'bidirectional') {
+    throw new Error('Invalid teachIn direction');
+  }
+  if (typeof value.responseExpected !== 'boolean') {
+    throw new Error('Invalid teachIn responseExpected');
+  }
+  return {
+    eep: readText(value.eep, 'teachIn.eep').toUpperCase(),
+    channel,
+    manufacturerId,
+    direction: value.direction,
+    responseExpected: value.responseExpected,
+  };
 }
 
 function parseIdentifier(value: unknown, field: string): number {
@@ -43,98 +87,9 @@ function parseIdentifier(value: unknown, field: string): number {
   return parsed;
 }
 
-function parseSupportedFunctions(
-  value: unknown,
-  protocol: string,
-  legacyPresets: unknown,
-): string[] {
-  const protocolFunctions = getProtocolFunctions(protocol);
-  let functions = value;
-  if (functions === undefined && legacyPresets !== undefined) {
-    if (
-      !Array.isArray(legacyPresets) ||
-      legacyPresets.some((preset) => !normalizeD2FanPreset(preset))
-    ) {
-      throw new Error('Invalid supportedPresets');
-    }
-    functions = [
-      ...getDefaultSupportedFunctions(protocol).filter(
-        (id) => protocolFunctions[id]?.kind !== 'preset',
-      ),
-      ...Object.entries(protocolFunctions)
-        .filter(
-          ([, definition]) =>
-            definition.kind === 'preset' &&
-            legacyPresets.some((preset) => normalizeD2FanPreset(preset) === definition.preset),
-        )
-        .map(([id]) => id),
-    ];
-  }
-  if (functions === undefined) functions = getDefaultSupportedFunctions(protocol);
-  if (
-    !Array.isArray(functions) ||
-    functions.some((id) => typeof id !== 'string' || !protocolFunctions[id])
-  ) {
-    throw new Error('Invalid supportedFunctions');
-  }
-  if (new Set(functions).size !== functions.length) {
-    throw new Error('Invalid supportedFunctions: duplicate function');
-  }
-  return [...functions];
-}
-
-function parseFanState(
-  value: unknown,
-  field: string,
-  protocol: string,
-  supportedFunctions: string[],
-): D2FanState | undefined {
-  if (value === undefined) return undefined;
-  if (!isRecord(value)) throw new Error(`Invalid ${field}`);
-  const { isOn, percentage, preset, d2Value } = value;
-  if (typeof isOn !== 'boolean') throw new Error(`Invalid ${field}.isOn`);
-  if (
-    typeof percentage !== 'number' ||
-    !Number.isFinite(percentage) ||
-    percentage < 0 ||
-    percentage > 100
-  ) {
-    throw new Error(`Invalid ${field}.percentage`);
-  }
-  if (
-    typeof d2Value !== 'number' ||
-    !Number.isInteger(d2Value) ||
-    !isD2ControlValue(d2Value) ||
-    d2Value === 15
-  ) {
-    throw new Error(`Invalid ${field}.d2Value`);
-  }
-  const normalizedPreset = normalizeD2FanPreset(preset);
-  if (preset !== undefined && !normalizedPreset) {
-    throw new Error(`Invalid ${field}.preset`);
-  }
-  const functionDefinition = getProtocolFunctionByValue(protocol, d2Value);
-  if (!functionDefinition || !supportedFunctions.includes(functionDefinition.id)) {
-    throw new Error(`Invalid ${field}.d2Value: unsupported by device`);
-  }
-  if (
-    preset !== undefined &&
-    (!functionDefinition.preset || functionDefinition.preset !== normalizedPreset)
-  ) {
-    throw new Error(`Invalid ${field}.preset: unsupported by device`);
-  }
-  return {
-    isOn,
-    percentage,
-    d2Value,
-    ...(normalizedPreset === undefined ? {} : { preset: normalizedPreset }),
-  };
-}
-
-function deserializeDevice(value: unknown): Device {
+function deserializeDevice(value: unknown, profiles: ProfileRegistry): Device {
   if (!isRecord(value)) throw new Error('Invalid device record');
-  const protocol = readText(value.protocol, 'protocol');
-  if (protocol !== 'D2-50-00') throw new Error(`Unsupported device protocol: ${protocol}`);
+  const profileId = normalizeProfileId(readText(value.profileId ?? value.protocol, 'profileId'));
   const availability = value.availability;
   if (!['online', 'offline', 'unknown'].includes(availability as string)) {
     throw new Error(`Invalid availability: ${String(availability)}`);
@@ -143,50 +98,59 @@ function deserializeDevice(value: unknown): Device {
   if (value.lastSeen !== undefined && typeof value.lastSeen !== 'string') {
     throw new Error('Invalid lastSeen');
   }
-  const supportedFunctions = parseSupportedFunctions(
-    value.supportedFunctions,
-    protocol,
-    value.supportedPresets,
-  );
+  const profile = profiles.get(profileId);
+  const legacyCapabilities = value.supportedFunctions;
+  if (
+    legacyCapabilities !== undefined &&
+    (!Array.isArray(legacyCapabilities) ||
+      legacyCapabilities.some((item) => typeof item !== 'string') ||
+      new Set(legacyCapabilities).size !== legacyCapabilities.length)
+  ) {
+    throw new Error('Invalid supportedFunctions');
+  }
+  const fallbackCapabilities = profile?.defaultCapabilities() ?? [];
+  const capabilities = profile
+    ? profile.validateCapabilities(value.capabilities ?? legacyCapabilities ?? fallbackCapabilities)
+    : (() => {
+        const opaque = value.capabilities ?? legacyCapabilities ?? {};
+        if (!isJsonValue(opaque)) throw new Error('Invalid capabilities');
+        return opaque;
+      })();
+  const validateState = (state: unknown, field: 'reportedState' | 'desiredState'): JsonValue => {
+    const validated = profile?.validateState(state, field, capabilities) ?? state;
+    if (!isJsonValue(validated)) throw new Error(`Invalid ${field}`);
+    return validated;
+  };
   return {
     key: readText(value.key, 'key'),
     sourceId: parseIdentifier(value.sourceId, 'sourceId'),
     targetId: parseIdentifier(value.targetId, 'targetId'),
-    protocol,
+    profileId,
+    capabilities,
     roomId: readText(value.roomId, 'roomId'),
     roomName: readText(value.roomName, 'roomName'),
     name: readText(value.name, 'name'),
     paired: value.paired,
-    supportedFunctions,
-    availability: availability as Device['availability'],
+    ...(value.teachIn === undefined ? {} : { teachIn: validateTeachInInfo(value.teachIn) }),
+    availability: profile ? (availability as Device['availability']) : 'unknown',
     ...(value.lastSeen === undefined ? {} : { lastSeen: value.lastSeen }),
     ...(value.reportedState === undefined
       ? {}
       : {
-          reportedState: parseFanState(
-            value.reportedState,
-            'reportedState',
-            protocol,
-            supportedFunctions,
-          ),
+          reportedState: validateState(value.reportedState, 'reportedState'),
         }),
     ...(value.desiredState === undefined
       ? {}
       : {
-          desiredState: parseFanState(
-            value.desiredState,
-            'desiredState',
-            protocol,
-            supportedFunctions,
-          ),
+          desiredState: validateState(value.desiredState, 'desiredState'),
         }),
   };
 }
 
-function deserializeDevices(values: unknown): Device[] {
+function deserializeDevices(values: unknown, profiles: ProfileRegistry): Device[] {
   if (!Array.isArray(values))
     throw new Error('Invalid device state file: devices must be an array');
-  const devices = values.map(deserializeDevice);
+  const devices = values.map((value) => deserializeDevice(value, profiles));
   const targetIds = new Set<number>();
   for (const device of devices) {
     if (targetIds.has(device.targetId)) throw new Error(`Duplicate targetId: ${device.targetId}`);
@@ -203,18 +167,23 @@ function serializeDevice(device: Device): PersistedDevice {
   };
 }
 
-export const initialDevices = deserializeDevices(initialStates.devices);
+const defaultProfiles = createDefaultProfileRegistry();
 
-async function readStates(filePath: string): Promise<Device[] | undefined> {
+export const initialDevices = deserializeDevices(initialStates.devices, defaultProfiles);
+
+async function readStates(
+  filePath: string,
+  profiles: ProfileRegistry,
+): Promise<Device[] | undefined> {
   try {
     const data: unknown = JSON.parse(await readFile(filePath, 'utf8'));
     if (!isRecord(data) || !Array.isArray(data.devices)) {
       throw new Error(`Invalid device state file: ${filePath}`);
     }
-    if (data.version !== undefined && data.version !== 1) {
+    if (data.version !== undefined && data.version !== 1 && data.version !== 2) {
       throw new Error(`Unsupported device state version: ${JSON.stringify(data.version)}`);
     }
-    return deserializeDevices(data.devices);
+    return deserializeDevices(data.devices, profiles);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     return undefined;
@@ -229,18 +198,22 @@ export class DeviceRegistry {
   private constructor(
     private readonly filePath: string,
     devices: Device[],
+    private readonly profiles: ProfileRegistry,
   ) {
     this.devices = devices.map((device) => ({ ...device }));
   }
 
-  static async load(filePath: string): Promise<DeviceRegistry> {
-    let devices = await readStates(filePath);
+  static async load(
+    filePath: string,
+    profiles: ProfileRegistry = defaultProfiles,
+  ): Promise<DeviceRegistry> {
+    let devices = await readStates(filePath, profiles);
     if (devices === undefined && filePath.endsWith('states.json')) {
-      devices = await readStates(join(dirname(filePath), 'devices.json'));
+      devices = await readStates(join(dirname(filePath), 'devices.json'), profiles);
     }
-    if (devices === undefined) devices = initialDevices;
+    if (devices === undefined) devices = initialDevices.map((device) => ({ ...device }));
 
-    const registry = new DeviceRegistry(filePath, devices);
+    const registry = new DeviceRegistry(filePath, devices, profiles);
     await registry.save();
     return registry;
   }
@@ -269,6 +242,7 @@ export class DeviceRegistry {
   }
 
   async upsert(device: Device): Promise<Device> {
+    this.validateDevice(device);
     return this.enqueueMutation(() => {
       const index = this.devices.findIndex((item) => item.targetId === device.targetId);
       if (index === -1) this.devices.push({ ...device });
@@ -282,8 +256,10 @@ export class DeviceRegistry {
     return this.enqueueMutation(() => {
       const index = this.devices.findIndex((item) => item.targetId === targetId);
       if (index === -1) throw new Error(`Unknown device: ${targetId}`);
-      this.devices[index] = { ...this.devices[index], ...update };
-      const saved = { ...this.devices[index] };
+      const next = { ...this.devices[index], ...update };
+      this.validateDevice(next);
+      this.devices[index] = next;
+      const saved = { ...next };
       return { result: saved, changedDevice: saved };
     });
   }
@@ -299,6 +275,35 @@ export class DeviceRegistry {
 
   private notify(device: Device): void {
     for (const listener of this.listeners) listener({ ...device });
+  }
+
+  private validateDevice(device: Device): void {
+    if (device.teachIn !== undefined) validateTeachInInfo(device.teachIn);
+    const profile = this.profiles.get(device.profileId);
+    if (!profile) {
+      if (!isJsonValue(device.capabilities)) throw new Error('Invalid capabilities');
+      if (device.reportedState !== undefined && !isJsonValue(device.reportedState)) {
+        throw new Error('Invalid reportedState');
+      }
+      if (device.desiredState !== undefined && !isJsonValue(device.desiredState)) {
+        throw new Error('Invalid desiredState');
+      }
+      return;
+    }
+    const capabilities = profile.validateCapabilities(device.capabilities);
+    if (!isJsonValue(capabilities)) throw new Error('Invalid capabilities');
+    if (device.reportedState !== undefined) {
+      const reportedState = profile.validateState(
+        device.reportedState,
+        'reportedState',
+        capabilities,
+      );
+      if (!isJsonValue(reportedState)) throw new Error('Invalid reportedState');
+    }
+    if (device.desiredState !== undefined) {
+      const desiredState = profile.validateState(device.desiredState, 'desiredState', capabilities);
+      if (!isJsonValue(desiredState)) throw new Error('Invalid desiredState');
+    }
   }
 
   private enqueueMutation<T>(mutation: () => { result: T; changedDevice?: Device }): Promise<T> {
@@ -323,7 +328,7 @@ export class DeviceRegistry {
     try {
       await writeFile(
         temporaryPath,
-        `${JSON.stringify({ version: 1, devices: this.devices.map(serializeDevice) }, null, 2)}\n`,
+        `${JSON.stringify({ version: 2, devices: this.devices.map(serializeDevice) }, null, 2)}\n`,
         'utf8',
       );
       await rename(temporaryPath, this.filePath);

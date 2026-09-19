@@ -1,12 +1,5 @@
 import { useState } from 'react';
-import type {
-  CommandBody,
-  Device,
-  ListenPacket,
-  ListenResponse,
-  MqttForm,
-  TeachInCandidate,
-} from '../ui/types';
+import type { CommandBody, Device, TeachInCandidate } from '../ui/types';
 import { formatTargetId } from './deviceUtils';
 import { DeviceTable } from './DeviceTable';
 
@@ -15,38 +8,31 @@ export function Overview({
   pairing,
   candidates,
   busyTarget,
-  listen,
   onCommand,
-  onListen,
   onRename,
   onAccept,
   onPairing,
-  mqtt,
 }: {
   devices: Device[];
   pairing: boolean;
   candidates: TeachInCandidate[];
   busyTarget: number | null;
-  listen: ListenResponse | null;
   onCommand: (targetId: number, command: CommandBody) => void;
-  onListen: () => void;
   onRename: (targetId: number, name: string) => Promise<void>;
   onAccept: (candidate: TeachInCandidate) => void;
   onPairing: () => void;
-  mqtt: MqttForm | null;
 }) {
   const [query, setQuery] = useState('');
   const normalizedQuery = query.trim().toLowerCase();
   const filteredDevices = normalizedQuery
     ? devices.filter((device) =>
-        [device.name, device.roomName, device.protocol, formatTargetId(device.targetId)]
+        [device.name, device.roomName, device.profileId, formatTargetId(device.targetId)]
           .join(' ')
           .toLowerCase()
           .includes(normalizedQuery),
       )
     : devices;
   const online = devices.filter((device) => device.availability === 'online').length;
-  const mqttStatus = mqtt?.connected ? 'Connected' : mqtt?.configured ? 'Connecting' : 'Disabled';
 
   return (
     <section className="overview-page">
@@ -57,13 +43,6 @@ export function Overview({
             {filteredDevices.length} of {devices.length}
           </span>
         </div>
-        <button
-          className={`text-button ${listen?.active ? 'active' : ''}`}
-          onClick={onListen}
-          type="button"
-        >
-          {listen?.active ? 'Stop listening' : 'Listen'}
-        </button>
         <label className="search-field">
           <span aria-hidden="true">⌕</span>
           <span className="sr-only">Search devices</span>
@@ -75,10 +54,6 @@ export function Overview({
           />
         </label>
       </div>
-      <PacketListenerPanel
-        listen={listen}
-        onListen={onListen}
-      />
       <div
         className="metric-strip"
         aria-label="Device status"
@@ -90,10 +65,6 @@ export function Overview({
         <div>
           <span>Online</span>
           <strong>{online}</strong>
-        </div>
-        <div>
-          <span>MQTT</span>
-          <strong className={mqtt?.connected ? 'success-text' : ''}>{mqttStatus}</strong>
         </div>
         <div>
           <span>Join</span>
@@ -148,68 +119,5 @@ export function Overview({
         onRename={onRename}
       />
     </section>
-  );
-}
-
-function PacketListenerPanel({
-  listen,
-  onListen,
-}: {
-  listen: ListenResponse | null;
-  onListen: () => void;
-}) {
-  const packets = [...(listen?.packets ?? [])].reverse();
-  return (
-    <section className="listener-panel">
-      <div className="panel-toolbar">
-        <div>
-          <h3>Packet listener</h3>
-          <span>{listen?.packets.length ?? 0} captured</span>
-        </div>
-        <button
-          className="text-button"
-          onClick={onListen}
-          type="button"
-        >
-          {listen?.active ? 'Stop' : 'Listen'}
-        </button>
-      </div>
-      {packets.length ? (
-        <div className="packet-list">
-          {packets.map((packet) => (
-            <PacketRow
-              key={packet.id}
-              packet={packet}
-            />
-          ))}
-        </div>
-      ) : (
-        <p className="muted-copy">
-          {listen?.active ? 'Waiting for packets.' : 'No packets captured.'}
-        </p>
-      )}
-    </section>
-  );
-}
-
-function PacketRow({ packet }: { packet: ListenPacket }) {
-  const radio = packet.radio;
-  const title = radio
-    ? `ERP1 RORG 0x${radio.rorg.toString(16).padStart(2, '0').toUpperCase()} from ${radio.senderId}`
-    : `ESP3 packet type ${packet.packetType}`;
-  return (
-    <div className="packet-row">
-      <div>
-        <strong>{title}</strong>
-        <span>
-          {radio?.eep ? `${radio.eep} · ` : ''}
-          {new Date(packet.timestamp).toLocaleTimeString()}
-        </span>
-      </div>
-      <code>
-        {packet.data}
-        {packet.optionalData ? ` | ${packet.optionalData}` : ''}
-      </code>
-    </div>
   );
 }

@@ -3,7 +3,8 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DeviceRegistry } from './registry';
-import { applyRadioPacket, decodeD2Value } from './inbound';
+import { applyRadioPacket } from './inbound';
+import { decodeD2Value } from '../profiles/D2-50-00/profile';
 
 test('decodes raw and packed D2 operating values', () => {
   expect(decodeD2Value([3])).toBe(3);
@@ -33,7 +34,7 @@ test('reconciles a known device report with its desired state', async () => {
 
   expect(result?.value).toBe(13);
   expect(device?.reportedState).toMatchObject({ d2Value: 13, preset: 'Supply' });
-  expect(device?.desiredState?.d2Value).toBe(3);
+  expect(device?.desiredState).toMatchObject({ d2Value: 3 });
   expect(device?.availability).toBe('online');
 });
 

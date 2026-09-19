@@ -1,18 +1,17 @@
 import { readFile } from 'node:fs/promises';
 import { extname, join, resolve } from 'node:path';
-import {
-  fanPercentageToD2Value,
-  fanPowerToD2Value,
-  fanPresetToD2Value,
-  parseD2Value,
-} from '../api/D2-50-00/fan';
 import { resolveServerConfig, validateMqttConfig } from '../config';
-import type { Device, HomeAssistantSettings, TransportSettings } from '../config';
+import type { Device, HomeAssistantSettings, LogLevel, TransportSettings } from '../config';
 import { sendDeviceCommand } from '../devices/commands';
 import { initialDevices } from '../devices/registry';
 import type { DeviceRegistry } from '../devices/registry';
 import type { TeachInManager } from '../devices/teachin';
 import { defaultMqttSettings, type MqttSettings } from '../mqtt';
+import {
+  createDefaultProfileRegistry,
+  type ProfileDeviceContext,
+  type ProfileRegistry,
+} from '../profiles';
 import type { TransportConnection } from '../transport/adapters';
 import type { PacketListener } from '../transport/listener';
 
@@ -28,6 +27,7 @@ export interface RequestHandlerOptions {
   teachIn?: TeachInManager;
   webRoot?: string;
   transportSettings?: TransportSettings;
+  transportConnected?: () => boolean;
   saveTransportSettings?: (settings: TransportSettings) => Promise<void>;
   applyTransportSettings?: (settings: TransportSettings) => Promise<void>;
   homeAssistantSettings?: HomeAssistantSettings;
@@ -38,22 +38,13 @@ export interface RequestHandlerOptions {
   applyMqttSettings?: (settings: MqttSettings) => Promise<void>;
   mqttStatus?: () => MqttStatus;
   listener?: PacketListener;
+  profiles?: ProfileRegistry;
 }
 
 interface PairingState {
   active: boolean;
   candidates: unknown[];
 }
-
-const compatibilityNames: Record<string, number> = {
-  auto: 11,
-  automatic: 11,
-  'automatic-on-demand': 12,
-  intake: 13,
-  supply: 13,
-  exhaust: 14,
-  'no-action': 15,
-};
 
 function json(data: unknown, status = 200): Response {
   return Response.json(data, { status });
@@ -88,8 +79,12 @@ function mqttSettingsResponse(
   };
 }
 
-function transportSettingsResponse(settings: TransportSettings): Record<string, unknown> {
+function transportSettingsResponse(
+  settings: TransportSettings,
+  connected: boolean,
+): Record<string, unknown> {
   return {
+    connected,
     type: settings.type,
     adapter: settings.adapter,
     port: settings.path,
@@ -104,6 +99,7 @@ function homeAssistantSettingsResponse(settings: HomeAssistantSettings): Record<
     enabled: settings.enabled,
     discovery_topic: settings.discoveryTopic,
     status_topic: settings.statusTopic,
+    log_level: settings.logLevel ?? 'info',
     experimental_event_entities: settings.experimentalEventEntities,
     legacy_action_sensor: settings.legacyActionSensor,
   };
@@ -150,6 +146,14 @@ function readInteger(
     throw new Error(`${key} must be an integer between ${minimum} and ${maximum}`);
   }
   return number;
+}
+
+function readLogLevel(body: Record<string, unknown>, key: string, fallback: LogLevel): LogLevel {
+  const value = readText(body, key, fallback);
+  if (value !== 'debug' && value !== 'info' && value !== 'warn' && value !== 'error') {
+    throw new Error(`${key} must be debug, info, warn, or error`);
+  }
+  return value;
 }
 
 function parseMqttSettings(body: Record<string, unknown>, current: MqttSettings): MqttSettings {
@@ -228,6 +232,7 @@ function parseHomeAssistantSettings(
     enabled: readBoolean(body, 'enabled', current.enabled) ?? current.enabled,
     discoveryTopic: readText(body, 'discovery_topic', current.discoveryTopic),
     statusTopic: readText(body, 'status_topic', current.statusTopic),
+    logLevel: readLogLevel(body, 'log_level', current.logLevel ?? 'info'),
     experimentalEventEntities:
       readBoolean(body, 'experimental_event_entities', current.experimentalEventEntities) ??
       current.experimentalEventEntities,
@@ -243,42 +248,6 @@ function parseHomeAssistantSettings(
   return next;
 }
 
-function parseCommandValue(value: unknown): number {
-  if (typeof value === 'string') {
-    const namedValue = compatibilityNames[value.toLowerCase()];
-    return namedValue === undefined ? parseD2Value(value) : namedValue;
-  }
-  return parseD2Value(value as number);
-}
-
-async function parseCommandBody(request: Request, device: Device): Promise<number> {
-  const rawBody: unknown = await request.json();
-  if (!rawBody || typeof rawBody !== 'object' || Array.isArray(rawBody)) {
-    throw new Error('Command body must be an object');
-  }
-  const body = rawBody as Record<string, unknown>;
-
-  if ('value' in body) {
-    if (typeof body.value !== 'string' && typeof body.value !== 'number') {
-      throw new Error('value must be a string or number');
-    }
-    return parseCommandValue(body.value);
-  }
-  if ('preset' in body) {
-    if (typeof body.preset !== 'string') throw new Error('preset must be a string');
-    return fanPresetToD2Value(body.preset);
-  }
-  if ('percentage' in body) {
-    if (typeof body.percentage !== 'number') throw new Error('percentage must be a number');
-    return fanPercentageToD2Value(body.percentage, device.supportedFunctions);
-  }
-  if ('isOn' in body) {
-    if (typeof body.isOn !== 'boolean') throw new Error('isOn must be a boolean');
-    return fanPowerToD2Value(body.isOn, device.supportedFunctions);
-  }
-  throw new Error('Expected value, percentage, preset, or isOn');
-}
-
 function findLegacyDevice(room: string, key: string): Device | undefined {
   const device = initialDevices.find(
     (item) =>
@@ -286,6 +255,16 @@ function findLegacyDevice(room: string, key: string): Device | undefined {
       item.key.toUpperCase() === key.toUpperCase(),
   );
   return device ? { ...device } : undefined;
+}
+
+function profileContext(device: Device): ProfileDeviceContext {
+  return {
+    sourceId: device.sourceId,
+    targetId: device.targetId,
+    capabilities: device.capabilities,
+    reportedState: device.reportedState,
+    desiredState: device.desiredState,
+  };
 }
 
 function contentType(path: string): string {
@@ -315,9 +294,31 @@ export function createRequestHandler(
   let homeAssistantSettings = options.homeAssistantSettings ?? defaults.homeAssistant;
   let mqttSettings = { ...(options.mqttSettings ?? defaultMqttSettings()) };
   const getSocket = typeof socket === 'function' ? socket : () => socket;
+  const profiles = options.profiles ?? createDefaultProfileRegistry();
+  const transportConnected = (settings: TransportSettings): boolean =>
+    options.transportConnected?.() ?? settings.type !== 'none';
 
-  async function sendCommand(device: Device, value: number): Promise<void> {
-    await sendDeviceCommand(getSocket(), options.registry, device, value);
+  function deviceResponse(device: Device): Record<string, unknown> {
+    const profile = profiles.get(device.profileId);
+    const context = profileContext(device);
+    const entity = profile?.entity;
+    return {
+      ...device,
+      ...(profile
+        ? {
+            profile: {
+              id: profile.metadata.id,
+              description: profile.metadata.description,
+              ...(entity ? { entity: entity.describe(context) } : {}),
+            },
+          }
+        : {}),
+      ...(entity ? { entityState: entity.projectState(context) } : {}),
+    };
+  }
+
+  async function sendCommand(device: Device, request: unknown): Promise<void> {
+    await sendDeviceCommand(getSocket(), options.registry, device, request, profiles);
   }
 
   return async function handleRequest(request: Request): Promise<Response> {
@@ -330,7 +331,9 @@ export function createRequestHandler(
 
     if (parts[0] === 'api') {
       if (parts[1] === 'settings' && request.method === 'GET' && parts.length === 2) {
-        return json(transportSettingsResponse(transportSettings));
+        return json(
+          transportSettingsResponse(transportSettings, transportConnected(transportSettings)),
+        );
       }
 
       if (parts[1] === 'settings' && request.method === 'PUT' && parts.length === 2) {
@@ -346,7 +349,7 @@ export function createRequestHandler(
           }
           transportSettings = next;
           return json({
-            ...transportSettingsResponse(next),
+            ...transportSettingsResponse(next, transportConnected(next)),
             restartRequired: !options.applyTransportSettings,
           });
         } catch (error) {
@@ -422,7 +425,11 @@ export function createRequestHandler(
       }
 
       if (parts[1] === 'devices' && request.method === 'GET' && parts.length === 2) {
-        return json(options.registry?.list() ?? initialDevices.map((device) => ({ ...device })));
+        return json(
+          (options.registry?.list() ?? initialDevices.map((device) => ({ ...device }))).map(
+            deviceResponse,
+          ),
+        );
       }
 
       if (parts[1] === 'listen' && request.method === 'GET' && parts.length === 2) {
@@ -524,7 +531,7 @@ export function createRequestHandler(
         const device = options.registry?.findByTargetId(targetId);
         if (!device || !Number.isInteger(targetId)) return json({ error: 'Unknown device' }, 404);
         try {
-          await sendCommand(device, await parseCommandBody(request, device));
+          await sendCommand(device, await request.json());
           return json({ ok: true });
         } catch (error) {
           return json({ error: (error as Error).message }, 400);
@@ -559,13 +566,8 @@ export function createRequestHandler(
 
     if (!deviceConfig) return new Response(null, { status: 400 });
 
-    const { protocol } = deviceConfig;
-    if (protocol !== 'D2-50-00') {
-      return json({ error: `Unsupported device protocol: ${protocol}` }, 422);
-    }
-
     try {
-      await sendCommand(deviceConfig, parseCommandValue(value));
+      await sendCommand(deviceConfig, { value });
       return new Response(null, { status: 200 });
     } catch {
       return new Response(null, { status: 400 });

@@ -50,6 +50,20 @@ export function HomeAssistantSettings({
             value={settings.status_topic}
           />
         </label>
+        <label className="setting-field wide">
+          <span>Log level</span>
+          <select
+            onChange={(event) =>
+              update('log_level', event.target.value as HomeAssistantResponse['log_level'])
+            }
+            value={settings.log_level}
+          >
+            <option value="debug">Debug</option>
+            <option value="info">Info</option>
+            <option value="warn">Warn</option>
+            <option value="error">Error</option>
+          </select>
+        </label>
         <label className="switch-field standalone-switch">
           <input
             checked={settings.enabled}

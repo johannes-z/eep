@@ -1,20 +1,39 @@
-import type { AppView } from '../ui/types';
+import { Link } from '@tanstack/react-router';
+import { appRoutes } from '../ui/routes';
+import type { MqttForm, TransportResponse } from '../ui/types';
 
-const navigation = [
-  { view: 'overview' as const, label: 'Devices', icon: '⌂' },
-  { view: 'settings' as const, label: 'Transport', icon: '◫' },
-  { view: 'mqtt' as const, label: 'MQTT', icon: '◌' },
-  { view: 'homeassistant' as const, label: 'Home Assistant', icon: '⌘' },
-];
+export function Sidebar({
+  mqtt,
+  transport,
+}: {
+  mqtt: MqttForm | null;
+  transport: TransportResponse | null;
+}) {
+  const mqttStatus = mqtt?.connected
+    ? 'Connected'
+    : mqtt?.error
+      ? 'Error'
+      : mqtt?.configured
+        ? 'Connecting'
+        : mqtt
+          ? 'Not configured'
+          : 'Loading';
+  const mqttStatusTone = mqtt?.connected ? 'online' : mqtt?.error ? 'error' : 'warning';
+  const transportStatus = transport
+    ? transport.connected
+      ? 'Connected'
+      : transport.type === 'none'
+        ? 'Disabled'
+        : 'Disconnected'
+    : 'Loading';
+  const transportStatusTone = !transport
+    ? 'warning'
+    : transport.connected
+      ? 'online'
+      : transport.type === 'none'
+        ? 'neutral'
+        : 'error';
 
-const pageTitles: Record<AppView, string> = {
-  overview: 'Devices',
-  settings: 'Transport',
-  mqtt: 'MQTT',
-  homeassistant: 'Home Assistant',
-};
-
-export function Sidebar({ view, onView }: { view: AppView; onView: (view: AppView) => void }) {
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -26,54 +45,72 @@ export function Sidebar({ view, onView }: { view: AppView; onView: (view: AppVie
       </div>
       <nav aria-label="Primary navigation">
         <p className="nav-heading">General</p>
-        {navigation.slice(0, 1).map((item) => (
-          <button
-            className={`nav-item ${view === item.view ? 'selected' : ''}`}
-            key={item.view}
-            onClick={() => onView(item.view)}
-            type="button"
-          >
-            <span
-              aria-hidden="true"
-              className="nav-icon"
+        {appRoutes
+          .filter((item) => item.section === 'general')
+          .map((item) => (
+            <Link
+              activeOptions={{ exact: true }}
+              activeProps={{
+                'aria-current': 'page',
+                className: 'nav-item selected',
+              }}
+              className="nav-item"
+              key={item.path}
+              to={item.path}
             >
-              {item.icon}
-            </span>
-            {item.label}
-          </button>
-        ))}
+              <span
+                aria-hidden="true"
+                className="nav-icon"
+              >
+                {item.icon}
+              </span>
+              {item.label}
+            </Link>
+          ))}
         <p className="nav-heading nav-heading-spaced">Settings</p>
-        {navigation.slice(1).map((item) => (
-          <button
-            className={`nav-item ${view === item.view ? 'selected' : ''}`}
-            key={item.view}
-            onClick={() => onView(item.view)}
-            type="button"
-          >
-            <span
-              aria-hidden="true"
-              className="nav-icon"
+        {appRoutes
+          .filter((item) => item.section === 'settings')
+          .map((item) => (
+            <Link
+              activeOptions={{ exact: true }}
+              activeProps={{
+                'aria-current': 'page',
+                className: 'nav-item selected',
+              }}
+              className="nav-item"
+              key={item.path}
+              to={item.path}
             >
-              {item.icon}
-            </span>
-            {item.label}
-          </button>
-        ))}
+              <span
+                aria-hidden="true"
+                className="nav-icon"
+              >
+                {item.icon}
+              </span>
+              {item.label}
+            </Link>
+          ))}
       </nav>
       <div className="sidebar-footer">
-        <span className="status-dot online" />
-        <span>ESP3 transport</span>
+        <div className="sidebar-status">
+          <span className={`status-dot ${transportStatusTone}`} />
+          <span>ESP3 transport {transportStatus}</span>
+        </div>
+        <div className="sidebar-status">
+          <span className={`status-dot ${mqttStatusTone}`} />
+          <span>MQTT {mqttStatus}</span>
+        </div>
       </div>
     </aside>
   );
 }
 
 export function TopBar({
-  view,
+  title,
   pairing,
   onPairing,
 }: {
-  view: AppView;
+  title: string;
   pairing: boolean;
   onPairing: () => void;
 }) {
@@ -81,7 +118,7 @@ export function TopBar({
     <header className="topbar">
       <div className="topbar-title">
         <span className="breadcrumb">eep</span>
-        <h1>{pageTitles[view]}</h1>
+        <h1>{title}</h1>
       </div>
       <div className="topbar-actions">
         <span className="connection-state">

@@ -3,6 +3,7 @@ import type { TransportSettings } from '../config';
 import { applyRadioPacket } from '../devices/inbound';
 import type { DeviceRegistry } from '../devices/registry';
 import type { TeachInManager } from '../devices/teachin';
+import { createDefaultProfileRegistry, type ProfileRegistry } from '../profiles';
 import { closeTransport, openTransport, type TransportConnection } from './adapters';
 import { Esp3Parser, parseRadioERP1, type Esp3Frame } from './esp3';
 
@@ -13,6 +14,7 @@ export type TransportPacketListener = (
 
 export class TransportRuntime {
   private stopping = false;
+  private connected: boolean;
   private readonly packetListeners = new Set<TransportPacketListener>();
 
   constructor(
@@ -20,10 +22,17 @@ export class TransportRuntime {
     private readonly registry: DeviceRegistry,
     private readonly teachIn: TeachInManager,
     private readonly onFatalError: (reason: string) => void,
-  ) {}
+    private readonly profiles: ProfileRegistry = createDefaultProfileRegistry(),
+  ) {
+    this.connected = Boolean(connection.on);
+  }
 
   get current(): TransportConnection {
     return this.connection;
+  }
+
+  get isConnected(): boolean {
+    return this.connected;
   }
 
   onPacket(listener: TransportPacketListener): () => void {
@@ -43,6 +52,7 @@ export class TransportRuntime {
       this.monitor(replacement);
       const previous = this.connection;
       this.connection = replacement;
+      this.connected = Boolean(replacement.on);
       await closeTransport(previous);
     } catch (error) {
       await closeTransport(replacement).catch(() => undefined);
@@ -52,6 +62,7 @@ export class TransportRuntime {
 
   async stop(): Promise<void> {
     this.stopping = true;
+    this.connected = false;
     await closeTransport(this.connection);
   }
 
@@ -71,7 +82,7 @@ export class TransportRuntime {
         }
         if (!radioPacket) continue;
         this.teachIn.observe(radioPacket);
-        void applyRadioPacket(radioPacket, this.registry).catch((error: unknown) => {
+        void applyRadioPacket(radioPacket, this.registry, this.profiles).catch((error: unknown) => {
           console.error('Failed to apply EnOcean telegram:', error);
         });
       }
@@ -81,19 +92,27 @@ export class TransportRuntime {
   private monitor(connection: TransportConnection): void {
     if (connection instanceof Socket) {
       connection.on('close', () => {
-        if (!this.stopping && connection === this.connection) this.onFatalError('close');
+        if (!this.stopping && connection === this.connection) {
+          this.connected = false;
+          this.onFatalError('close');
+        }
       });
       connection.on('end', () => {
-        if (!this.stopping && connection === this.connection) this.onFatalError('end');
+        if (!this.stopping && connection === this.connection) {
+          this.connected = false;
+          this.onFatalError('end');
+        }
       });
       connection.on('error', (error) => {
         if (this.stopping || connection !== this.connection) return;
+        this.connected = false;
         console.error('Socket runtime error:', error);
         this.onFatalError('error');
       });
     } else if (connection.on) {
       connection.on('error', (error: unknown) => {
         if (this.stopping || connection !== this.connection) return;
+        this.connected = false;
         console.error('Serial port runtime error:', error);
         this.onFatalError('serial port error');
       });

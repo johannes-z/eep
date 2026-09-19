@@ -1,19 +1,30 @@
-import type { D2FanState } from '../api/D2-50-00/fan';
+import type { JsonValue } from '../profiles/types';
+
+export interface DeviceTeachInInfo {
+  eep: string;
+  channel: number;
+  manufacturerId: number;
+  direction: 'unidirectional' | 'bidirectional';
+  responseExpected: boolean;
+}
+
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export interface Device {
   key: string;
   sourceId: number;
   targetId: number;
-  protocol: string;
+  profileId: string;
+  capabilities: JsonValue;
   roomId: string;
   roomName: string;
   name: string;
   paired: boolean;
-  supportedFunctions: string[];
+  teachIn?: DeviceTeachInInfo;
   lastSeen?: string;
   availability: 'online' | 'offline' | 'unknown';
-  reportedState?: D2FanState;
-  desiredState?: D2FanState;
+  reportedState?: unknown;
+  desiredState?: unknown;
 }
 
 export interface AddonConfig {
@@ -42,6 +53,7 @@ export interface HomeAssistantSettings {
   enabled: boolean;
   discoveryTopic: string;
   statusTopic: string;
+  logLevel?: LogLevel;
   experimentalEventEntities: boolean;
   legacyActionSensor: boolean;
 }

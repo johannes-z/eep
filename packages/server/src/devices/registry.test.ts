@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { DeviceRegistry } from './registry';
+import { sendDeviceCommand } from './commands';
 
 test('loads configured devices and persists updates by target ID', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-registry-'));
@@ -11,7 +12,7 @@ test('loads configured devices and persists updates by target ID', async () => {
   const registry = await DeviceRegistry.load(filePath);
 
   expect(registry.list()).toHaveLength(4);
-  expect(registry.list()[0].supportedFunctions).toEqual([
+  expect(registry.list()[0].capabilities).toEqual([
     'off',
     'level1',
     'level2',
@@ -35,8 +36,10 @@ test('loads configured devices and persists updates by target ID', async () => {
   });
 
   const states = JSON.parse(await readFile(filePath, 'utf8')) as {
+    version: number;
     devices: Array<{ sourceId: string; targetId: string }>;
   };
+  expect(states.version).toBe(2);
   expect(states.devices[0]).toMatchObject({ sourceId: 'ffe76681', targetId: '0513cefe' });
 });
 
@@ -115,4 +118,37 @@ test('serializes concurrent updates without losing either mutation', async () =>
   const restored = await DeviceRegistry.load(filePath);
   expect(restored.findByTargetId(0x0513cefe)?.name).toBe('Updated living room');
   expect(restored.findByTargetId(0x05126787)?.name).toBe('Updated office');
+});
+
+test('retains unknown profiles as unavailable opaque devices', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-registry-unknown-'));
+  const filePath = join(directory, 'states.json');
+  const seed = (await DeviceRegistry.load(filePath)).list()[0];
+  await Bun.write(
+    filePath,
+    JSON.stringify({
+      version: 2,
+      devices: [
+        {
+          ...seed,
+          profileId: 'D5-00-01',
+          capabilities: { contact: true },
+          reportedState: { contact: true },
+          availability: 'online',
+        },
+      ],
+    }),
+  );
+
+  const registry = await DeviceRegistry.load(filePath);
+  const device = registry.list()[0];
+  expect(device).toMatchObject({
+    profileId: 'D5-00-01',
+    capabilities: { contact: true },
+    reportedState: { contact: true },
+    availability: 'unknown',
+  });
+  expect(
+    sendDeviceCommand({ write: async () => undefined }, registry, device, { value: 'toggle' }),
+  ).rejects.toThrow('Unsupported EEP profile');
 });

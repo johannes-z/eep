@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react';
+import { Outlet, useRouterState } from '@tanstack/react-router';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { HomeAssistantSettings } from './components/HomeAssistantSettings';
 import { MqttSettings, type MqttSaveResult } from './components/MqttSettings';
 import { Overview } from './components/Overview';
+import { PacketListener } from './components/PacketListener';
 import { Sidebar, TopBar } from './components/Navigation';
 import { TransportSettings } from './components/TransportSettings';
 import { formatTargetId } from './components/deviceUtils';
+import { getAppRoute } from './ui/routes';
 import type {
-  AppView,
   CommandBody,
   Device,
   HomeAssistantResponse,
@@ -30,8 +32,45 @@ function toMqttForm(settings: MqttResponse): MqttForm {
   return { ...settings, password: '', clearPassword: false };
 }
 
+export interface AppContextValue {
+  busyTarget: number | null;
+  candidates: TeachInCandidate[];
+  devices: Device[];
+  homeAssistant: HomeAssistantResponse | null;
+  homeAssistantMessage: SettingsFormMessage;
+  listen: ListenResponse | null;
+  mqtt: MqttForm | null;
+  mqttMessage: SettingsFormMessage;
+  onAcceptCandidate: (candidate: TeachInCandidate) => void;
+  onCommand: (targetId: number, body: CommandBody) => void;
+  onHomeAssistantChange: (settings: HomeAssistantResponse) => void;
+  onListen: () => void;
+  onMqttChange: (settings: MqttForm) => void;
+  onPairing: () => void;
+  onRenameDevice: (targetId: number, name: string) => Promise<void>;
+  onSaveHomeAssistant: (settings: HomeAssistantResponse) => void;
+  onSaveMqtt: (settings: MqttForm) => void;
+  onSaveTransport: (settings: TransportResponse) => void;
+  onTransportChange: (settings: TransportResponse) => void;
+  pairing: boolean;
+  savingHomeAssistant: boolean;
+  savingMqtt: boolean;
+  savingTransport: boolean;
+  transport: TransportResponse | null;
+  transportMessage: SettingsFormMessage;
+}
+
+const AppContext = createContext<AppContextValue | null>(null);
+
+export function useAppContext(): AppContextValue {
+  const context = useContext(AppContext);
+  if (!context) throw new Error('App context is unavailable');
+  return context;
+}
+
 export function App() {
-  const [view, setView] = useState<AppView>('overview');
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const { title } = getAppRoute(pathname);
   const [devices, setDevices] = useState<Device[]>([]);
   const [pairing, setPairing] = useState(false);
   const [candidates, setCandidates] = useState<TeachInCandidate[]>([]);
@@ -115,6 +154,7 @@ export function App() {
       void loadDevices().catch(() => undefined);
       void loadPairing().catch(() => undefined);
       void loadMqtt().catch(() => undefined);
+      void loadTransport().catch(() => undefined);
       void loadListen().catch(() => undefined);
     }, 3000);
     return () => window.clearInterval(timer);
@@ -298,70 +338,60 @@ export function App() {
     }
   }
 
+  const context: AppContextValue = {
+    busyTarget,
+    candidates,
+    devices,
+    homeAssistant,
+    homeAssistantMessage,
+    listen,
+    mqtt,
+    mqttMessage,
+    onAcceptCandidate: acceptCandidate,
+    onCommand: command,
+    onHomeAssistantChange: setHomeAssistant,
+    onListen: toggleListen,
+    onMqttChange: setMqtt,
+    onPairing: togglePairing,
+    onRenameDevice: renameDevice,
+    onSaveHomeAssistant: saveHomeAssistant,
+    onSaveMqtt: saveMqtt,
+    onSaveTransport: saveTransport,
+    onTransportChange: setTransport,
+    pairing,
+    savingHomeAssistant,
+    savingMqtt,
+    savingTransport,
+    transport,
+    transportMessage,
+  };
+
   return (
-    <div className="app-shell">
-      <Sidebar
-        onView={setView}
-        view={view}
-      />
-      <main className="main-content">
-        <TopBar
-          onPairing={togglePairing}
-          pairing={pairing}
-          view={view}
+    <AppContext.Provider value={context}>
+      <div className="app-shell">
+        <Sidebar
+          mqtt={mqtt}
+          transport={transport}
         />
-        {error && (
-          <div
-            className="error-banner"
-            role="alert"
-          >
-            {error}
-          </div>
-        )}
-        <div className="page-content">
-          {view === 'overview' ? (
-            <Overview
-              busyTarget={busyTarget}
-              candidates={candidates}
-              devices={devices}
-              listen={listen}
-              mqtt={mqtt}
-              onAccept={acceptCandidate}
-              onCommand={command}
-              onListen={toggleListen}
-              onRename={renameDevice}
-              onPairing={togglePairing}
-              pairing={pairing}
-            />
-          ) : view === 'settings' && transport ? (
-            <TransportSettings
-              message={transportMessage}
-              onChange={setTransport}
-              onSave={saveTransport}
-              saving={savingTransport}
-              settings={transport}
-            />
-          ) : view === 'homeassistant' && homeAssistant ? (
-            <HomeAssistantSettings
-              message={homeAssistantMessage}
-              onChange={setHomeAssistant}
-              onSave={saveHomeAssistant}
-              saving={savingHomeAssistant}
-              settings={homeAssistant}
-            />
-          ) : mqtt ? (
-            <MqttSettings
-              message={mqttMessage}
-              onChange={setMqtt}
-              onSave={saveMqtt}
-              saving={savingMqtt}
-              settings={mqtt}
-            />
-          ) : (
-            <div className="loading-state">Loading...</div>
+        <main className="main-content">
+          <TopBar
+            onPairing={togglePairing}
+            pairing={pairing}
+            title={title}
+          />
+          {error && (
+            <div
+              className="error-banner"
+              role="alert"
+            >
+              {error}
+            </div>
           )}
-        </div>
-      </main>
-    </div>
+          <div className="page-content">
+            <Outlet />
+          </div>
+        </main>
+      </div>
+    </AppContext.Provider>
   );
 }

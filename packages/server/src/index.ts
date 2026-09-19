@@ -22,9 +22,16 @@ import {
   saveTransportSettings,
 } from './settings';
 import { openTransport } from './transport/adapters';
-import { buildUteTeachInResponse } from './transport/esp3';
+import { buildUteTeachInResponse, type UteResponse } from './transport/esp3';
 import { TransportRuntime } from './transport/runtime';
 import { PacketListener } from './transport/listener';
+import { createDefaultProfileRegistry } from './profiles';
+import { appRoutes } from './ui/routes';
+
+const homepageRoutes = Object.fromEntries([
+  ['/index.html', homepage as never],
+  ...appRoutes.map(({ path }) => [path, homepage as never]),
+]);
 
 export { createRequestHandler, sendDeviceCommand };
 export type { RequestTransport };
@@ -99,10 +106,10 @@ export function getMqttSettings(
 function createTeachInResponder(
   getSocket: () => RequestTransport,
   controllerId: number,
-): (candidate: TeachInCandidate) => Promise<void> {
-  return async (candidate): Promise<void> => {
+): (candidate: TeachInCandidate, response: UteResponse) => Promise<void> {
+  return async (candidate, response): Promise<void> => {
     await getSocket().write(
-      buildUteTeachInResponse(controllerId, candidate.targetId, candidate.requestPayload),
+      buildUteTeachInResponse(controllerId, candidate.targetId, candidate.requestPayload, response),
     );
   };
 }
@@ -111,7 +118,8 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
   try {
     const initialConfig = resolveServerConfig(addonConfig);
     const dataDir = initialConfig.dataDir;
-    const registry = await DeviceRegistry.load(join(dataDir, 'states.json'));
+    const profiles = createDefaultProfileRegistry();
+    const registry = await DeviceRegistry.load(join(dataDir, 'states.json'), profiles);
     const settingsPath = join(dataDir, 'settings.json');
     const storedMqttSettings = await loadMqttSettings(settingsPath);
     const storedTransportSettings = await loadTransportSettings(settingsPath);
@@ -128,8 +136,13 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
     let homeAssistantSettings = serverConfig.homeAssistant;
     const mqttStatus: MqttStatus = { connected: false };
 
-    const configuredControllerId = registry.list()[0]?.sourceId ?? 0;
+    const configuredControllerId = registry.list()[0]?.sourceId;
     const controllerId = serverConfig.controllerId ?? configuredControllerId;
+    if (!Number.isInteger(controllerId) || controllerId < 1 || controllerId > 0xffffffff) {
+      throw new Error(
+        'A non-zero CONTROLLER_ID or a persisted device sourceId is required for UTE teach-in',
+      );
+    }
     const handleFatalSocketError = (reason: string): void => {
       console.error(`Fatal socket issue: ${reason}. Exiting to trigger Watchdog.`);
       process.exit(1);
@@ -140,28 +153,40 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
       registry,
       controllerId,
       createTeachInResponder(() => transportRuntime.current, controllerId),
+      profiles,
     );
     transportRuntime = new TransportRuntime(
       await openTransport(serverConfig.transport),
       registry,
       teachIn,
       handleFatalSocketError,
+      profiles,
     );
     transportRuntime.onPacket((frame, radioPacket) => packetListener.capture(frame, radioPacket));
     await transportRuntime.start();
 
+    let applyHomeAssistantSettings: (settings: typeof homeAssistantSettings) => Promise<void>;
     const mqttRuntime = new MqttRuntime(
       registry,
-      (device, value) => sendDeviceCommand(transportRuntime.current, registry, device, value),
+      (device, value) =>
+        sendDeviceCommand(transportRuntime.current, registry, device, value, profiles),
       mqttStatus,
+      profiles,
+      teachIn,
+      {
+        version: process.env.npm_package_version ?? '1.0.0',
+        logLevel: homeAssistantSettings.logLevel,
+        setLogLevel: async (logLevel) => {
+          await applyHomeAssistantSettings({ ...homeAssistantSettings, logLevel });
+        },
+        requestRestart: () => process.exit(0),
+      },
     );
     const applyMqttSettings = async (settings: MqttSettings): Promise<void> => {
       activeMqttSettings = settings;
       await mqttRuntime.apply(settings, homeAssistantSettings);
     };
-    const applyHomeAssistantSettings = async (
-      settings: typeof homeAssistantSettings,
-    ): Promise<void> => {
+    applyHomeAssistantSettings = async (settings: typeof homeAssistantSettings): Promise<void> => {
       homeAssistantSettings = settings;
       if (activeMqttSettings) await applyMqttSettings(activeMqttSettings);
     };
@@ -173,7 +198,7 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
     };
 
     const server = Bun.serve({
-      routes: { '/': homepage as never, '/index.html': homepage as never },
+      routes: homepageRoutes,
       development: process.env.NODE_ENV !== 'production',
       hostname: serverConfig.host,
       port: serverConfig.port,
@@ -182,6 +207,7 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
         teachIn,
         webRoot: serverConfig.webRoot,
         transportSettings: serverConfig.transport,
+        transportConnected: () => transportRuntime.isConnected,
         saveTransportSettings: (settings) => saveTransportSettings(settingsPath, settings),
         applyTransportSettings,
         homeAssistantSettings: serverConfig.homeAssistant,
@@ -192,6 +218,7 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
         applyMqttSettings,
         mqttStatus: () => ({ ...mqttStatus }),
         listener: packetListener,
+        profiles,
       }),
     });
 

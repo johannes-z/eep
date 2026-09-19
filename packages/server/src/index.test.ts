@@ -233,6 +233,7 @@ test('reads and updates general transport settings', async () => {
     baudrate: 115200,
     disable_led: false,
     rtscts: false,
+    connected: true,
   });
 
   const response = await handler(
@@ -255,6 +256,27 @@ test('reads and updates general transport settings', async () => {
   expect(await response.json()).toMatchObject({ restartRequired: true });
 });
 
+test('reports the live transport connection state', async () => {
+  const handler = createRequestHandler(new FakeTransport(), {
+    transportSettings: {
+      type: 'tcp',
+      adapter: '',
+      path: 'tcp://localhost:20108',
+      baudRate: 57600,
+      disableLed: false,
+      rtscts: false,
+    },
+    transportConnected: () => false,
+  });
+
+  const response = await handler(new Request('http://localhost/api/settings'));
+
+  expect(await response.json()).toMatchObject({
+    type: 'tcp',
+    connected: false,
+  });
+});
+
 test('rejects unsupported Home Assistant event settings', async () => {
   const handler = createRequestHandler(new FakeTransport());
   const response = await handler(
@@ -269,4 +291,18 @@ test('rejects unsupported Home Assistant event settings', async () => {
   expect(await response.json()).toMatchObject({
     error: 'event entities and legacy action sensors are not supported yet',
   });
+});
+
+test('accepts and returns the Home Assistant log level', async () => {
+  const handler = createRequestHandler(new FakeTransport());
+  const response = await handler(
+    new Request('http://localhost/api/homeassistant', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ log_level: 'debug' }),
+    }),
+  );
+
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ log_level: 'debug' });
 });

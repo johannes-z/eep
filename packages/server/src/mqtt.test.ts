@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { d2ValueToFanState } from './api/D2-50-00/fan';
 import { DeviceRegistry } from './devices/registry';
+import { TeachInManager } from './devices/teachin';
 import { MqttFanBridge, type MqttClientLike } from './mqtt';
 
 class FakeMqttClient implements MqttClientLike {
@@ -40,18 +41,27 @@ class FakeMqttClient implements MqttClientLike {
   }
 }
 
-async function createBridge() {
+async function createBridge(bridgeInfo: Record<string, unknown> = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'eep-mqtt-'));
   const registry = await DeviceRegistry.load(join(directory, 'states.json'));
   const client = new FakeMqttClient();
   const commands: number[] = [];
-  const bridge = new MqttFanBridge(client, registry, async (device, value) => {
-    commands.push(value);
-    await registry.update(device.targetId, {
-      desiredState: d2ValueToFanState(value),
-      availability: 'online',
-    });
-  });
+  const bridge = new MqttFanBridge(
+    client,
+    registry,
+    async (device, value) => {
+      const d2Value = value as number;
+      commands.push(d2Value);
+      await registry.update(device.targetId, {
+        desiredState: d2ValueToFanState(d2Value),
+        availability: 'online',
+      });
+    },
+    {},
+    undefined,
+    undefined,
+    bridgeInfo,
+  );
   bridge.start();
   await bridge.publishAll();
   return { bridge, client, commands, registry };
@@ -78,7 +88,59 @@ test('publishes Home Assistant fan discovery for seeded devices', async () => {
   });
   expect(configuration.name).toBeNull();
   expect(configuration.device.name).toBe(registry.findByTargetId(0x0513cefe)?.name);
+  expect(configuration.device).toMatchObject({
+    identifiers: ['eep_0513cefe'],
+    connections: [['enocean', '0513cefe']],
+    via_device: 'eep_bridge',
+  });
   expect(configuration.payload_reset_preset_mode).toBe('None');
+});
+
+test('publishes bridge diagnostics and connected-device metadata', async () => {
+  const { client } = await createBridge({
+    version: '2.7.1',
+  });
+  const discovery = client.published.find(
+    (message) => message.topic === 'homeassistant/binary_sensor/eep_bridge_connection/config',
+  );
+  const configuration = JSON.parse(discovery?.payload ?? '{}');
+
+  expect(configuration).toMatchObject({
+    unique_id: 'eep_bridge_connection_state',
+    state_topic: 'eep/bridge/eep_bridge_connection/state',
+    payload_on: 'Connected',
+    payload_off: 'Disconnected',
+    device_class: 'connectivity',
+    entity_category: 'diagnostic',
+    device: {
+      identifiers: ['eep_bridge'],
+      name: 'Enocean2MQTT Bridge',
+      manufacturer: 'Enocean2MQTT',
+      model: 'Bridge',
+      sw_version: '2.7.1',
+    },
+  });
+  expect(
+    client.published.find((message) => message.topic === 'eep/bridge/eep_bridge_connection/state')
+      ?.payload,
+  ).toBe('Connected');
+  expect(
+    client.published
+      .filter((message) => message.topic === 'homeassistant/sensor/eep_bridge_connection/config')
+      .at(-1)?.payload,
+  ).toBe('');
+  expect(
+    client.published.find((message) => message.topic === 'eep/bridge/eep_bridge_connection/state')
+      ?.payload,
+  ).toBe('Connected');
+  for (const topic of [
+    'homeassistant/sensor/eep_bridge_device_count/config',
+    'homeassistant/sensor/eep_bridge_controller_id/config',
+    'homeassistant/sensor/eep_bridge_transport/config',
+    'homeassistant/sensor/eep_bridge_activity/config',
+  ]) {
+    expect(client.published.filter((message) => message.topic === topic).at(-1)?.payload).toBe('');
+  }
 });
 
 test('republishes discovery when a device is renamed', async () => {
@@ -135,6 +197,30 @@ test('maps fan MQTT commands to D2 values', async () => {
   expect(commands).toEqual([3, 3, 3, 1, 0]);
 });
 
+test('publishes and applies the Home Assistant log level selector', async () => {
+  const { client } = await createBridge();
+  const discovery = client.published.find(
+    (message) => message.topic === 'homeassistant/select/eep_bridge_log_level/config',
+  );
+
+  expect(JSON.parse(discovery?.payload ?? '{}')).toMatchObject({
+    unique_id: 'eep_bridge_log_level',
+    command_topic: 'eep/bridge/eep_bridge_log_level/set',
+    state_topic: 'eep/bridge/eep_bridge_log_level/state',
+    options: ['debug', 'info', 'warn', 'error'],
+    entity_category: 'config',
+  });
+
+  client.send('eep/bridge/eep_bridge_log_level/set', 'debug');
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  expect(
+    client.published
+      .filter((message) => message.topic === 'eep/bridge/eep_bridge_log_level/state')
+      .at(-1)?.payload,
+  ).toBe('debug');
+});
+
 test('rejects MQTT presets that are not configured for a device', async () => {
   const { client, commands } = await createBridge();
   client.send('eep/fan/0513cefe/preset/set', 'Automatic on demand');
@@ -174,7 +260,55 @@ test('clears the Home Assistant preset when an MQTT speed is selected', async ()
     d2Value: 1,
     percentage: 25,
   });
-  expect(registry.findByTargetId(0x0513cefe)?.desiredState?.preset).toBeUndefined();
+  expect(registry.findByTargetId(0x0513cefe)?.desiredState).not.toMatchObject({
+    preset: expect.anything(),
+  });
+});
+
+test('publishes and controls the Home Assistant Permit join switch', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-mqtt-pairing-'));
+  const registry = await DeviceRegistry.load(join(directory, 'states.json'));
+  const client = new FakeMqttClient();
+  const teachIn = new TeachInManager(registry, 0xffe76685);
+  const bridge = new MqttFanBridge(client, registry, async () => undefined, {}, undefined, teachIn);
+  bridge.start();
+  await bridge.publishAll();
+
+  const discovery = client.published.find(
+    (message) => message.topic === 'homeassistant/switch/permit_join/config',
+  );
+  expect(JSON.parse(discovery?.payload ?? '{}')).toMatchObject({
+    unique_id: 'eep_permit_join',
+    command_topic: 'eep/permit_join/set',
+    state_topic: 'eep/permit_join/state',
+    payload_on: 'ON',
+    payload_off: 'OFF',
+    state_on: 'ON',
+    state_off: 'OFF',
+  });
+  expect(
+    client.published.find((message) => message.topic === 'eep/permit_join/state')?.payload,
+  ).toBe('OFF');
+
+  client.send('eep/permit_join/set', 'ON');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(teachIn.isActive()).toBe(true);
+  expect(
+    client.published.filter((message) => message.topic === 'eep/permit_join/state').at(-1)?.payload,
+  ).toBe('ON');
+
+  teachIn.stop();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(
+    client.published.filter((message) => message.topic === 'eep/permit_join/state').at(-1)?.payload,
+  ).toBe('OFF');
+
+  await bridge.stop();
+  expect(
+    client.published
+      .filter((message) => message.topic === 'homeassistant/switch/permit_join/config')
+      .at(-1)?.payload,
+  ).toBe('');
 });
 
 test('publishes offline availability when the bridge stops', async () => {

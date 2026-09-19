@@ -1,6 +1,5 @@
 import { useState, type FormEvent } from 'react';
 import type { CommandBody, Device } from '../ui/types';
-import { getSupportedProtocolFunctions } from '../api/functions';
 import { currentState, formatLastSeen, formatTargetId } from './deviceUtils';
 
 export function DeviceTable({
@@ -21,7 +20,7 @@ export function DeviceTable({
           <tr>
             <th>Friendly name</th>
             <th>EEP address</th>
-            <th>Model</th>
+            <th>Protocol</th>
             <th>Type</th>
             <th>Last seen</th>
             <th>Availability</th>
@@ -70,22 +69,24 @@ function DeviceRow({
   const [name, setName] = useState(device.name);
   const [savingName, setSavingName] = useState(false);
   const state = currentState(device);
-  const functions = getSupportedProtocolFunctions(device.protocol, device.supportedFunctions);
-  const speeds = functions.filter((item) => item.kind === 'speed');
-  const speedOptions = [
-    { value: 0, label: 'Off' },
-    ...speeds.map((item, index) => ({
-      value: Math.round(((index + 1) / speeds.length) * 100),
-      label: `${Math.round(((index + 1) / speeds.length) * 100)}%`,
-    })),
-  ];
-  const presets = functions
-    .filter((item) => item.kind === 'preset' && item.preset)
-    .map((item) => item.preset as string);
-  const pending = Boolean(
-    device.desiredState &&
-    (!device.reportedState || device.desiredState.d2Value !== device.reportedState.d2Value),
-  );
+  const entity = device.profile?.entity;
+  const speedOptions = entity?.percentage
+    ? [
+        { value: 0, label: 'Off' },
+        ...Array.from({ length: entity.percentage.max - entity.percentage.min + 1 }, (_, index) => {
+          const level = entity.percentage!.min + index;
+          const percentage = Math.round((level / entity.percentage!.max) * 100);
+          return { value: percentage, label: `${percentage}%` };
+        }),
+      ]
+    : [];
+  const presets = entity?.presets ?? [];
+  const statePercentage = entity?.percentage
+    ? state.percentage === undefined
+      ? entity.percentage.min
+      : Math.round((state.percentage / entity.percentage.max) * 100)
+    : undefined;
+  const pending = Boolean(device.desiredState);
 
   async function saveName(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -155,8 +156,8 @@ function DeviceRow({
       <td>
         <code>{formatTargetId(device.targetId)}</code>
       </td>
-      <td>{device.protocol}</td>
-      <td>Fan</td>
+      <td>{device.profileId}</td>
+      <td>{entity?.kind ?? 'Unknown'}</td>
       <td>{formatLastSeen(device.lastSeen)}</td>
       <td>
         <span className={`availability ${device.availability}`}>
@@ -182,44 +183,49 @@ function DeviceRow({
           <button
             aria-label={`${state.isOn ? 'Turn off' : 'Turn on'} ${device.name}`}
             className={`icon-button ${state.isOn ? 'active' : ''}`}
-            disabled={busy}
+            disabled={busy || !entity?.power}
             onClick={() => onCommand(device.targetId, { isOn: !state.isOn })}
             title={state.isOn ? 'Turn off' : 'Turn on'}
             type="button"
           >
             ⏻
           </button>
-          <select
-            aria-label={`${device.name} speed`}
-            disabled={busy}
-            onChange={(event) =>
-              onCommand(device.targetId, { percentage: Number(event.target.value) })
-            }
-            value={state.preset ? 'preset' : String(state.percentage)}
-          >
-            {state.preset && <option value="preset">Preset</option>}
-            {speedOptions.map((option) => (
-              <option
-                key={option.value}
-                value={option.value}
-              >
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <select
-            aria-label={`${device.name} preset`}
-            disabled={busy}
-            onChange={(event) =>
-              event.target.value && onCommand(device.targetId, { preset: event.target.value })
-            }
-            value={state.preset ?? ''}
-          >
-            <option value="">Preset</option>
-            {presets.map((preset) => (
-              <option key={preset}>{preset}</option>
-            ))}
-          </select>
+          {entity?.percentage && (
+            <select
+              aria-label={`${device.name} level`}
+              disabled={busy}
+              onChange={(event) =>
+                onCommand(device.targetId, { percentage: Number(event.target.value) })
+              }
+              value={state.preset ? 'preset' : String(statePercentage ?? 0)}
+            >
+              {state.preset && <option value="preset">Preset</option>}
+              {speedOptions.map((option) => (
+                <option
+                  key={option.value}
+                  value={option.value}
+                >
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          )}
+          {presets.length > 0 && (
+            <select
+              aria-label={`${device.name} preset`}
+              disabled={busy}
+              onChange={(event) =>
+                event.target.value && onCommand(device.targetId, { preset: event.target.value })
+              }
+              value={state.preset ?? ''}
+            >
+              <option value="">Preset</option>
+              {presets.map((preset) => (
+                <option key={preset}>{preset}</option>
+              ))}
+            </select>
+          )}
+          {!entity && <span className="muted-copy">Unsupported profile</span>}
         </div>
       </td>
     </tr>

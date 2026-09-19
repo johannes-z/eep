@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import type {
   AddonConfig,
   HomeAssistantSettings,
+  LogLevel,
   ServerConfig,
   TransportSettings,
   TransportType,
@@ -54,6 +55,14 @@ function configuredBoolean(value: unknown, name: string, fallback: boolean): boo
   return value;
 }
 
+function configuredLogLevel(value: unknown, name: string, fallback: LogLevel): LogLevel {
+  const level = configuredString(value, name, fallback);
+  if (level !== 'debug' && level !== 'info' && level !== 'warn' && level !== 'error') {
+    throw new Error(`${name} must be debug, info, warn, or error`);
+  }
+  return level;
+}
+
 function inferTransportType(path: string): TransportType {
   if (!path) return 'none';
   return path.startsWith('tcp://') ? 'tcp' : 'serial';
@@ -97,6 +106,11 @@ function resolveHomeAssistant(input: AddonConfig): HomeAssistantSettings {
       configuredHomeAssistant.statusTopic,
       'homeAssistant.statusTopic',
       process.env.HA_STATUS_TOPIC ?? 'eep/status',
+    ),
+    logLevel: configuredLogLevel(
+      configuredHomeAssistant.logLevel,
+      'homeAssistant.logLevel',
+      (process.env.HA_LOG_LEVEL as LogLevel | undefined) ?? 'info',
     ),
     experimentalEventEntities: configuredBoolean(
       configuredHomeAssistant.experimentalEventEntities,

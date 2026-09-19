@@ -1,22 +1,29 @@
-import { getDefaultSupportedFunctions } from '../api/functions';
 import type { Device } from '../config';
-import type { RadioERP1Packet } from './inbound';
+import {
+  createDefaultProfileRegistry,
+  normalizeProfileId,
+  type ProfileRegistry,
+} from '../profiles';
+import type { RadioERP1Packet, UteTeachInInfo } from './inbound';
 import type { DeviceRegistry } from './registry';
+import type { UteResponse } from '../transport/esp3';
 
 export interface TeachInCandidate {
   targetId: number;
   eep: string;
-  manufacturer?: unknown;
+  channel: number;
+  manufacturer: number;
+  direction: UteTeachInInfo['direction'];
+  responseExpected: boolean;
   seenAt: string;
   requestPayload: number[];
 }
 
-export type TeachInResponder = (candidate: TeachInCandidate) => Promise<void>;
-
-interface TeachInInfo {
-  eep?: { toString(): string } | string;
-  manufacturer?: unknown;
-}
+export type TeachInResponder = (
+  candidate: TeachInCandidate,
+  response: UteResponse,
+) => Promise<void>;
+export type TeachInStateListener = (active: boolean) => void;
 
 function parseId(value: string | number): number {
   if (typeof value === 'number') return value;
@@ -32,23 +39,34 @@ function readText(value: unknown, field: string): string {
 export class TeachInManager {
   private active = false;
   private readonly candidates = new Map<number, TeachInCandidate>();
+  private readonly stateListeners = new Set<TeachInStateListener>();
 
   constructor(
     private readonly registry: DeviceRegistry,
     private readonly controllerId: number,
-    private readonly respond?: TeachInResponder,
+    private readonly sendResponse?: TeachInResponder,
+    private readonly profiles: ProfileRegistry = createDefaultProfileRegistry(),
   ) {}
 
   start(): void {
+    if (this.active) return;
     this.active = true;
+    for (const listener of this.stateListeners) listener(true);
   }
 
   stop(): void {
+    if (!this.active) return;
     this.active = false;
+    for (const listener of this.stateListeners) listener(false);
   }
 
   isActive(): boolean {
     return this.active;
+  }
+
+  onStateChange(listener: TeachInStateListener): () => void {
+    this.stateListeners.add(listener);
+    return () => this.stateListeners.delete(listener);
   }
 
   listCandidates(): TeachInCandidate[] {
@@ -56,19 +74,72 @@ export class TeachInManager {
   }
 
   observe(packet: RadioERP1Packet): TeachInCandidate | undefined {
-    if (!this.active || !packet.teachIn) return undefined;
-    const info = packet.teachInInfo as TeachInInfo | undefined;
-    const eep = typeof info?.eep === 'string' ? info.eep : info?.eep?.toString();
-    if (!eep) return undefined;
+    if (!this.active || packet.RORG !== 0xd4) return undefined;
+    const info = packet.teachInInfo;
+    if (!info || info.command !== 'query') return undefined;
+    const targetId = parseId(packet.senderId);
+    if (!Number.isInteger(targetId) || targetId < 1 || targetId > 0xffffffff) {
+      return undefined;
+    }
     const candidate: TeachInCandidate = {
-      targetId: parseId(packet.senderId),
-      eep: eep.toUpperCase(),
-      manufacturer: info?.manufacturer,
+      targetId,
+      eep: info.eep.toUpperCase(),
+      channel: info.channel,
+      manufacturer: info.manufacturer,
+      direction: info.direction,
+      responseExpected: info.responseExpected,
       seenAt: new Date().toISOString(),
       requestPayload: Array.from(packet.payload),
     };
+
+    if (info.requestType !== 'teachIn') {
+      this.respond(candidate, 'general');
+      return undefined;
+    }
+
+    let profileId: string;
+    try {
+      profileId = normalizeProfileId(candidate.eep);
+    } catch {
+      this.respond(candidate, 'eepNotSupported');
+      return undefined;
+    }
+    if (!this.profiles.get(profileId)) {
+      this.respond(candidate, 'eepNotSupported');
+      return undefined;
+    }
+
+    const existing = this.registry.findByTargetId(candidate.targetId);
+    if (existing?.profileId === profileId) {
+      void this.registry
+        .update(candidate.targetId, {
+          teachIn: {
+            eep: candidate.eep,
+            channel: candidate.channel,
+            manufacturerId: candidate.manufacturer,
+            direction: candidate.direction,
+            responseExpected: candidate.responseExpected,
+          },
+          availability: 'online',
+          lastSeen: candidate.seenAt,
+        })
+        .catch((error: unknown) => {
+          console.error('Failed to update existing device teach-in metadata:', error);
+        });
+      this.respond(candidate, 'teachInAccepted');
+      return undefined;
+    }
+
     this.candidates.set(candidate.targetId, candidate);
+    this.respond(candidate, 'teachInAccepted');
     return candidate;
+  }
+
+  private respond(candidate: TeachInCandidate, response: UteResponse): void {
+    if (!candidate.responseExpected || !this.sendResponse) return;
+    void this.sendResponse(candidate, response).catch((error: unknown) => {
+      console.error('UTE teach-in response failed:', error);
+    });
   }
 
   async accept(
@@ -80,27 +151,36 @@ export class TeachInManager {
     }
     const candidate = this.candidates.get(targetId);
     if (!candidate) throw new Error('Unknown teach-in candidate');
-    if (candidate.eep !== 'D2-50-00') throw new Error(`Unsupported EEP: ${candidate.eep}`);
+    const profileId = normalizeProfileId(candidate.eep);
+    const profile = this.profiles.get(profileId);
+    if (!profile) throw new Error(`Unsupported EEP: ${candidate.eep}`);
     const input = details as unknown as Record<string, unknown>;
     const roomId = readText(input?.roomId, 'roomId');
     const roomName = readText(input?.roomName, 'roomName');
     const key = readText(input?.key, 'key');
     const name = readText(input?.name, 'name');
+    const capabilities = profile.defaultCapabilities();
 
     const device: Device = {
       key,
       sourceId: this.controllerId,
       targetId,
-      protocol: candidate.eep,
+      profileId,
+      capabilities,
       roomId,
       roomName,
       name,
       paired: true,
-      supportedFunctions: getDefaultSupportedFunctions(candidate.eep),
+      teachIn: {
+        eep: candidate.eep,
+        channel: candidate.channel,
+        manufacturerId: candidate.manufacturer,
+        direction: candidate.direction,
+        responseExpected: candidate.responseExpected,
+      },
       availability: 'online',
       lastSeen: candidate.seenAt,
     };
-    await this.respond?.(candidate);
     const accepted = await this.registry.upsert(device);
     this.candidates.delete(targetId);
     return accepted;

@@ -8,12 +8,13 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "bun scripts/build.js && bun build ./src/index.ts --outdir ./dist --target bun --external bun-serialport && bun build ./src/main.ts --outdir ./dist --target bun --external bun-serialport",
-    "dev": "bun --watch ./src/main.ts",
+    "dev": "bun --watch ./scripts/dev.js",
     "start": "bun dist/main.js",
     "test": "bun test ./src",
     "typecheck": "bunx tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@tanstack/react-router": "^1.170.38",
     "bun-serialport": "0.2.0",
     "mqtt": "^5.16.0",
     "polycrc": "1.1.1",

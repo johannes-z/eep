@@ -1,16 +1,12 @@
 {
-  "version": 1,
+  "version": 2,
   "devices": [
     {
       "key": "vent",
       "sourceId": "ffe76681",
       "targetId": "0513cefe",
-      "protocol": "D2-50-00",
-      "roomId": "E04",
-      "roomName": "Living Room",
-      "name": "E04 Vent",
-      "paired": true,
-      "supportedFunctions": [
+      "profileId": "D2-50-00",
+      "capabilities": [
         "off",
         "level1",
         "level2",
@@ -20,8 +16,12 @@
         "supplyOnly",
         "exhaustOnly"
       ],
+      "roomId": "E04",
+      "roomName": "Living Room",
+      "name": "E04 Vent",
+      "paired": true,
       "availability": "online",
-      "lastSeen": "2026-09-19T13:14:56.024Z",
+      "lastSeen": "2026-09-19T14:09:56.096Z",
       "reportedState": {
         "isOn": true,
         "percentage": 25,
@@ -32,12 +32,8 @@
       "key": "vent",
       "sourceId": "ffe76682",
       "targetId": "05126787",
-      "protocol": "D2-50-00",
-      "roomId": "E05",
-      "roomName": "Office",
-      "name": "E05 Vent",
-      "paired": true,
-      "supportedFunctions": [
+      "profileId": "D2-50-00",
+      "capabilities": [
         "off",
         "level1",
         "level2",
@@ -47,8 +43,12 @@
         "supplyOnly",
         "exhaustOnly"
       ],
+      "roomId": "E05",
+      "roomName": "Office",
+      "name": "E05 Vent",
+      "paired": true,
       "availability": "online",
-      "lastSeen": "2026-09-19T13:17:10.785Z",
+      "lastSeen": "2026-09-19T14:12:10.862Z",
       "reportedState": {
         "isOn": true,
         "percentage": 25,
@@ -59,12 +59,8 @@
       "key": "vent",
       "sourceId": "ffe76683",
       "targetId": "05149bb5",
-      "protocol": "D2-50-00",
-      "roomId": "E06",
-      "roomName": "Guest Room",
-      "name": "E06 Vent",
-      "paired": true,
-      "supportedFunctions": [
+      "profileId": "D2-50-00",
+      "capabilities": [
         "off",
         "level1",
         "level2",
@@ -74,8 +70,12 @@
         "supplyOnly",
         "exhaustOnly"
       ],
+      "roomId": "E06",
+      "roomName": "Guest Room",
+      "name": "E06 Vent",
+      "paired": true,
       "availability": "online",
-      "lastSeen": "2026-09-19T13:13:08.400Z",
+      "lastSeen": "2026-09-19T14:13:08.470Z",
       "reportedState": {
         "isOn": true,
         "percentage": 25,
@@ -86,12 +86,8 @@
       "key": "vent",
       "sourceId": "ffe76684",
       "targetId": "0513cdf8",
-      "protocol": "D2-50-00",
-      "roomId": "E07",
-      "roomName": "Bed Room",
-      "name": "E07 Vent",
-      "paired": true,
-      "supportedFunctions": [
+      "profileId": "D2-50-00",
+      "capabilities": [
         "off",
         "level1",
         "level2",
@@ -101,8 +97,12 @@
         "supplyOnly",
         "exhaustOnly"
       ],
+      "roomId": "E07",
+      "roomName": "Bed Room",
+      "name": "E07 Vent",
+      "paired": true,
       "availability": "online",
-      "lastSeen": "2026-09-19T13:13:25.115Z",
+      "lastSeen": "2026-09-19T14:13:25.089Z",
       "reportedState": {
         "isOn": true,
         "percentage": 25,

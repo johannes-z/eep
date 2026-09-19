@@ -1,8 +1,10 @@
 import { connect, type MqttClient } from 'mqtt';
 import type { Device, HomeAssistantSettings } from '../../config';
 import type { DeviceRegistry } from '../../devices/registry';
+import type { TeachInManager } from '../../devices/teachin';
 import type { MqttSettings } from '../../mqtt';
-import { MqttFanBridge } from '../homeassistant/bridge';
+import { MqttEntityBridge, type MqttBridgeInfo } from '../homeassistant/bridge';
+import { createDefaultProfileRegistry, type ProfileRegistry } from '../../profiles';
 
 export interface MqttRuntimeStatus {
   connected: boolean;
@@ -17,12 +19,15 @@ function connectionUrl(settings: MqttSettings): string {
 
 export class MqttRuntime {
   private client: MqttClient | undefined;
-  private bridge: MqttFanBridge | undefined;
+  private bridge: MqttEntityBridge | undefined;
 
   constructor(
     private readonly registry: DeviceRegistry,
-    private readonly sendCommand: (device: Device, value: number) => Promise<void>,
+    private readonly sendCommand: (device: Device, request: unknown) => Promise<void>,
     private readonly runtimeStatus: MqttRuntimeStatus,
+    private readonly profiles: ProfileRegistry = createDefaultProfileRegistry(),
+    private readonly teachIn?: TeachInManager,
+    private readonly bridgeInfo: MqttBridgeInfo = {},
   ) {}
 
   async apply(settings: MqttSettings, homeAssistant: HomeAssistantSettings): Promise<void> {
@@ -62,10 +67,18 @@ export class MqttRuntime {
       this.runtimeStatus.error = error.message;
       console.error('MQTT connection error:', error.message);
     });
-    this.bridge = new MqttFanBridge(client, this.registry, this.sendCommand, {
-      ...settings,
-      homeAssistant,
-    });
+    this.bridge = new MqttEntityBridge(
+      client,
+      this.registry,
+      this.sendCommand,
+      {
+        ...settings,
+        homeAssistant,
+      },
+      this.profiles,
+      this.teachIn,
+      this.bridgeInfo,
+    );
     this.bridge.start();
   }
 

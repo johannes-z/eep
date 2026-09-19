@@ -1,22 +1,36 @@
-export type AppView = 'overview' | 'settings' | 'mqtt' | 'homeassistant';
+export type AppView = 'overview' | 'packet-listener' | 'settings' | 'mqtt' | 'homeassistant';
 
-export interface FanState {
+export interface EntityState {
   isOn: boolean;
-  percentage: number;
-  d2Value: number;
+  percentage?: number;
   preset?: string;
+}
+
+export interface EntityDescriptor {
+  kind: string;
+  protocol: string;
+  power: boolean;
+  commands: string[];
+  percentage?: { min: number; max: number };
+  presets?: string[];
 }
 
 export interface Device {
   targetId: number;
   name: string;
   roomName: string;
-  protocol: string;
-  supportedFunctions: string[];
+  profileId: string;
+  capabilities: unknown;
+  profile?: {
+    id: string;
+    description: string;
+    entity?: EntityDescriptor;
+  };
   availability: 'online' | 'offline' | 'unknown';
   lastSeen?: string;
-  reportedState?: FanState;
-  desiredState?: FanState;
+  reportedState?: unknown;
+  desiredState?: unknown;
+  entityState?: EntityState;
 }
 
 export interface TeachInCandidate {
@@ -76,6 +90,7 @@ export interface MqttForm extends MqttResponse {
 }
 
 export interface TransportResponse {
+  connected: boolean;
   type: 'none' | 'serial' | 'tcp';
   port: string;
   baudrate: number;
@@ -87,6 +102,7 @@ export interface HomeAssistantResponse {
   enabled: boolean;
   discovery_topic: string;
   status_topic: string;
+  log_level: 'debug' | 'info' | 'warn' | 'error';
   experimental_event_entities: boolean;
   legacy_action_sensor: boolean;
   restartRequired?: boolean;
@@ -97,4 +113,4 @@ export interface SettingsFormMessage {
   error: boolean;
 }
 
-export type CommandBody = { percentage: number } | { isOn: boolean } | { preset: string };
+export type CommandBody = Record<string, unknown>;

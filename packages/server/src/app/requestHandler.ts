@@ -14,6 +14,7 @@ import type { DeviceRegistry } from '../devices/registry';
 import type { TeachInManager } from '../devices/teachin';
 import { defaultMqttSettings, type MqttSettings } from '../mqtt';
 import type { TransportConnection } from '../transport/adapters';
+import type { PacketListener } from '../transport/listener';
 
 export interface RequestTransport extends TransportConnection {}
 
@@ -36,6 +37,7 @@ export interface RequestHandlerOptions {
   saveMqttSettings?: (settings: MqttSettings) => Promise<void>;
   applyMqttSettings?: (settings: MqttSettings) => Promise<void>;
   mqttStatus?: () => MqttStatus;
+  listener?: PacketListener;
 }
 
 interface PairingState {
@@ -421,6 +423,22 @@ export function createRequestHandler(
 
       if (parts[1] === 'devices' && request.method === 'GET' && parts.length === 2) {
         return json(options.registry?.list() ?? initialDevices.map((device) => ({ ...device })));
+      }
+
+      if (parts[1] === 'listen' && request.method === 'GET' && parts.length === 2) {
+        return json(options.listener?.snapshot() ?? { active: false, packets: [] });
+      }
+
+      if (
+        parts[1] === 'listen' &&
+        request.method === 'POST' &&
+        parts.length === 3 &&
+        (parts[2] === 'start' || parts[2] === 'stop')
+      ) {
+        if (!options.listener) return json({ error: 'Packet listener is unavailable' }, 503);
+        if (parts[2] === 'start') options.listener.start();
+        else options.listener.stop();
+        return json(options.listener.snapshot());
       }
 
       if (parts[1] === 'devices' && request.method === 'PUT' && parts.length === 3) {

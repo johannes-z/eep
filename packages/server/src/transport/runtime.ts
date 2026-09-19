@@ -4,10 +4,16 @@ import { applyRadioPacket } from '../devices/inbound';
 import type { DeviceRegistry } from '../devices/registry';
 import type { TeachInManager } from '../devices/teachin';
 import { closeTransport, openTransport, type TransportConnection } from './adapters';
-import { Esp3Parser, parseRadioERP1 } from './esp3';
+import { Esp3Parser, parseRadioERP1, type Esp3Frame } from './esp3';
+
+export type TransportPacketListener = (
+  frame: Esp3Frame,
+  radioPacket: ReturnType<typeof parseRadioERP1>,
+) => void;
 
 export class TransportRuntime {
   private stopping = false;
+  private readonly packetListeners = new Set<TransportPacketListener>();
 
   constructor(
     private connection: TransportConnection,
@@ -18,6 +24,11 @@ export class TransportRuntime {
 
   get current(): TransportConnection {
     return this.connection;
+  }
+
+  onPacket(listener: TransportPacketListener): () => void {
+    this.packetListeners.add(listener);
+    return () => this.packetListeners.delete(listener);
   }
 
   async start(): Promise<void> {
@@ -51,6 +62,13 @@ export class TransportRuntime {
       if (!chunk || typeof chunk !== 'object' || !('length' in chunk)) return;
       for (const frame of parser.push(chunk as ArrayLike<number>)) {
         const radioPacket = parseRadioERP1(frame);
+        for (const listener of this.packetListeners) {
+          try {
+            listener(frame, radioPacket);
+          } catch (error) {
+            console.error('Transport packet listener failed:', error);
+          }
+        }
         if (!radioPacket) continue;
         this.teachIn.observe(radioPacket);
         void applyRadioPacket(radioPacket, this.registry).catch((error: unknown) => {

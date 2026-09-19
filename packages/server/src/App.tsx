@@ -10,6 +10,7 @@ import type {
   CommandBody,
   Device,
   HomeAssistantResponse,
+  ListenResponse,
   MqttForm,
   MqttResponse,
   PairingResponse,
@@ -36,6 +37,7 @@ export function App() {
   const [candidates, setCandidates] = useState<TeachInCandidate[]>([]);
   const [transport, setTransport] = useState<TransportResponse | null>(null);
   const [homeAssistant, setHomeAssistant] = useState<HomeAssistantResponse | null>(null);
+  const [listen, setListen] = useState<ListenResponse | null>(null);
   const [mqtt, setMqtt] = useState<MqttForm | null>(null);
   const [busyTarget, setBusyTarget] = useState<number | null>(null);
   const [savingTransport, setSavingTransport] = useState(false);
@@ -94,6 +96,10 @@ export function App() {
     setHomeAssistant(await request<HomeAssistantResponse>('/api/homeassistant'));
   }
 
+  async function loadListen() {
+    setListen(await request<ListenResponse>('/api/listen'));
+  }
+
   useEffect(() => {
     void Promise.all([
       loadDevices(),
@@ -101,6 +107,7 @@ export function App() {
       loadMqtt(),
       loadTransport(),
       loadHomeAssistant(),
+      loadListen(),
     ]).catch((reason: unknown) =>
       setError(reason instanceof Error ? reason.message : 'Server unavailable'),
     );
@@ -108,6 +115,7 @@ export function App() {
       void loadDevices().catch(() => undefined);
       void loadPairing().catch(() => undefined);
       void loadMqtt().catch(() => undefined);
+      void loadListen().catch(() => undefined);
     }, 3000);
     return () => window.clearInterval(timer);
   }, []);
@@ -121,6 +129,16 @@ export function App() {
       await loadPairing();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Unable to change pairing state');
+    }
+  }
+
+  async function toggleListen() {
+    setError('');
+    try {
+      const action = listen?.active ? 'stop' : 'start';
+      setListen(await request<ListenResponse>(`/api/listen/${action}`, { method: 'POST' }));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Unable to change listen state');
     }
   }
 
@@ -306,9 +324,11 @@ export function App() {
               busyTarget={busyTarget}
               candidates={candidates}
               devices={devices}
+              listen={listen}
               mqtt={mqtt}
               onAccept={acceptCandidate}
               onCommand={command}
+              onListen={toggleListen}
               onRename={renameDevice}
               onPairing={togglePairing}
               pairing={pairing}

@@ -29,6 +29,26 @@ export interface PairingResponse {
   candidates: TeachInCandidate[];
 }
 
+export interface ListenPacket {
+  id: number;
+  timestamp: string;
+  packetType: number;
+  data: string;
+  optionalData: string;
+  radio?: {
+    rorg: number;
+    payload: string;
+    senderId: string;
+    teachIn: boolean;
+    eep?: string;
+  };
+}
+
+export interface ListenResponse {
+  active: boolean;
+  packets: ListenPacket[];
+}
+
 export interface MqttResponse {
   configured: boolean;
   connected: boolean;

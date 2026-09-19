@@ -73,12 +73,12 @@ export class Esp3Parser {
   }
 }
 
-function parseUteInfo(payload: number[]): { eep: { toString(): string } } {
+function parseUteInfo(payload: number[]): { eep: string } {
   const rorg = readBits(payload, 48, 8);
   const func = readBits(payload, 40, 8);
   const type = readBits(payload, 32, 8);
   const eep = `${rorg.toString(16).padStart(2, '0')}-${func.toString(16).padStart(2, '0')}-${type.toString(16).padStart(2, '0')}`;
-  return { eep: { toString: () => eep } };
+  return { eep };
 }
 
 function bytesToId(bytes: number[]): string {

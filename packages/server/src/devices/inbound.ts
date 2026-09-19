@@ -24,9 +24,17 @@ function parseSenderId(senderId: string | number): number {
   return value;
 }
 
+function isD2BasicStatusPayload(payload: ArrayLike<number>): boolean {
+  return payload.length >= 6 && (payload[0] & 0xf0) === 0x40;
+}
+
 export function decodeD2Value(payload: ArrayLike<number>): number | undefined {
   if (payload.length === 0) return undefined;
   const firstByte = payload[0];
+  if (isD2BasicStatusPayload(payload)) {
+    const operationMode = firstByte & 0x0f;
+    return isD2ControlValue(operationMode) ? operationMode : undefined;
+  }
   if (isD2ControlValue(firstByte)) return firstByte;
   const packedValue = firstByte >> 4;
   return isD2ControlValue(packedValue) ? packedValue : undefined;
@@ -43,11 +51,14 @@ export async function applyRadioPacket(
 
   const value = decodeD2Value(packet.payload);
   if (value === undefined || value === 15) return undefined;
+  const isPhysicalStatus = isD2BasicStatusPayload(packet.payload);
   const previousPercentage =
     device.desiredState?.percentage ?? device.reportedState?.percentage ?? 0;
   const reportedState = d2ValueToFanState(value, previousPercentage, device.supportedFunctions);
   const desiredState =
-    device.desiredState?.d2Value === reportedState.d2Value ? undefined : device.desiredState;
+    isPhysicalStatus || device.desiredState?.d2Value === reportedState.d2Value
+      ? undefined
+      : device.desiredState;
   await registry.update(targetId, {
     availability: 'online',
     lastSeen: new Date().toISOString(),

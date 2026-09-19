@@ -24,6 +24,7 @@ import {
 import { openTransport } from './transport/adapters';
 import { buildUteTeachInResponse } from './transport/esp3';
 import { TransportRuntime } from './transport/runtime';
+import { PacketListener } from './transport/listener';
 
 export { createRequestHandler, sendDeviceCommand };
 export type { RequestTransport };
@@ -134,6 +135,7 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
       process.exit(1);
     };
     let transportRuntime: TransportRuntime;
+    const packetListener = new PacketListener();
     const teachIn = new TeachInManager(
       registry,
       controllerId,
@@ -145,6 +147,7 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
       teachIn,
       handleFatalSocketError,
     );
+    transportRuntime.onPacket((frame, radioPacket) => packetListener.capture(frame, radioPacket));
     await transportRuntime.start();
 
     const mqttRuntime = new MqttRuntime(
@@ -188,6 +191,7 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
         saveMqttSettings: (settings) => saveMqttSettings(settingsPath, settings),
         applyMqttSettings,
         mqttStatus: () => ({ ...mqttStatus }),
+        listener: packetListener,
       }),
     });
 

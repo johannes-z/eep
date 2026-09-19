@@ -555,6 +555,61 @@ select:focus-visible {
   background: #fffdf5;
 }
 
+.listener-panel {
+  margin-bottom: 18px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.text-button.active {
+  color: var(--danger);
+}
+
+.packet-list {
+  display: grid;
+  gap: 6px;
+  max-height: 280px;
+  margin-top: 12px;
+  overflow: auto;
+}
+
+.packet-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  background: var(--surface-muted);
+}
+
+.packet-row strong,
+.packet-row span {
+  display: block;
+}
+
+.packet-row strong {
+  color: var(--ink);
+  font-size: 11px;
+}
+
+.packet-row span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.packet-row code {
+  max-width: 55%;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: 'IBM Plex Mono', Consolas, monospace;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .panel-toolbar h3 {
   margin: 0;
   font-size: 13px;

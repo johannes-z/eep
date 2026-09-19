@@ -23,11 +23,13 @@ export interface PermitJoinTopics {
   bridgeAvailability: string;
 }
 
-export interface BridgeEntityTopics {
+export interface RestartTopics {
   discovery: string;
-  state: string;
   command: string;
+  bridgeAvailability: string;
 }
+
+export type DeviceDiagnosticField = 'eep' | 'channel' | 'manufacturer_id' | 'last_seen';
 
 export interface DeviceDiagnosticTopics {
   discovery: string;
@@ -36,29 +38,22 @@ export interface DeviceDiagnosticTopics {
   bridgeAvailability: string;
 }
 
-export interface BridgeTopics {
-  connection: BridgeEntityTopics;
-  version: BridgeEntityTopics;
-  logLevel: BridgeEntityTopics;
-  restart: BridgeEntityTopics;
-}
-
-export const bridgeDeviceId = 'eep_bridge';
-
 export function deviceId(device: Device): string {
-  return device.targetId.toString(16).padStart(8, '0');
+  return device.sourceId.toString(16).padStart(8, '0');
 }
 
-function objectIdPart(value: string): string {
-  return value
-    .trim()
+function nameObjectId(name: string): string {
+  const objectId = name
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
+  return objectId;
 }
 
 export function entityObjectId(device: Device): string {
-  return `${objectIdPart(device.roomId)}_${objectIdPart(device.key)}`;
+  return nameObjectId(device.name) || `eep_${deviceId(device)}`;
 }
 
 export function entityTopics(
@@ -98,56 +93,6 @@ export function fanTopics(
   return entityTopics(device, 'fan', discoveryPrefix, baseTopic, bridgeAvailability);
 }
 
-export function bridgeEntityTopics(
-  component: string,
-  objectId: string,
-  discoveryPrefix: string,
-  baseTopic: string,
-): BridgeEntityTopics {
-  const base = `${baseTopic}/bridge/${objectId}`;
-  return {
-    discovery: `${discoveryPrefix}/${component}/${objectId}/config`,
-    state: `${base}/state`,
-    command: `${base}/set`,
-  };
-}
-
-export function deviceDiagnosticTopics(
-  device: Device,
-  field: string,
-  discoveryPrefix: string,
-  baseTopic: string,
-  bridgeAvailability: string,
-): DeviceDiagnosticTopics {
-  const id = deviceId(device);
-  const normalizedField = objectIdPart(field);
-  const objectId = `eep_${id}_${normalizedField}`;
-  const base = `${baseTopic}/device/${id}/${normalizedField}`;
-  return {
-    discovery: `${discoveryPrefix}/sensor/${objectId}/config`,
-    state: `${base}/state`,
-    availability: `${base}/availability`,
-    bridgeAvailability,
-  };
-}
-
-export function bridgeTopics(
-  discoveryPrefix: string,
-  baseTopic: string,
-  _bridgeAvailability: string,
-): BridgeTopics {
-  const sensor = (objectId: string) =>
-    bridgeEntityTopics('sensor', objectId, discoveryPrefix, baseTopic);
-  const binarySensor = (objectId: string) =>
-    bridgeEntityTopics('binary_sensor', objectId, discoveryPrefix, baseTopic);
-  return {
-    connection: binarySensor('eep_bridge_connection'),
-    version: sensor('eep_bridge_version'),
-    logLevel: bridgeEntityTopics('select', 'eep_bridge_log_level', discoveryPrefix, baseTopic),
-    restart: bridgeEntityTopics('button', 'eep_bridge_restart', discoveryPrefix, baseTopic),
-  };
-}
-
 export function permitJoinTopics(
   discoveryPrefix: string,
   baseTopic: string,
@@ -158,6 +103,35 @@ export function permitJoinTopics(
     discovery: `${discoveryPrefix}/switch/permit_join/config`,
     command: `${base}/set`,
     state: `${base}/state`,
+    bridgeAvailability,
+  };
+}
+
+export function restartTopics(
+  discoveryPrefix: string,
+  baseTopic: string,
+  bridgeAvailability: string,
+): RestartTopics {
+  return {
+    discovery: `${discoveryPrefix}/button/restart/config`,
+    command: `${baseTopic}/restart/set`,
+    bridgeAvailability,
+  };
+}
+
+export function deviceDiagnosticTopics(
+  device: Device,
+  field: DeviceDiagnosticField,
+  discoveryPrefix: string,
+  baseTopic: string,
+  bridgeAvailability: string,
+): DeviceDiagnosticTopics {
+  const id = deviceId(device);
+  const base = `${baseTopic}/device/${id}/${field}`;
+  return {
+    discovery: `${discoveryPrefix}/sensor/eep_${id}_${field}/config`,
+    state: `${base}/state`,
+    availability: `${base}/availability`,
     bridgeAvailability,
   };
 }

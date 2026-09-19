@@ -11,14 +11,11 @@ export interface DeviceTeachInInfo {
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export interface Device {
-  key: string;
   sourceId: number;
   targetId: number;
+  name: string;
   profileId: string;
   capabilities: JsonValue;
-  roomId: string;
-  roomName: string;
-  name: string;
   paired: boolean;
   teachIn?: DeviceTeachInInfo;
   lastSeen?: string;

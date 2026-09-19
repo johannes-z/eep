@@ -1,5 +1,4 @@
-import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { Device, DeviceTeachInInfo } from '../config';
 import {
@@ -8,11 +7,19 @@ import {
   type ProfileRegistry,
 } from '../profiles';
 import type { JsonValue } from '../profiles/types';
-import initialStates from '../states.json';
+import initialConfiguration from '../configuration.yaml';
+import { loadConfiguration, updateConfiguration } from '../settings';
+import { DeviceStateStore, type DeviceRuntimeState } from './stateStore';
 
-interface PersistedDevice extends Omit<Device, 'sourceId' | 'targetId'> {
-  sourceId: string | number;
+interface PersistedDevice {
   targetId: string | number;
+  name: string;
+  profileId?: string;
+  protocol?: string;
+  capabilities?: JsonValue;
+  supportedFunctions?: unknown;
+  paired?: boolean;
+  teachIn?: unknown;
 }
 
 export type DeviceChangeListener = (device: Device) => void;
@@ -87,17 +94,22 @@ function parseIdentifier(value: unknown, field: string): number {
   return parsed;
 }
 
-function deserializeDevice(value: unknown, profiles: ProfileRegistry): Device {
+function deserializeDevice(
+  value: unknown,
+  sourceIdValue: unknown,
+  profiles: ProfileRegistry,
+  includeRuntimeState = false,
+): Device {
   if (!isRecord(value)) throw new Error('Invalid device record');
+  const sourceId = parseIdentifier(sourceIdValue ?? value.sourceId, 'sourceId');
+  const name =
+    value.name === undefined && value.friendlyName === undefined
+      ? `EnOcean ${sourceId.toString(16).padStart(8, '0')}`
+      : readText(value.name ?? value.friendlyName, 'name');
   const profileId = normalizeProfileId(readText(value.profileId ?? value.protocol, 'profileId'));
-  const availability = value.availability;
-  if (!['online', 'offline', 'unknown'].includes(availability as string)) {
-    throw new Error(`Invalid availability: ${String(availability)}`);
-  }
-  if (typeof value.paired !== 'boolean') throw new Error('Invalid paired');
-  if (value.lastSeen !== undefined && typeof value.lastSeen !== 'string') {
-    throw new Error('Invalid lastSeen');
-  }
+  const paired = value.paired ?? true;
+  if (typeof paired !== 'boolean') throw new Error('Invalid paired');
+  if (!paired) throw new Error('Unpaired devices must not be persisted');
   const profile = profiles.get(profileId);
   const legacyCapabilities = value.supportedFunctions;
   if (
@@ -116,78 +128,136 @@ function deserializeDevice(value: unknown, profiles: ProfileRegistry): Device {
         if (!isJsonValue(opaque)) throw new Error('Invalid capabilities');
         return opaque;
       })();
+  const runtimeState: DeviceRuntimeState = includeRuntimeState
+    ? deserializeRuntimeState(value, profile, capabilities)
+    : { availability: 'unknown' };
+  return {
+    sourceId,
+    targetId: parseIdentifier(value.targetId, 'targetId'),
+    name,
+    profileId,
+    capabilities,
+    paired,
+    ...(value.teachIn === undefined ? {} : { teachIn: validateTeachInInfo(value.teachIn) }),
+    ...runtimeState,
+  };
+}
+
+function deserializeRuntimeState(
+  value: Record<string, unknown>,
+  profile: ReturnType<ProfileRegistry['get']>,
+  capabilities: JsonValue,
+): DeviceRuntimeState {
+  const availability = value.availability ?? 'unknown';
+  if (availability !== 'online' && availability !== 'offline' && availability !== 'unknown') {
+    throw new Error('Invalid availability');
+  }
+  if (value.lastSeen !== undefined && typeof value.lastSeen !== 'string') {
+    throw new Error('Invalid lastSeen');
+  }
   const validateState = (state: unknown, field: 'reportedState' | 'desiredState'): JsonValue => {
     const validated = profile?.validateState(state, field, capabilities) ?? state;
     if (!isJsonValue(validated)) throw new Error(`Invalid ${field}`);
     return validated;
   };
   return {
-    key: readText(value.key, 'key'),
-    sourceId: parseIdentifier(value.sourceId, 'sourceId'),
-    targetId: parseIdentifier(value.targetId, 'targetId'),
-    profileId,
-    capabilities,
-    roomId: readText(value.roomId, 'roomId'),
-    roomName: readText(value.roomName, 'roomName'),
-    name: readText(value.name, 'name'),
-    paired: value.paired,
-    ...(value.teachIn === undefined ? {} : { teachIn: validateTeachInInfo(value.teachIn) }),
-    availability: profile ? (availability as Device['availability']) : 'unknown',
+    availability,
     ...(value.lastSeen === undefined ? {} : { lastSeen: value.lastSeen }),
     ...(value.reportedState === undefined
       ? {}
-      : {
-          reportedState: validateState(value.reportedState, 'reportedState'),
-        }),
+      : { reportedState: validateState(value.reportedState, 'reportedState') }),
     ...(value.desiredState === undefined
       ? {}
-      : {
-          desiredState: validateState(value.desiredState, 'desiredState'),
-        }),
+      : { desiredState: validateState(value.desiredState, 'desiredState') }),
   };
 }
 
-function deserializeDevices(values: unknown, profiles: ProfileRegistry): Device[] {
-  if (!Array.isArray(values))
-    throw new Error('Invalid device state file: devices must be an array');
-  const devices = values.map((value) => deserializeDevice(value, profiles));
+function validateDevices(devices: Device[]): Device[] {
+  const sourceIds = new Set<number>();
   const targetIds = new Set<number>();
   for (const device of devices) {
+    if (sourceIds.has(device.sourceId)) throw new Error(`Duplicate sourceId: ${device.sourceId}`);
+    sourceIds.add(device.sourceId);
     if (targetIds.has(device.targetId)) throw new Error(`Duplicate targetId: ${device.targetId}`);
     targetIds.add(device.targetId);
   }
   return devices;
 }
 
+function deserializeConfiguredDevices(values: unknown, profiles: ProfileRegistry): Device[] {
+  if (!isRecord(values)) throw new Error('Invalid configuration: devices must be a map');
+  return validateDevices(
+    Object.entries(values).map(([sourceId, value]) => deserializeDevice(value, sourceId, profiles)),
+  );
+}
+
+function deserializeLegacyDevices(
+  values: unknown,
+  profiles: ProfileRegistry,
+  includeRuntimeState: boolean,
+): Device[] {
+  if (!Array.isArray(values))
+    throw new Error('Invalid device state file: devices must be an array');
+  const devices = values.map((value) =>
+    deserializeDevice(value, undefined, profiles, includeRuntimeState),
+  );
+  return includeRuntimeState ? devices : validateDevices(devices);
+}
+
 function serializeDevice(device: Device): PersistedDevice {
   return {
-    ...device,
-    sourceId: device.sourceId.toString(16).padStart(8, '0'),
+    name: device.name,
+    profileId: device.profileId,
     targetId: device.targetId.toString(16).padStart(8, '0'),
+    capabilities: device.capabilities,
+    ...(device.teachIn === undefined ? {} : { teachIn: device.teachIn }),
   };
 }
 
 const defaultProfiles = createDefaultProfileRegistry();
 
-export const initialDevices = deserializeDevices(initialStates.devices, defaultProfiles);
+export const initialDevices = deserializeConfiguredDevices(
+  (initialConfiguration as { devices: unknown }).devices,
+  defaultProfiles,
+);
 
-async function readStates(
+async function readLegacyDevices(
   filePath: string,
   profiles: ProfileRegistry,
+  includeRuntimeState: boolean,
 ): Promise<Device[] | undefined> {
   try {
     const data: unknown = JSON.parse(await readFile(filePath, 'utf8'));
     if (!isRecord(data) || !Array.isArray(data.devices)) {
       throw new Error(`Invalid device state file: ${filePath}`);
     }
-    if (data.version !== undefined && data.version !== 1 && data.version !== 2) {
-      throw new Error(`Unsupported device state version: ${JSON.stringify(data.version)}`);
-    }
-    return deserializeDevices(data.devices, profiles);
+    return deserializeLegacyDevices(data.devices, profiles, includeRuntimeState);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     return undefined;
   }
+}
+
+function runtimeStateOf(device: Device): DeviceRuntimeState {
+  return {
+    availability: device.availability,
+    ...(device.lastSeen === undefined ? {} : { lastSeen: device.lastSeen }),
+    ...(device.reportedState === undefined ? {} : { reportedState: device.reportedState }),
+    ...(device.desiredState === undefined ? {} : { desiredState: device.desiredState }),
+  };
+}
+
+function mergeLegacyDevices(configured: Device[], runtime: Device[]): Device[] {
+  const runtimeBySource = new Map(runtime.map((device) => [device.sourceId, device]));
+  const configuredSources = new Set(configured.map((device) => device.sourceId));
+  const devices = configured.map((device) => {
+    const state = runtimeBySource.get(device.sourceId);
+    return state ? { ...device, ...runtimeStateOf(state) } : device;
+  });
+  for (const device of runtimeBySource.values()) {
+    if (!configuredSources.has(device.sourceId)) devices.push(device);
+  }
+  return validateDevices(devices);
 }
 
 export class DeviceRegistry {
@@ -197,6 +267,7 @@ export class DeviceRegistry {
 
   private constructor(
     private readonly filePath: string,
+    private readonly stateStore: DeviceStateStore,
     devices: Device[],
     private readonly profiles: ProfileRegistry,
   ) {
@@ -207,13 +278,42 @@ export class DeviceRegistry {
     filePath: string,
     profiles: ProfileRegistry = defaultProfiles,
   ): Promise<DeviceRegistry> {
-    let devices = await readStates(filePath, profiles);
-    if (devices === undefined && filePath.endsWith('states.json')) {
-      devices = await readStates(join(dirname(filePath), 'devices.json'), profiles);
+    await mkdir(dirname(filePath), { recursive: true });
+    const stateStore = DeviceStateStore.open(join(dirname(filePath), 'state.db'));
+    const configuration = await loadConfiguration(filePath);
+    let devices: Device[] | undefined =
+      configuration.devices === undefined
+        ? undefined
+        : deserializeConfiguredDevices(configuration.devices, profiles);
+    let legacyRuntimeDevices: Device[] | undefined;
+    if (devices === undefined) {
+      const legacyConfiguration = await readLegacyDevices(
+        join(dirname(filePath), 'devices.json'),
+        profiles,
+        false,
+      );
+      legacyRuntimeDevices = await readLegacyDevices(
+        join(dirname(filePath), 'states.json'),
+        profiles,
+        true,
+      );
+      if (legacyConfiguration || legacyRuntimeDevices) {
+        devices = mergeLegacyDevices(legacyConfiguration ?? [], legacyRuntimeDevices ?? []);
+      }
     }
     if (devices === undefined) devices = initialDevices.map((device) => ({ ...device }));
 
-    const registry = new DeviceRegistry(filePath, devices, profiles);
+    const runtimeStates = stateStore.load();
+    const hydratedDevices = devices.map((device) => ({
+      ...device,
+      ...(runtimeStates.get(device.sourceId) ?? {}),
+    }));
+    const registry = new DeviceRegistry(filePath, stateStore, hydratedDevices, profiles);
+    if (legacyRuntimeDevices) {
+      for (const device of legacyRuntimeDevices) {
+        if (!runtimeStates.has(device.sourceId)) stateStore.save(device);
+      }
+    }
     await registry.save();
     return registry;
   }
@@ -227,12 +327,8 @@ export class DeviceRegistry {
     return device ? { ...device } : undefined;
   }
 
-  findByLocation(roomId: string, key: string): Device | undefined {
-    const device = this.devices.find(
-      (item) =>
-        item.roomId.toUpperCase() === roomId.toUpperCase() &&
-        item.key.toUpperCase() === key.toUpperCase(),
-    );
+  findBySourceId(sourceId: number): Device | undefined {
+    const device = this.devices.find((item) => item.sourceId === sourceId);
     return device ? { ...device } : undefined;
   }
 
@@ -244,7 +340,7 @@ export class DeviceRegistry {
   async upsert(device: Device): Promise<Device> {
     this.validateDevice(device);
     return this.enqueueMutation(() => {
-      const index = this.devices.findIndex((item) => item.targetId === device.targetId);
+      const index = this.devices.findIndex((item) => item.sourceId === device.sourceId);
       if (index === -1) this.devices.push({ ...device });
       else this.devices[index] = { ...this.devices[index], ...device };
       const saved = { ...(this.devices[index === -1 ? this.devices.length - 1 : index] as Device) };
@@ -252,10 +348,10 @@ export class DeviceRegistry {
     });
   }
 
-  async update(targetId: number, update: Partial<Device>): Promise<Device> {
+  async update(sourceId: number, update: Partial<Device>): Promise<Device> {
     return this.enqueueMutation(() => {
-      const index = this.devices.findIndex((item) => item.targetId === targetId);
-      if (index === -1) throw new Error(`Unknown device: ${targetId}`);
+      const index = this.devices.findIndex((item) => item.sourceId === sourceId);
+      if (index === -1) throw new Error(`Unknown device: ${sourceId}`);
       const next = { ...this.devices[index], ...update };
       this.validateDevice(next);
       this.devices[index] = next;
@@ -264,12 +360,12 @@ export class DeviceRegistry {
     });
   }
 
-  async remove(targetId: number): Promise<boolean> {
+  async remove(sourceId: number): Promise<boolean> {
     return this.enqueueMutation(() => {
-      const index = this.devices.findIndex((item) => item.targetId === targetId);
+      const index = this.devices.findIndex((item) => item.sourceId === sourceId);
       if (index === -1) return { result: false };
       this.devices.splice(index, 1);
-      return { result: true };
+      return { result: true, removedSourceId: sourceId };
     });
   }
 
@@ -278,6 +374,9 @@ export class DeviceRegistry {
   }
 
   private validateDevice(device: Device): void {
+    parseIdentifier(device.sourceId, 'sourceId');
+    parseIdentifier(device.targetId, 'targetId');
+    if (device.paired !== true) throw new Error('Invalid paired');
     if (device.teachIn !== undefined) validateTeachInInfo(device.teachIn);
     const profile = this.profiles.get(device.profileId);
     if (!profile) {
@@ -306,13 +405,19 @@ export class DeviceRegistry {
     }
   }
 
-  private enqueueMutation<T>(mutation: () => { result: T; changedDevice?: Device }): Promise<T> {
+  private enqueueMutation<T>(
+    mutation: () => { result: T; changedDevice?: Device; removedSourceId?: number },
+  ): Promise<T> {
     const next = this.writeQueue
       .catch(() => undefined)
       .then(async () => {
-        const { result, changedDevice } = mutation();
+        const { result, changedDevice, removedSourceId } = mutation();
         await this.save();
-        if (changedDevice) this.notify(changedDevice);
+        if (removedSourceId !== undefined) this.stateStore.remove(removedSourceId);
+        if (changedDevice) {
+          this.stateStore.save(changedDevice);
+          this.notify(changedDevice);
+        }
         return result;
       });
     this.writeQueue = next.then(
@@ -323,20 +428,15 @@ export class DeviceRegistry {
   }
 
   private async save(): Promise<void> {
-    await mkdir(dirname(this.filePath), { recursive: true });
-    const temporaryPath = join(dirname(this.filePath), `.${randomUUID()}.states.json`);
-    try {
-      await writeFile(
-        temporaryPath,
-        `${JSON.stringify({ version: 2, devices: this.devices.map(serializeDevice) }, null, 2)}\n`,
-        'utf8',
+    await updateConfiguration(this.filePath, (configuration) => {
+      configuration.devices = Object.fromEntries(
+        this.devices
+          .filter((device) => device.paired)
+          .map((device) => [
+            device.sourceId.toString(16).padStart(8, '0'),
+            serializeDevice(device),
+          ]),
       );
-      await rename(temporaryPath, this.filePath);
-    } catch (error) {
-      await Bun.file(temporaryPath)
-        .delete()
-        .catch(() => undefined);
-      throw error;
-    }
+    });
   }
 }

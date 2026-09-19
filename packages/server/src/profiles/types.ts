@@ -22,6 +22,7 @@ export interface ProfilePacket {
 
 export interface ProfileDeviceContext {
   readonly sourceId: number;
+  readonly senderId?: number;
   readonly targetId: number;
   readonly capabilities: unknown;
   readonly reportedState?: unknown;

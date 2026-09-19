@@ -9,24 +9,31 @@ export function Overview({
   candidates,
   busyTarget,
   onCommand,
-  onRename,
+  onDelete,
   onAccept,
   onPairing,
+  onTransmitPairing,
 }: {
   devices: Device[];
   pairing: boolean;
   candidates: TeachInCandidate[];
   busyTarget: number | null;
-  onCommand: (targetId: number, command: CommandBody) => void;
-  onRename: (targetId: number, name: string) => Promise<void>;
+  onCommand: (sourceId: number, command: CommandBody) => void;
+  onDelete: (sourceId: number) => Promise<void>;
   onAccept: (candidate: TeachInCandidate) => void;
   onPairing: () => void;
+  onTransmitPairing: () => void;
 }) {
   const [query, setQuery] = useState('');
   const normalizedQuery = query.trim().toLowerCase();
   const filteredDevices = normalizedQuery
     ? devices.filter((device) =>
-        [device.name, device.roomName, device.profileId, formatTargetId(device.targetId)]
+        [
+          device.name,
+          formatTargetId(device.sourceId),
+          formatTargetId(device.targetId),
+          device.profileId,
+        ]
           .join(' ')
           .toLowerCase()
           .includes(normalizedQuery),
@@ -78,13 +85,22 @@ export function Overview({
               <h3>Join requests</h3>
               <span>{candidates.length} waiting</span>
             </div>
-            <button
-              className="text-button"
-              onClick={onPairing}
-              type="button"
-            >
-              Close
-            </button>
+            <div className="panel-actions">
+              <button
+                className="text-button"
+                onClick={onPairing}
+                type="button"
+              >
+                Close
+              </button>
+              <button
+                className="small-button"
+                onClick={onTransmitPairing}
+                type="button"
+              >
+                Send controller signal
+              </button>
+            </div>
           </div>
           {candidates.length ? (
             <div className="candidate-list">
@@ -116,7 +132,7 @@ export function Overview({
         busyTarget={busyTarget}
         devices={filteredDevices}
         onCommand={onCommand}
-        onRename={onRename}
+        onDelete={onDelete}
       />
     </section>
   );

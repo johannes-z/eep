@@ -16,9 +16,9 @@ export interface EntityDescriptor {
 }
 
 export interface Device {
+  sourceId: number;
   targetId: number;
   name: string;
-  roomName: string;
   profileId: string;
   capabilities: unknown;
   profile?: {

@@ -13,10 +13,12 @@ export async function sendDeviceCommand(
   device: Device,
   request: unknown,
   profiles: ProfileRegistry = createDefaultProfileRegistry(),
+  senderId?: number,
 ): Promise<void> {
   const profile = profiles.require(device.profileId);
   const context = {
     sourceId: device.sourceId,
+    ...(senderId === undefined ? {} : { senderId }),
     targetId: device.targetId,
     capabilities: device.capabilities,
     reportedState: device.reportedState,
@@ -26,7 +28,7 @@ export async function sendDeviceCommand(
   const payload = profile.encodeCommand(context, command);
   await writePayload(socket, payload);
   if (registry && command.desiredState !== undefined) {
-    await registry.update(device.targetId, {
+    await registry.update(device.sourceId, {
       desiredState: command.desiredState as Device['desiredState'],
     });
   }

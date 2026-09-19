@@ -266,6 +266,6 @@ export const d2Profile: EepProfile = {
 
   encodeCommand(context: ProfileDeviceContext, command: ProfileCommand): Uint8Array {
     const value = commandValue(command.value, context.capabilities);
-    return changeState(toHex(context.sourceId), toHex(context.targetId), value);
+    return changeState(toHex(context.senderId ?? context.sourceId), toHex(context.targetId), value);
   },
 };

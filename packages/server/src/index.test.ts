@@ -33,7 +33,7 @@ test('returns 200 and writes a payload for a configured device', async () => {
   const transport = new FakeTransport();
   const handler = createRequestHandler(transport);
 
-  const response = await handler(new Request('http://localhost/E04/VENT/Intake'));
+  const response = await handler(new Request('http://localhost/ffe76681/0513cefe/Intake'));
 
   expect(response.status).toBe(200);
   expect(transport.writes).toHaveLength(1);
@@ -42,14 +42,30 @@ test('returns 200 and writes a payload for a configured device', async () => {
   expect(transport.writes[0][7]).toBe(13);
 });
 
+test('uses the controller ID when sending a command to E05', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-e05-command-'));
+  const transport = new FakeTransport();
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  const handler = createRequestHandler(transport, {
+    controllerId: 0xffe76681,
+    registry,
+  });
+
+  const response = await handler(new Request('http://localhost/ffe76682/05126787/3'));
+
+  expect(response.status).toBe(200);
+  expect(Array.from(transport.writes[0].slice(13, 17))).toEqual([0xff, 0xe7, 0x66, 0x81]);
+  expect(Array.from(transport.writes[0].slice(19, 23))).toEqual([0x05, 0x12, 0x67, 0x87]);
+});
+
 test('rejects command bodies with unsafe value coercions', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-command-'));
-  const registry = await DeviceRegistry.load(join(directory, 'states.json'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
   const handler = createRequestHandler(new FakeTransport(), { registry });
 
   for (const body of [{ isOn: 'false' }, { value: null }, { percentage: '50' }]) {
     const response = await handler(
-      new Request('http://localhost/api/devices/85184254/command', {
+      new Request('http://localhost/api/devices/ffe76681/command', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
@@ -62,11 +78,11 @@ test('rejects command bodies with unsafe value coercions', async () => {
 test('rejects presets that are not configured for a device', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-command-capability-'));
   const transport = new FakeTransport();
-  const registry = await DeviceRegistry.load(join(directory, 'states.json'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
   const handler = createRequestHandler(transport, { registry });
 
   const response = await handler(
-    new Request('http://localhost/api/devices/85184254/command', {
+    new Request('http://localhost/api/devices/ffe76681/command', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ preset: 'Automatic on demand' }),
@@ -82,12 +98,12 @@ test('rejects presets that are not configured for a device', async () => {
 
 test('does not control a device removed from the persisted registry', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-handler-'));
-  const registry = await DeviceRegistry.load(join(directory, 'states.json'));
-  await registry.remove(0x0513cefe);
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  await registry.remove(0xffe76681);
   const transport = new FakeTransport();
   const handler = createRequestHandler(transport, { registry });
 
-  const response = await handler(new Request('http://localhost/E04/vent/Intake'));
+  const response = await handler(new Request('http://localhost/ffe76681/0513cefe/Intake'));
 
   expect(response.status).toBe(400);
   expect(transport.writes).toHaveLength(0);
@@ -96,14 +112,15 @@ test('does not control a device removed from the persisted registry', async () =
 test('rejects unknown devices and unsupported requests', async () => {
   const handler = createRequestHandler(new FakeTransport());
 
-  expect((await handler(new Request('http://localhost/E04/unknown/Auto'))).status).toBe(400);
+  expect((await handler(new Request('http://localhost/ffe76681/unknown/Auto'))).status).toBe(400);
   expect(
-    (await handler(new Request('http://localhost/E04/vent/Auto', { method: 'POST' }))).status,
+    (await handler(new Request('http://localhost/ffe76681/0513cefe/Auto', { method: 'POST' })))
+      .status,
   ).toBe(405);
-  expect((await handler(new Request('http://localhost/E04/vent'))).status).toBe(404);
+  expect((await handler(new Request('http://localhost/ffe76681/0513cefe'))).status).toBe(404);
 });
 
-test('lists the devices from the initial states', async () => {
+test('lists the devices from the initial configuration', async () => {
   const handler = createRequestHandler(new FakeTransport());
   const response = await handler(new Request('http://localhost/api/devices'));
   const devices = (await response.json()) as Array<{ targetId: number }>;
@@ -139,24 +156,42 @@ test('starts, reads, and stops the packet listener', async () => {
   expect(await stop.json()).toMatchObject({ active: false });
 });
 
-test('renames and persists a device', async () => {
+test('rejects device metadata updates', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-device-name-'));
-  const statePath = join(directory, 'states.json');
+  const statePath = join(directory, 'configuration.yaml');
   const registry = await DeviceRegistry.load(statePath);
   const handler = createRequestHandler(new FakeTransport(), { registry });
 
   const response = await handler(
-    new Request('http://localhost/api/devices/85184254', {
+    new Request('http://localhost/api/devices/ffe76681', {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name: 'Living Room Vent' }),
     }),
   );
 
+  expect(response.status).toBe(405);
+});
+
+test('deletes and persists removal of a device', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-device-delete-'));
+  const statePath = join(directory, 'configuration.yaml');
+  const registry = await DeviceRegistry.load(statePath);
+  const handler = createRequestHandler(new FakeTransport(), { registry });
+
+  const response = await handler(
+    new Request('http://localhost/api/devices/ffe76681', { method: 'DELETE' }),
+  );
+
   expect(response.status).toBe(200);
-  expect((await response.json()).name).toBe('Living Room Vent');
+  expect(await response.json()).toEqual({ ok: true });
   const restored = await DeviceRegistry.load(statePath);
-  expect(restored.findByTargetId(0x0513cefe)?.name).toBe('Living Room Vent');
+  expect(restored.findByTargetId(0x0513cefe)).toBeUndefined();
+
+  const missing = await handler(
+    new Request('http://localhost/api/devices/ffe76681', { method: 'DELETE' }),
+  );
+  expect(missing.status).toBe(404);
 });
 
 test('serves the browser console', async () => {

@@ -42,12 +42,13 @@ export interface AppContextValue {
   mqtt: MqttForm | null;
   mqttMessage: SettingsFormMessage;
   onAcceptCandidate: (candidate: TeachInCandidate) => void;
-  onCommand: (targetId: number, body: CommandBody) => void;
+  onCommand: (sourceId: number, body: CommandBody) => void;
   onHomeAssistantChange: (settings: HomeAssistantResponse) => void;
   onListen: () => void;
   onMqttChange: (settings: MqttForm) => void;
   onPairing: () => void;
-  onRenameDevice: (targetId: number, name: string) => Promise<void>;
+  onTransmitPairing: () => void;
+  onDeleteDevice: (sourceId: number) => Promise<void>;
   onSaveHomeAssistant: (settings: HomeAssistantResponse) => void;
   onSaveMqtt: (settings: MqttForm) => void;
   onSaveTransport: (settings: TransportResponse) => void;
@@ -182,15 +183,21 @@ export function App() {
     }
   }
 
+  async function transmitPairing() {
+    setError('');
+    try {
+      await request<PairingResponse>('/api/pairing/transmit', { method: 'POST' });
+      await loadPairing();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Unable to send pairing signal');
+    }
+  }
+
   async function acceptCandidate(candidate: TeachInCandidate) {
     try {
       await request('/api/pairing/accept', {
         body: JSON.stringify({
           targetId: candidate.targetId,
-          roomId: 'NEW',
-          roomName: 'New devices',
-          key: `fan-${candidate.targetId}`,
-          name: `New fan ${formatTargetId(candidate.targetId)}`,
         }),
         headers: { 'content-type': 'application/json' },
         method: 'POST',
@@ -201,11 +208,11 @@ export function App() {
     }
   }
 
-  async function command(targetId: number, body: CommandBody) {
-    setBusyTarget(targetId);
+  async function command(sourceId: number, body: CommandBody) {
+    setBusyTarget(sourceId);
     setError('');
     try {
-      await request(`/api/devices/${targetId}/command`, {
+      await request(`/api/devices/${sourceId}/command`, {
         body: JSON.stringify(body),
         headers: { 'content-type': 'application/json' },
         method: 'POST',
@@ -218,18 +225,17 @@ export function App() {
     }
   }
 
-  async function renameDevice(targetId: number, name: string) {
+  async function deleteDevice(sourceId: number) {
+    setBusyTarget(sourceId);
     setError('');
     try {
-      await request(`/api/devices/${targetId}`, {
-        body: JSON.stringify({ name }),
-        headers: { 'content-type': 'application/json' },
-        method: 'PUT',
-      });
+      await request(`/api/devices/${sourceId}`, { method: 'DELETE' });
       await loadDevices();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Unable to rename device');
+      setError(reason instanceof Error ? reason.message : 'Unable to delete device');
       throw reason;
+    } finally {
+      setBusyTarget(null);
     }
   }
 
@@ -353,7 +359,8 @@ export function App() {
     onListen: toggleListen,
     onMqttChange: setMqtt,
     onPairing: togglePairing,
-    onRenameDevice: renameDevice,
+    onTransmitPairing: transmitPairing,
+    onDeleteDevice: deleteDevice,
     onSaveHomeAssistant: saveHomeAssistant,
     onSaveMqtt: saveMqtt,
     onSaveTransport: saveTransport,

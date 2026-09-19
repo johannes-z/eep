@@ -42,3 +42,16 @@ test('parses a command and encodes the D2 ERP1 frame through the profile contrac
   expect(command).toMatchObject({ value: 3, desiredState: { d2Value: 3, percentage: 75 } });
   expect(Array.from(frame.slice(6, 13))).toEqual([0xd2, 3, 0, 0, 0, 0, 0]);
 });
+
+test('uses the controller sender ID when addressing a device command', () => {
+  const commandContext = {
+    ...context,
+    sourceId: 0xffe76682,
+    senderId: 0xffe76681,
+  };
+  const command = d2Profile.parseCommand(commandContext, { percentage: 75 });
+  const frame = d2Profile.encodeCommand(commandContext, command);
+
+  expect(Array.from(frame.slice(13, 17))).toEqual([0xff, 0xe7, 0x66, 0x81]);
+  expect(Array.from(frame.slice(19, 23))).toEqual([0x05, 0x12, 0x67, 0x87]);
+});

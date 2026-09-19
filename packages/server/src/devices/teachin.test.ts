@@ -7,7 +7,7 @@ import { TeachInManager } from './teachin';
 
 test('collects and accepts a supported D2-50-00 candidate', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-'));
-  const registry = await DeviceRegistry.load(join(directory, 'states.json'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
   let responseTarget = 0;
   const responses: string[] = [];
   const manager = new TeachInManager(registry, 0xffe76685, async (candidate, result) => {
@@ -32,12 +32,7 @@ test('collects and accepts a supported D2-50-00 candidate', async () => {
     },
   });
 
-  const device = await manager.accept(0x05010203, {
-    roomId: 'NEW',
-    roomName: 'New devices',
-    key: 'fan',
-    name: 'New fan',
-  });
+  const device = await manager.accept(0x05010203);
 
   expect(device).toMatchObject({
     targetId: 0x05010203,
@@ -58,7 +53,7 @@ test('collects and accepts a supported D2-50-00 candidate', async () => {
 
 test('rejects unsupported teach-in profiles', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-'));
-  const registry = await DeviceRegistry.load(join(directory, 'states.json'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
   let response: string | undefined;
   const manager = new TeachInManager(registry, 0xffe76685, async (_candidate, result) => {
     response = result;
@@ -88,7 +83,7 @@ test('rejects unsupported teach-in profiles', async () => {
 
 test('backfills teach-in metadata for an existing device', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-'));
-  const registry = await DeviceRegistry.load(join(directory, 'states.json'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
   const responses: string[] = [];
   const manager = new TeachInManager(registry, 0xffe76685, async (_candidate, result) => {
     responses.push(result);
@@ -126,7 +121,7 @@ test('backfills teach-in metadata for an existing device', async () => {
 
 test('does not answer one-way teach-in and rejects teach-out requests', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-'));
-  const registry = await DeviceRegistry.load(join(directory, 'states.json'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
   const responses: string[] = [];
   const manager = new TeachInManager(registry, 0xffe76685, async (_candidate, result) => {
     responses.push(result);

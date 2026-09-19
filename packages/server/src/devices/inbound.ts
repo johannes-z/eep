@@ -5,6 +5,11 @@ import type { DeviceRegistry } from './registry';
 export type UteDirection = 'unidirectional' | 'bidirectional';
 export type UteRequestType = 'teachIn' | 'teachOut' | 'unspecified' | 'reserved';
 export type UteCommand = 'query' | 'response' | 'reserved';
+export type UteResponseResult =
+  | 'general'
+  | 'teachInAccepted'
+  | 'teachOutAccepted'
+  | 'eepNotSupported';
 
 export interface UteTeachInInfo {
   control: number;
@@ -15,6 +20,7 @@ export interface UteTeachInInfo {
   responseExpected: boolean;
   requestType: UteRequestType;
   command: UteCommand;
+  response?: UteResponseResult;
 }
 
 export interface RadioERP1Packet {
@@ -61,7 +67,7 @@ export async function applyRadioPacket(
     packet,
   );
   if (result.kind !== 'reported') return undefined;
-  await registry.update(targetId, {
+  await registry.update(device.sourceId, {
     availability: 'online',
     lastSeen: new Date().toISOString(),
     reportedState: result.reportedState as Device['reportedState'],

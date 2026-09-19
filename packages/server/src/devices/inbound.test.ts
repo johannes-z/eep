@@ -21,8 +21,8 @@ test('decodes D2-50-00 basic status operation modes', () => {
 
 test('reconciles a known device report with its desired state', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-inbound-'));
-  const registry = await DeviceRegistry.load(join(directory, 'states.json'));
-  await registry.update(0x0513cefe, {
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  await registry.update(0xffe76681, {
     desiredState: { isOn: true, percentage: 75, d2Value: 3 },
   });
 
@@ -40,8 +40,8 @@ test('reconciles a known device report with its desired state', async () => {
 
 test('treats a physical D2-50-00 status as authoritative', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-inbound-physical-'));
-  const registry = await DeviceRegistry.load(join(directory, 'states.json'));
-  await registry.update(0x05126787, {
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  await registry.update(0xffe76682, {
     desiredState: { isOn: true, percentage: 100, d2Value: 4 },
   });
 

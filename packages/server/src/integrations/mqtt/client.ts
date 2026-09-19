@@ -3,7 +3,7 @@ import type { Device, HomeAssistantSettings } from '../../config';
 import type { DeviceRegistry } from '../../devices/registry';
 import type { TeachInManager } from '../../devices/teachin';
 import type { MqttSettings } from '../../mqtt';
-import { MqttEntityBridge, type MqttBridgeInfo } from '../homeassistant/bridge';
+import { MqttEntityBridge } from '../homeassistant/bridge';
 import { createDefaultProfileRegistry, type ProfileRegistry } from '../../profiles';
 
 export interface MqttRuntimeStatus {
@@ -27,7 +27,7 @@ export class MqttRuntime {
     private readonly runtimeStatus: MqttRuntimeStatus,
     private readonly profiles: ProfileRegistry = createDefaultProfileRegistry(),
     private readonly teachIn?: TeachInManager,
-    private readonly bridgeInfo: MqttBridgeInfo = {},
+    private readonly restart?: () => Promise<void>,
   ) {}
 
   async apply(settings: MqttSettings, homeAssistant: HomeAssistantSettings): Promise<void> {
@@ -77,7 +77,7 @@ export class MqttRuntime {
       },
       this.profiles,
       this.teachIn,
-      this.bridgeInfo,
+      this.restart,
     );
     this.bridge.start();
   }

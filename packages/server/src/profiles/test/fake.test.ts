@@ -11,26 +11,10 @@ import { fakeProfile } from './fake';
 test('supports a non-fan profile through generic ingress and egress dispatch', async () => {
   const profiles = new ProfileRegistry([fakeProfile]);
   const directory = await mkdtemp(join(tmpdir(), 'eep-fake-profile-'));
-  const filePath = join(directory, 'states.json');
+  const filePath = join(directory, 'configuration.yaml');
   await Bun.write(
     filePath,
-    JSON.stringify({
-      version: 2,
-      devices: [
-        {
-          key: 'contact',
-          sourceId: 'ffe76681',
-          targetId: '05010203',
-          profileId: 'D5-00-01',
-          capabilities: ['contact'],
-          roomId: 'TEST',
-          roomName: 'Test',
-          name: 'Test contact',
-          paired: true,
-          availability: 'unknown',
-        },
-      ],
-    }),
+    "devices:\n  ffe76681:\n    targetId: '05010203'\n    profileId: D5-00-01\n    capabilities: [contact]\n",
   );
   const registry = await DeviceRegistry.load(filePath, profiles);
   const inbound = await applyRadioPacket(

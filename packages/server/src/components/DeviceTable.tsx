@@ -1,4 +1,3 @@
-import { useState, type FormEvent } from 'react';
 import type { CommandBody, Device } from '../ui/types';
 import { currentState, formatLastSeen, formatTargetId } from './deviceUtils';
 
@@ -6,20 +5,28 @@ export function DeviceTable({
   devices,
   busyTarget,
   onCommand,
-  onRename,
+  onDelete,
 }: {
   devices: Device[];
   busyTarget: number | null;
-  onCommand: (targetId: number, command: CommandBody) => void;
-  onRename: (targetId: number, name: string) => Promise<void>;
+  onCommand: (sourceId: number, command: CommandBody) => void;
+  onDelete: (sourceId: number) => Promise<void>;
 }) {
+  const sortedDevices = [...devices].sort((left, right) => {
+    const profileOrder = left.profileId.localeCompare(right.profileId, undefined, {
+      numeric: true,
+      sensitivity: 'base',
+    });
+    return profileOrder || left.sourceId - right.sourceId;
+  });
+
   return (
     <div className="data-table-wrap">
       <table className="data-table">
         <thead>
           <tr>
-            <th>Friendly name</th>
-            <th>EEP address</th>
+            <th>Device</th>
+            <th>Target address</th>
             <th>Protocol</th>
             <th>Type</th>
             <th>Last seen</th>
@@ -28,14 +35,14 @@ export function DeviceTable({
           </tr>
         </thead>
         <tbody>
-          {devices.length ? (
-            devices.map((device) => (
+          {sortedDevices.length ? (
+            sortedDevices.map((device) => (
               <DeviceRow
-                busy={busyTarget === device.targetId}
+                busy={busyTarget === device.sourceId}
                 device={device}
-                key={device.targetId}
+                key={device.sourceId}
                 onCommand={onCommand}
-                onRename={onRename}
+                onDelete={onDelete}
               />
             ))
           ) : (
@@ -58,17 +65,15 @@ function DeviceRow({
   device,
   busy,
   onCommand,
-  onRename,
+  onDelete,
 }: {
   device: Device;
   busy: boolean;
-  onCommand: (targetId: number, command: CommandBody) => void;
-  onRename: (targetId: number, name: string) => Promise<void>;
+  onCommand: (sourceId: number, command: CommandBody) => void;
+  onDelete: (sourceId: number) => Promise<void>;
 }) {
-  const [editingName, setEditingName] = useState(false);
-  const [name, setName] = useState(device.name);
-  const [savingName, setSavingName] = useState(false);
   const state = currentState(device);
+  const label = device.name;
   const entity = device.profile?.entity;
   const speedOptions = entity?.percentage
     ? [
@@ -88,19 +93,11 @@ function DeviceRow({
     : undefined;
   const pending = Boolean(device.desiredState);
 
-  async function saveName(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const nextName = name.trim();
-    if (!nextName) return;
-    setSavingName(true);
+  async function deleteDevice() {
+    if (!window.confirm(`Delete ${label}?`)) return;
     try {
-      await onRename(device.targetId, nextName);
-      setEditingName(false);
-    } catch {
-      setEditingName(true);
-    } finally {
-      setSavingName(false);
-    }
+      await onDelete(device.sourceId);
+    } catch {}
   }
 
   return (
@@ -109,47 +106,8 @@ function DeviceRow({
         <div className="device-name">
           <span className="device-bullet" />
           <div>
-            {editingName ? (
-              <form
-                className="rename-form"
-                onSubmit={saveName}
-              >
-                <input
-                  aria-label={`Name for ${device.name}`}
-                  autoFocus
-                  className="rename-input"
-                  onChange={(event) => setName(event.target.value)}
-                  value={name}
-                />
-                <button
-                  aria-label="Save name"
-                  className="icon-button"
-                  disabled={savingName}
-                  title="Save name"
-                  type="submit"
-                >
-                  ✓
-                </button>
-                <button
-                  aria-label="Cancel rename"
-                  className="icon-button"
-                  disabled={savingName}
-                  onClick={() => {
-                    setName(device.name);
-                    setEditingName(false);
-                  }}
-                  title="Cancel rename"
-                  type="button"
-                >
-                  ×
-                </button>
-              </form>
-            ) : (
-              <>
-                <strong>{device.name}</strong>
-                <span>{device.roomName}</span>
-              </>
-            )}
+            <strong>{label}</strong>
+            <span>{device.profileId}</span>
           </div>
         </div>
       </td>
@@ -168,23 +126,20 @@ function DeviceRow({
       <td>
         <div className="device-actions">
           <button
-            aria-label={`Rename ${device.name}`}
-            className="icon-button"
-            disabled={busy || savingName}
-            onClick={() => {
-              setName(device.name);
-              setEditingName(true);
-            }}
-            title="Rename"
+            aria-label={`Delete ${label}`}
+            className="icon-button delete-button"
+            disabled={busy}
+            onClick={() => void deleteDevice()}
+            title="Delete"
             type="button"
           >
-            ✎
+            ×
           </button>
           <button
-            aria-label={`${state.isOn ? 'Turn off' : 'Turn on'} ${device.name}`}
+            aria-label={`${state.isOn ? 'Turn off' : 'Turn on'} ${label}`}
             className={`icon-button ${state.isOn ? 'active' : ''}`}
             disabled={busy || !entity?.power}
-            onClick={() => onCommand(device.targetId, { isOn: !state.isOn })}
+            onClick={() => onCommand(device.sourceId, { isOn: !state.isOn })}
             title={state.isOn ? 'Turn off' : 'Turn on'}
             type="button"
           >
@@ -192,10 +147,10 @@ function DeviceRow({
           </button>
           {entity?.percentage && (
             <select
-              aria-label={`${device.name} level`}
+              aria-label={`${label} level`}
               disabled={busy}
               onChange={(event) =>
-                onCommand(device.targetId, { percentage: Number(event.target.value) })
+                onCommand(device.sourceId, { percentage: Number(event.target.value) })
               }
               value={state.preset ? 'preset' : String(statePercentage ?? 0)}
             >
@@ -212,10 +167,10 @@ function DeviceRow({
           )}
           {presets.length > 0 && (
             <select
-              aria-label={`${device.name} preset`}
+              aria-label={`${label} preset`}
               disabled={busy}
               onChange={(event) =>
-                event.target.value && onCommand(device.targetId, { preset: event.target.value })
+                event.target.value && onCommand(device.sourceId, { preset: event.target.value })
               }
               value={state.preset ?? ''}
             >

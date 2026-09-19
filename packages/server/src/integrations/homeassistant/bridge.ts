@@ -1,4 +1,4 @@
-import type { Device, HomeAssistantSettings, LogLevel } from '../../config';
+import type { Device, HomeAssistantSettings } from '../../config';
 import type { DeviceRegistry } from '../../devices/registry';
 import type { TeachInManager } from '../../devices/teachin';
 import type { MqttClientLike, MqttSettings } from '../../mqtt';
@@ -8,25 +8,19 @@ import {
   type ProfileRegistry,
 } from '../../profiles';
 import {
-  bridgeDeviceId,
-  bridgeTopics,
   deviceDiagnosticTopics,
   entityObjectId,
   entityTopics,
   permitJoinTopics,
+  restartTopics,
+  type DeviceDiagnosticField,
 } from './topics';
 
 const publishOptions = { qos: 1 as const, retain: true };
 const subscribeOptions = { qos: 1 as const };
+const bridgeDeviceId = 'eep_bridge';
 
 type DeviceAvailability = 'online' | 'offline';
-
-export interface MqttBridgeInfo {
-  version?: string;
-  requestRestart?: () => void | Promise<void>;
-  logLevel?: LogLevel;
-  setLogLevel?: (level: LogLevel) => void | Promise<void>;
-}
 
 function publish(
   client: MqttClientLike,
@@ -59,13 +53,26 @@ function profileContext(device: Device): ProfileDeviceContext {
   };
 }
 
-function discoverySignature(device: Device): string {
-  return JSON.stringify({
-    name: device.name,
-    roomName: device.roomName,
-    profileId: device.profileId,
-    teachIn: device.teachIn,
-  });
+function diagnosticValues(
+  device: Device,
+): Array<{ field: DeviceDiagnosticField; name: string; value: string }> {
+  return [
+    { field: 'eep', name: 'EEP', value: device.teachIn?.eep ?? device.profileId },
+    {
+      field: 'channel',
+      name: 'Channel',
+      value: device.teachIn?.channel === undefined ? 'Unavailable' : String(device.teachIn.channel),
+    },
+    {
+      field: 'manufacturer_id',
+      name: 'Manufacturer ID',
+      value:
+        device.teachIn?.manufacturerId === undefined
+          ? 'Unavailable'
+          : String(device.teachIn.manufacturerId),
+    },
+    { field: 'last_seen', name: 'Last seen', value: device.lastSeen ?? 'Unavailable' },
+  ];
 }
 
 export class MqttEntityBridge {
@@ -77,11 +84,10 @@ export class MqttEntityBridge {
   private readonly includeDeviceInformation: boolean;
   private readonly enabled: boolean;
   private readonly bridgeAvailability: string;
-  private logLevel: LogLevel;
   private readonly removeChangeListener: () => void;
   private readonly removeTeachInListener: () => void;
   private readonly statePublishQueues = new Map<number, Promise<void>>();
-  private readonly discoveredSignatures = new Map<number, string>();
+  private readonly publishedEntityObjectIds = new Map<number, string>();
 
   constructor(
     private readonly client: MqttClientLike,
@@ -93,7 +99,7 @@ export class MqttEntityBridge {
     > & { homeAssistant?: HomeAssistantSettings } = {},
     private readonly profiles: ProfileRegistry = createDefaultProfileRegistry(),
     private readonly teachIn?: TeachInManager,
-    private readonly bridgeInfo: MqttBridgeInfo = {},
+    private readonly restart?: () => Promise<void>,
   ) {
     this.enabled = settings.homeAssistant?.enabled !== false;
     this.discoveryPrefix =
@@ -105,7 +111,6 @@ export class MqttEntityBridge {
       retain: !settings.forceDisableRetain,
     };
     this.includeDeviceInformation = settings.includeDeviceInformation !== false;
-    this.logLevel = settings.homeAssistant?.logLevel ?? this.bridgeInfo.logLevel ?? 'info';
     this.removeTeachInListener =
       this.teachIn?.onStateChange(() => {
         if (this.started && !this.stopped) {
@@ -115,12 +120,8 @@ export class MqttEntityBridge {
         }
       }) ?? (() => undefined);
     this.removeChangeListener = this.registry.onChange((device) => {
-      const discoveryUpdate =
-        this.enabled &&
-        this.discoveredSignatures.get(device.targetId) !== discoverySignature(device)
-          ? this.publishDiscovery(device)
-          : Promise.resolve();
-      void discoveryUpdate
+      void Promise.resolve()
+        .then(() => (this.enabled ? this.publishDiscovery(device) : undefined))
         .then(() => this.publishState(device, deviceAvailability(device)))
         .catch((error: unknown) => console.error('MQTT device update failed:', error));
     });
@@ -129,11 +130,13 @@ export class MqttEntityBridge {
   start(): void {
     if (this.started || this.stopped) return;
     this.started = true;
-    this.client.on('connect', () => {
-      void this.publishAll().catch((error: unknown) =>
-        console.error('MQTT discovery publish failed:', error),
-      );
-    });
+    this.client.on(
+      'connect',
+      () =>
+        void this.publishAll().catch((error: unknown) =>
+          console.error('MQTT discovery publish failed:', error),
+        ),
+    );
     this.client.on('close', () => {
       if (!this.stopped) {
         void this.publishAvailability('offline').catch((error: unknown) =>
@@ -174,12 +177,13 @@ export class MqttEntityBridge {
       return;
     }
     await publish(this.client, this.bridgeAvailability, 'online', this.bridgePublishOptions);
-    await this.clearLegacyBridgeDiscovery();
-    await this.publishBridgeDiscovery();
-    await this.publishBridgeState('online');
+    await this.clearLegacyDiscovery();
+    await this.publishRestartDiscovery();
     await this.publishPermitJoinDiscovery();
     await this.publishPermitJoinState();
     for (const device of this.registry.list()) {
+      await this.clearEntityDiscovery(device);
+      this.publishedEntityObjectIds.delete(device.sourceId);
       await this.publishDiscovery(device);
       await this.publishState(device, deviceAvailability(device));
     }
@@ -197,6 +201,12 @@ export class MqttEntityBridge {
       this.bridgeAvailability,
     );
     const objectId = entityObjectId(device);
+    if (
+      this.publishedEntityObjectIds.get(device.sourceId) !== undefined &&
+      this.publishedEntityObjectIds.get(device.sourceId) !== objectId
+    ) {
+      await this.clearEntityDiscovery(device);
+    }
     const isFan = descriptor.kind === 'fan';
     const presets = descriptor.presets ?? [];
     const payload = {
@@ -222,13 +232,11 @@ export class MqttEntityBridge {
           }
         : {}),
       availability: [{ topic: topics.bridgeAvailability }, { topic: topics.availability }],
-      availability_mode: 'all',
+      availability_mode: 'any',
       ...(isFan ? { payload_on: 'ON', payload_off: 'OFF', payload_reset_preset_mode: 'None' } : {}),
       ...(this.includeDeviceInformation
         ? {
-            device: {
-              ...this.deviceInfo(device, descriptor.protocol),
-            },
+            device: this.deviceInfo(device, descriptor.protocol),
           }
         : {}),
     };
@@ -238,7 +246,7 @@ export class MqttEntityBridge {
       JSON.stringify(payload),
       this.bridgePublishOptions,
     );
-    this.discoveredSignatures.set(device.targetId, discoverySignature(device));
+    this.publishedEntityObjectIds.set(device.sourceId, objectId);
     await this.publishDeviceDiagnosticDiscovery(device, descriptor.protocol);
     if (descriptor.commands.includes('command')) await subscribe(this.client, topics.command);
     if (descriptor.commands.includes('percentage') && descriptor.percentage) {
@@ -251,19 +259,6 @@ export class MqttEntityBridge {
 
   private async clearDiscovery(): Promise<void> {
     const clearOptions = { ...publishOptions, retain: true };
-    const bridge = bridgeTopics(this.discoveryPrefix, this.baseTopic, this.bridgeAvailability);
-    for (const topics of [bridge.connection, bridge.version, bridge.logLevel]) {
-      await publish(this.client, topics.discovery, '', clearOptions);
-    }
-    await publish(
-      this.client,
-      `${this.discoveryPrefix}/sensor/eep_bridge_connection/config`,
-      '',
-      clearOptions,
-    );
-    if (this.bridgeInfo.requestRestart) {
-      await publish(this.client, bridge.restart.discovery, '', clearOptions);
-    }
     if (this.teachIn) {
       const topics = permitJoinTopics(
         this.discoveryPrefix,
@@ -272,24 +267,17 @@ export class MqttEntityBridge {
       );
       await publish(this.client, topics.discovery, '', clearOptions);
     }
-    await this.clearLegacyBridgeDiscovery(clearOptions);
+    const restart = restartTopics(this.discoveryPrefix, this.baseTopic, this.bridgeAvailability);
+    await publish(this.client, restart.discovery, '', clearOptions);
+    await this.clearLegacyDiscovery(clearOptions);
     for (const device of this.registry.list()) {
-      const entity = this.profiles.get(device.profileId)?.entity;
-      if (!entity) continue;
-      const topics = entityTopics(
-        device,
-        entity.describe(profileContext(device)).kind,
-        this.discoveryPrefix,
-        this.baseTopic,
-        this.bridgeAvailability,
-      );
-      await publish(this.client, topics.discovery, '', clearOptions);
-      for (const field of ['eep', 'channel', 'manufacturer_id', 'last_seen']) {
+      await this.clearEntityDiscovery(device, clearOptions);
+      for (const diagnostic of diagnosticValues(device)) {
         await publish(
           this.client,
           deviceDiagnosticTopics(
             device,
-            field,
+            diagnostic.field,
             this.discoveryPrefix,
             this.baseTopic,
             this.bridgeAvailability,
@@ -299,20 +287,104 @@ export class MqttEntityBridge {
         );
       }
     }
+    this.publishedEntityObjectIds.clear();
   }
 
-  private async clearLegacyBridgeDiscovery(
-    options: { qos: 1; retain: boolean } = { ...publishOptions, retain: true },
+  private async clearEntityDiscovery(
+    device: Device,
+    options = { ...publishOptions, retain: true },
   ): Promise<void> {
-    for (const objectId of [
-      'eep_bridge_connection',
-      'eep_bridge_device_count',
-      'eep_bridge_controller_id',
-      'eep_bridge_transport',
-      'eep_bridge_activity',
-    ]) {
-      await publish(this.client, `${this.discoveryPrefix}/sensor/${objectId}/config`, '', options);
+    const entity = this.profiles.get(device.profileId)?.entity;
+    if (!entity) return;
+    const topics = entityTopics(
+      device,
+      entity.describe(profileContext(device)).kind,
+      this.discoveryPrefix,
+      this.baseTopic,
+      this.bridgeAvailability,
+    );
+    await publish(this.client, topics.discovery, '', options);
+  }
+
+  private async publishDeviceDiagnosticDiscovery(device: Device, model: string): Promise<void> {
+    if (!this.enabled) return;
+    for (const diagnostic of diagnosticValues(device)) {
+      const topics = deviceDiagnosticTopics(
+        device,
+        diagnostic.field,
+        this.discoveryPrefix,
+        this.baseTopic,
+        this.bridgeAvailability,
+      );
+      const objectId = `eep_${device.sourceId.toString(16).padStart(8, '0')}_${diagnostic.field}`;
+      await publish(
+        this.client,
+        topics.discovery,
+        JSON.stringify({
+          name: diagnostic.name,
+          unique_id: objectId,
+          object_id: objectId,
+          state_topic: topics.state,
+          availability: [{ topic: topics.bridgeAvailability }, { topic: topics.availability }],
+          availability_mode: 'any',
+          entity_category: 'diagnostic',
+          ...(diagnostic.field === 'last_seen' ? { device_class: 'timestamp' } : {}),
+          ...(this.includeDeviceInformation ? { device: this.deviceInfo(device, model) } : {}),
+        }),
+        this.bridgePublishOptions,
+      );
     }
+  }
+
+  private async publishDeviceDiagnosticState(
+    device: Device,
+    availability: DeviceAvailability,
+  ): Promise<void> {
+    if (!this.enabled) return;
+    for (const diagnostic of diagnosticValues(device)) {
+      const topics = deviceDiagnosticTopics(
+        device,
+        diagnostic.field,
+        this.discoveryPrefix,
+        this.baseTopic,
+        this.bridgeAvailability,
+      );
+      await publish(this.client, topics.availability, availability, this.bridgePublishOptions);
+      await publish(this.client, topics.state, diagnostic.value, this.bridgePublishOptions);
+    }
+  }
+
+  private deviceInfo(device: Device, model: string): Record<string, unknown> {
+    const id = device.sourceId.toString(16).padStart(8, '0');
+    return {
+      identifiers: [`eep_${id}`],
+      name: device.name,
+      manufacturer: 'EnOcean',
+      model,
+      via_device: bridgeDeviceId,
+    };
+  }
+
+  private async clearLegacyDiscovery(options = { ...publishOptions, retain: true }): Promise<void> {
+    const discoveryTopics = new Set([
+      `${this.discoveryPrefix}/button/eep_bridge_restart/config`,
+      `${this.discoveryPrefix}/binary_sensor/eep_bridge_connection/config`,
+      `${this.discoveryPrefix}/sensor/eep_bridge_connection/config`,
+      `${this.discoveryPrefix}/sensor/eep_bridge_version/config`,
+      `${this.discoveryPrefix}/select/eep_bridge_log_level/config`,
+      `${this.discoveryPrefix}/sensor/eep_bridge_device_count/config`,
+      `${this.discoveryPrefix}/sensor/eep_bridge_controller_id/config`,
+      `${this.discoveryPrefix}/sensor/eep_bridge_transport/config`,
+      `${this.discoveryPrefix}/sensor/eep_bridge_activity/config`,
+    ]);
+    for (const device of this.registry.list()) {
+      const legacyId = device.targetId.toString(16).padStart(8, '0');
+      discoveryTopics.add(`${this.discoveryPrefix}/fan/${legacyId}/config`);
+      for (const field of ['eep', 'channel', 'manufacturer_id', 'last_seen']) {
+        discoveryTopics.add(`${this.discoveryPrefix}/sensor/eep_${legacyId}_${field}/config`);
+      }
+    }
+    for (const topic of discoveryTopics) await publish(this.client, topic, '', options);
   }
 
   private async publishPermitJoinDiscovery(): Promise<void> {
@@ -329,11 +401,17 @@ export class MqttEntityBridge {
       payload_off: 'OFF',
       state_on: 'ON',
       state_off: 'OFF',
+      icon: 'mdi:access-point-network',
       availability: [{ topic: topics.bridgeAvailability }],
       availability_mode: 'all',
       ...(this.includeDeviceInformation
         ? {
-            device: this.bridgeDevice(),
+            device: {
+              identifiers: [bridgeDeviceId],
+              name: 'Enocean2MQTT Bridge',
+              manufacturer: 'Enocean2MQTT',
+              model: 'Bridge',
+            },
           }
         : {}),
     };
@@ -346,205 +424,36 @@ export class MqttEntityBridge {
     await subscribe(this.client, topics.command);
   }
 
-  private bridgeDevice(): Record<string, unknown> {
-    return {
-      identifiers: [bridgeDeviceId],
-      name: 'Enocean2MQTT Bridge',
-      manufacturer: 'Enocean2MQTT',
-      model: 'Bridge',
-      ...(this.bridgeInfo.version ? { sw_version: this.bridgeInfo.version } : {}),
-    };
-  }
-
-  private deviceInfo(device: Device, model: string): Record<string, unknown> {
-    const id = device.targetId.toString(16).padStart(8, '0');
-    return {
-      identifiers: [`eep_${id}`],
-      name: device.name,
-      manufacturer: 'EnOcean',
-      model,
-      suggested_area: device.roomName,
-      connections: [['enocean', id]],
-      via_device: bridgeDeviceId,
-      serial_number: id,
-    };
-  }
-
-  private async publishDeviceDiagnosticDiscovery(device: Device, model: string): Promise<void> {
+  private async publishRestartDiscovery(): Promise<void> {
     if (!this.enabled) return;
-    const diagnostics = [
-      { field: 'eep', name: 'EEP', value: device.teachIn?.eep ?? device.profileId },
-      {
-        field: 'channel',
-        name: 'Channel',
-        value:
-          device.teachIn?.channel === undefined ? 'Unavailable' : String(device.teachIn.channel),
-      },
-      {
-        field: 'manufacturer_id',
-        name: 'Manufacturer ID',
-        value:
-          device.teachIn?.manufacturerId === undefined
-            ? 'Unavailable'
-            : String(device.teachIn.manufacturerId),
-      },
-      { field: 'last_seen', name: 'Last seen', value: device.lastSeen ?? 'Unavailable' },
-    ];
-    for (const diagnostic of diagnostics) {
-      const topics = deviceDiagnosticTopics(
-        device,
-        diagnostic.field,
-        this.discoveryPrefix,
-        this.baseTopic,
-        this.bridgeAvailability,
-      );
-      const objectId = `eep_${device.targetId.toString(16).padStart(8, '0')}_${diagnostic.field}`;
-      await publish(
-        this.client,
-        topics.discovery,
-        JSON.stringify({
-          name: diagnostic.name,
-          unique_id: objectId,
-          object_id: objectId,
-          state_topic: topics.state,
-          availability: [{ topic: topics.bridgeAvailability }, { topic: topics.availability }],
-          availability_mode: 'all',
-          entity_category: 'diagnostic',
-          ...(diagnostic.field === 'last_seen' ? { device_class: 'timestamp' } : {}),
-          ...(this.includeDeviceInformation ? { device: this.deviceInfo(device, model) } : {}),
-        }),
-        this.bridgePublishOptions,
-      );
-    }
-  }
-
-  private async publishDeviceDiagnosticState(device: Device): Promise<void> {
-    if (!this.enabled) return;
-    const diagnostics = [
-      { field: 'eep', value: device.teachIn?.eep ?? device.profileId },
-      {
-        field: 'channel',
-        value:
-          device.teachIn?.channel === undefined ? 'Unavailable' : String(device.teachIn.channel),
-      },
-      {
-        field: 'manufacturer_id',
-        value:
-          device.teachIn?.manufacturerId === undefined
-            ? 'Unavailable'
-            : String(device.teachIn.manufacturerId),
-      },
-      { field: 'last_seen', value: device.lastSeen ?? 'Unavailable' },
-    ];
-    for (const diagnostic of diagnostics) {
-      const topics = deviceDiagnosticTopics(
-        device,
-        diagnostic.field,
-        this.discoveryPrefix,
-        this.baseTopic,
-        this.bridgeAvailability,
-      );
-      await publish(
-        this.client,
-        topics.availability,
-        deviceAvailability(device),
-        this.bridgePublishOptions,
-      );
-      await publish(this.client, topics.state, diagnostic.value, this.bridgePublishOptions);
-    }
-  }
-
-  private async publishBridgeDiscovery(): Promise<void> {
-    if (!this.enabled) return;
-    const topics = bridgeTopics(this.discoveryPrefix, this.baseTopic, this.bridgeAvailability);
-    const availability = [{ topic: this.bridgeAvailability }];
-    const common = {
-      availability,
-      availability_mode: 'all',
-      ...(this.includeDeviceInformation ? { device: this.bridgeDevice() } : {}),
+    const topics = restartTopics(this.discoveryPrefix, this.baseTopic, this.bridgeAvailability);
+    const payload = {
+      name: 'Restart',
+      unique_id: 'eep_restart',
+      object_id: 'eep_restart',
+      default_entity_id: 'button.eep_restart',
+      command_topic: topics.command,
+      payload_press: 'PRESS',
+      availability: [{ topic: topics.bridgeAvailability }],
+      icon: 'mdi:restart',
+      ...(this.includeDeviceInformation
+        ? {
+            device: {
+              identifiers: [bridgeDeviceId],
+              name: 'Enocean2MQTT Bridge',
+              manufacturer: 'Enocean2MQTT',
+              model: 'Bridge',
+            },
+          }
+        : {}),
     };
-    const sensors = [
-      {
-        topics: topics.connection,
-        name: 'Connection state',
-        uniqueId: 'eep_bridge_connection_state',
-        deviceClass: 'connectivity',
-      },
-      {
-        topics: topics.version,
-        name: 'Version',
-        uniqueId: 'eep_bridge_version',
-      },
-    ];
-    for (const sensor of sensors) {
-      await publish(
-        this.client,
-        sensor.topics.discovery,
-        JSON.stringify({
-          name: sensor.name,
-          unique_id: sensor.uniqueId,
-          object_id: sensor.uniqueId,
-          state_topic: sensor.topics.state,
-          ...(sensor.deviceClass === 'connectivity'
-            ? { payload_on: 'Connected', payload_off: 'Disconnected' }
-            : {}),
-          entity_category: 'diagnostic',
-          ...(sensor.deviceClass ? { device_class: sensor.deviceClass } : {}),
-          ...common,
-        }),
-        this.bridgePublishOptions,
-      );
-    }
-    if (this.bridgeInfo.requestRestart) {
-      await publish(
-        this.client,
-        topics.restart.discovery,
-        JSON.stringify({
-          name: 'Restart',
-          unique_id: 'eep_bridge_restart',
-          object_id: 'eep_bridge_restart',
-          command_topic: topics.restart.command,
-          payload_press: 'PRESS',
-          ...common,
-        }),
-        this.bridgePublishOptions,
-      );
-      await subscribe(this.client, topics.restart.command);
-    }
     await publish(
       this.client,
-      topics.logLevel.discovery,
-      JSON.stringify({
-        name: 'Log level',
-        unique_id: 'eep_bridge_log_level',
-        object_id: 'eep_bridge_log_level',
-        command_topic: topics.logLevel.command,
-        state_topic: topics.logLevel.state,
-        options: ['debug', 'info', 'warn', 'error'],
-        entity_category: 'config',
-        ...common,
-      }),
+      topics.discovery,
+      JSON.stringify(payload),
       this.bridgePublishOptions,
     );
-    await subscribe(this.client, topics.logLevel.command);
-  }
-
-  private async publishBridgeState(availability: DeviceAvailability): Promise<void> {
-    if (!this.enabled) return;
-    const topics = bridgeTopics(this.discoveryPrefix, this.baseTopic, this.bridgeAvailability);
-    await publish(
-      this.client,
-      topics.connection.state,
-      availability === 'online' ? 'Connected' : 'Disconnected',
-      this.bridgePublishOptions,
-    );
-    await publish(
-      this.client,
-      topics.version.state,
-      this.bridgeInfo.version ?? 'Unavailable',
-      this.bridgePublishOptions,
-    );
-    await publish(this.client, topics.logLevel.state, this.logLevel, this.bridgePublishOptions);
+    await subscribe(this.client, topics.command);
   }
 
   private async publishPermitJoinState(): Promise<void> {
@@ -559,20 +468,20 @@ export class MqttEntityBridge {
   }
 
   private async publishState(device: Device, availability: DeviceAvailability): Promise<void> {
-    const previous = this.statePublishQueues.get(device.targetId) ?? Promise.resolve();
+    const previous = this.statePublishQueues.get(device.sourceId) ?? Promise.resolve();
     const next = previous
       .catch(() => undefined)
       .then(() => this.publishStateNow(device, availability));
-    this.statePublishQueues.set(device.targetId, next);
+    this.statePublishQueues.set(device.sourceId, next);
     void next.then(
       () => {
-        if (this.statePublishQueues.get(device.targetId) === next) {
-          this.statePublishQueues.delete(device.targetId);
+        if (this.statePublishQueues.get(device.sourceId) === next) {
+          this.statePublishQueues.delete(device.sourceId);
         }
       },
       () => {
-        if (this.statePublishQueues.get(device.targetId) === next) {
-          this.statePublishQueues.delete(device.targetId);
+        if (this.statePublishQueues.get(device.sourceId) === next) {
+          this.statePublishQueues.delete(device.sourceId);
         }
       },
     );
@@ -621,13 +530,12 @@ export class MqttEntityBridge {
         await publish(this.client, topics.state, JSON.stringify(state), this.bridgePublishOptions);
       }
     }
-    await this.publishDeviceDiagnosticState(device);
+    await this.publishDeviceDiagnosticState(device, availability);
   }
 
   private async publishAvailability(availability: DeviceAvailability): Promise<void> {
     await publish(this.client, this.bridgeAvailability, availability, this.bridgePublishOptions);
     if (!this.enabled) return;
-    await this.publishBridgeState(availability);
     for (const device of this.registry.list()) {
       const entity = this.profiles.get(device.profileId)?.entity;
       if (!entity) continue;
@@ -639,21 +547,24 @@ export class MqttEntityBridge {
         this.bridgeAvailability,
       );
       await publish(this.client, topics.availability, availability, this.bridgePublishOptions);
-      for (const field of ['eep', 'channel', 'manufacturer_id', 'last_seen']) {
-        const diagnosticTopics = deviceDiagnosticTopics(
-          device,
-          field,
-          this.discoveryPrefix,
-          this.baseTopic,
-          this.bridgeAvailability,
-        );
-        await publish(
-          this.client,
-          diagnosticTopics.availability,
-          availability,
-          this.bridgePublishOptions,
-        );
-      }
+      await this.publishDeviceDiagnosticAvailability(device, availability);
+    }
+  }
+
+  private async publishDeviceDiagnosticAvailability(
+    device: Device,
+    availability: DeviceAvailability,
+  ): Promise<void> {
+    if (!this.enabled) return;
+    for (const diagnostic of diagnosticValues(device)) {
+      const topics = deviceDiagnosticTopics(
+        device,
+        diagnostic.field,
+        this.discoveryPrefix,
+        this.baseTopic,
+        this.bridgeAvailability,
+      );
+      await publish(this.client, topics.availability, availability, this.bridgePublishOptions);
     }
   }
 
@@ -664,32 +575,22 @@ export class MqttEntityBridge {
       this.baseTopic,
       this.bridgeAvailability,
     );
-    const bridge = bridgeTopics(this.discoveryPrefix, this.baseTopic, this.bridgeAvailability);
-    if (topic === bridge.logLevel.command) {
-      const level = payload.toString().trim().toLowerCase();
-      if (level !== 'debug' && level !== 'info' && level !== 'warn' && level !== 'error') {
-        throw new Error(`Unsupported log level: ${level}`);
-      }
-      this.logLevel = level;
-      await this.bridgeInfo.setLogLevel?.(level);
-      if (!this.stopped) {
-        await publish(this.client, bridge.logLevel.state, level, this.bridgePublishOptions);
-      }
+    if (this.teachIn && topic === permitTopics.command) {
+      const message = payload.toString().trim().toUpperCase();
+      if (message === 'ON') {
+        this.teachIn.start();
+        await this.teachIn.transmit();
+      } else if (message === 'OFF') this.teachIn.stop();
+      else throw new Error(`Unsupported Permit join state: ${message}`);
+      await this.publishPermitJoinState();
       return;
     }
-    if (this.bridgeInfo.requestRestart && topic === bridge.restart.command) {
+    const restart = restartTopics(this.discoveryPrefix, this.baseTopic, this.bridgeAvailability);
+    if (topic === restart.command) {
       if (payload.toString().trim().toUpperCase() !== 'PRESS') {
         throw new Error('Unsupported restart command');
       }
-      await this.bridgeInfo.requestRestart();
-      return;
-    }
-    if (this.teachIn && topic === permitTopics.command) {
-      const message = payload.toString().trim().toUpperCase();
-      if (message === 'ON') this.teachIn.start();
-      else if (message === 'OFF') this.teachIn.stop();
-      else throw new Error(`Unsupported Permit join state: ${message}`);
-      await this.publishPermitJoinState();
+      await this.restart?.();
       return;
     }
     const device = this.registry.list().find((item) => {
@@ -736,7 +637,7 @@ export class MqttEntityBridge {
               : undefined;
       if (!field) return;
       await this.sendCommand(device, entity.parseCommand(profileContext(device), field, message));
-      const updatedDevice = this.registry.findByTargetId(device.targetId) ?? device;
+      const updatedDevice = this.registry.findBySourceId(device.sourceId) ?? device;
       await this.publishState(updatedDevice, deviceAvailability(updatedDevice));
     } catch (error) {
       console.error('MQTT command rejected:', (error as Error).message);

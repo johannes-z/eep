@@ -315,6 +315,14 @@ select:focus-visible {
   font-size: 11px;
 }
 
+.panel-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .search-field {
   display: flex;
   width: min(330px, 42vw);
@@ -467,14 +475,13 @@ select:focus-visible {
   font-size: 10px;
 }
 
-.rename-form {
+.metadata-form {
   display: flex;
   align-items: center;
   gap: 4px;
 }
 
-.rename-input {
-  width: 125px;
+.metadata-input {
   min-height: 27px;
   padding: 3px 5px;
   border: 1px solid var(--line-strong);
@@ -482,6 +489,14 @@ select:focus-visible {
   background: var(--surface);
   color: var(--ink);
   font-size: 11px;
+}
+
+.metadata-input.name-input {
+  width: 115px;
+}
+
+.metadata-input.area-input {
+  width: 95px;
 }
 
 .device-bullet {
@@ -552,6 +567,12 @@ select:focus-visible {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+.icon-button.delete-button:hover {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .pending-row {

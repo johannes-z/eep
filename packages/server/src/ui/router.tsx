@@ -23,8 +23,9 @@ function OverviewRoute() {
     devices,
     onAcceptCandidate,
     onCommand,
+    onDeleteDevice,
     onPairing,
-    onRenameDevice,
+    onTransmitPairing,
     pairing,
   } = useAppContext();
   return (
@@ -34,8 +35,9 @@ function OverviewRoute() {
       devices={devices}
       onAccept={onAcceptCandidate}
       onCommand={onCommand}
+      onDelete={onDeleteDevice}
       onPairing={onPairing}
-      onRename={onRenameDevice}
+      onTransmitPairing={onTransmitPairing}
       pairing={pairing}
     />
   );

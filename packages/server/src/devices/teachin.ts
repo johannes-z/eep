@@ -23,17 +23,12 @@ export type TeachInResponder = (
   candidate: TeachInCandidate,
   response: UteResponse,
 ) => Promise<void>;
+export type TeachInSignalSender = () => Promise<void>;
 export type TeachInStateListener = (active: boolean) => void;
 
 function parseId(value: string | number): number {
   if (typeof value === 'number') return value;
   return Number.parseInt(value, 16);
-}
-
-function readText(value: unknown, field: string): string {
-  if (typeof value !== 'string' || !value.trim())
-    throw new Error(`${field} must be a non-empty string`);
-  return value.trim();
 }
 
 export class TeachInManager {
@@ -46,6 +41,7 @@ export class TeachInManager {
     private readonly controllerId: number,
     private readonly sendResponse?: TeachInResponder,
     private readonly profiles: ProfileRegistry = createDefaultProfileRegistry(),
+    private readonly sendSignal?: TeachInSignalSender,
   ) {}
 
   start(): void {
@@ -76,7 +72,10 @@ export class TeachInManager {
   observe(packet: RadioERP1Packet): TeachInCandidate | undefined {
     if (!this.active || packet.RORG !== 0xd4) return undefined;
     const info = packet.teachInInfo;
-    if (!info || info.command !== 'query') return undefined;
+    if (!info) return undefined;
+    const isResponse = info.command === 'response';
+    if (!isResponse && info.command !== 'query') return undefined;
+    if (isResponse && info.response !== 'teachInAccepted') return undefined;
     const targetId = parseId(packet.senderId);
     if (!Number.isInteger(targetId) || targetId < 1 || targetId > 0xffffffff) {
       return undefined;
@@ -87,12 +86,12 @@ export class TeachInManager {
       channel: info.channel,
       manufacturer: info.manufacturer,
       direction: info.direction,
-      responseExpected: info.responseExpected,
+      responseExpected: isResponse ? false : info.responseExpected,
       seenAt: new Date().toISOString(),
       requestPayload: Array.from(packet.payload),
     };
 
-    if (info.requestType !== 'teachIn') {
+    if (!isResponse && info.requestType !== 'teachIn') {
       this.respond(candidate, 'general');
       return undefined;
     }
@@ -110,9 +109,9 @@ export class TeachInManager {
     }
 
     const existing = this.registry.findByTargetId(candidate.targetId);
-    if (existing?.profileId === profileId) {
+    if (existing) {
       void this.registry
-        .update(candidate.targetId, {
+        .update(existing.sourceId, {
           teachIn: {
             eep: candidate.eep,
             channel: candidate.channel,
@@ -120,18 +119,14 @@ export class TeachInManager {
             direction: candidate.direction,
             responseExpected: candidate.responseExpected,
           },
-          availability: 'online',
-          lastSeen: candidate.seenAt,
         })
-        .catch((error: unknown) => {
-          console.error('Failed to update existing device teach-in metadata:', error);
-        });
+        .catch((error: unknown) => console.error('Teach-in metadata update failed:', error));
       this.respond(candidate, 'teachInAccepted');
       return undefined;
     }
 
     this.candidates.set(candidate.targetId, candidate);
-    this.respond(candidate, 'teachInAccepted');
+    if (!isResponse) this.respond(candidate, 'teachInAccepted');
     return candidate;
   }
 
@@ -142,10 +137,7 @@ export class TeachInManager {
     });
   }
 
-  async accept(
-    targetId: number,
-    details: { roomId: string; roomName: string; key: string; name: string },
-  ): Promise<Device> {
+  async accept(targetId: number): Promise<Device> {
     if (!Number.isInteger(targetId) || targetId < 0 || targetId > 0xffffffff) {
       throw new Error('targetId must be a valid EnOcean identifier');
     }
@@ -154,22 +146,14 @@ export class TeachInManager {
     const profileId = normalizeProfileId(candidate.eep);
     const profile = this.profiles.get(profileId);
     if (!profile) throw new Error(`Unsupported EEP: ${candidate.eep}`);
-    const input = details as unknown as Record<string, unknown>;
-    const roomId = readText(input?.roomId, 'roomId');
-    const roomName = readText(input?.roomName, 'roomName');
-    const key = readText(input?.key, 'key');
-    const name = readText(input?.name, 'name');
     const capabilities = profile.defaultCapabilities();
 
     const device: Device = {
-      key,
       sourceId: this.controllerId,
       targetId,
+      name: `EnOcean ${this.controllerId.toString(16).padStart(8, '0')}`,
       profileId,
       capabilities,
-      roomId,
-      roomName,
-      name,
       paired: true,
       teachIn: {
         eep: candidate.eep,
@@ -188,5 +172,10 @@ export class TeachInManager {
 
   reject(targetId: number): void {
     this.candidates.delete(targetId);
+  }
+
+  async transmit(): Promise<void> {
+    if (!this.active) throw new Error('Permit join is not active');
+    await this.sendSignal?.();
   }
 }

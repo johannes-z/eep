@@ -1,0 +1,54 @@
+version: 1
+devices:
+  ffe76681:
+    targetId: '0513cefe'
+    name: Living Room vent
+    profileId: D2-50-00
+    capabilities:
+      - off
+      - level1
+      - level2
+      - level3
+      - level4
+      - automatic
+      - supplyOnly
+      - exhaustOnly
+  ffe76682:
+    targetId: '05126787'
+    name: E05 Vent
+    profileId: D2-50-00
+    capabilities:
+      - off
+      - level1
+      - level2
+      - level3
+      - level4
+      - automatic
+      - supplyOnly
+      - exhaustOnly
+  ffe76683:
+    targetId: '05149bb5'
+    name: Guest Room vent
+    profileId: D2-50-00
+    capabilities:
+      - off
+      - level1
+      - level2
+      - level3
+      - level4
+      - automatic
+      - supplyOnly
+      - exhaustOnly
+  ffe76684:
+    targetId: '0513cdf8'
+    name: Bed Room vent
+    profileId: D2-50-00
+    capabilities:
+      - off
+      - level1
+      - level2
+      - level3
+      - level4
+      - automatic
+      - supplyOnly
+      - exhaustOnly

@@ -4,6 +4,7 @@ import type {
   RadioERP1Packet,
   UteCommand,
   UteRequestType,
+  UteResponseResult,
   UteTeachInInfo,
 } from '../devices/inbound';
 
@@ -59,6 +60,12 @@ export class Esp3Parser {
 
 const uteRequestTypes: UteRequestType[] = ['teachIn', 'teachOut', 'unspecified', 'reserved'];
 const uteCommands: UteCommand[] = ['query', 'response'];
+const uteResponseResults: UteResponseResult[] = [
+  'general',
+  'teachInAccepted',
+  'teachOutAccepted',
+  'eepNotSupported',
+];
 
 export const uteResponseCodes = {
   general: 0,
@@ -74,9 +81,10 @@ export function parseUteInfo(payload: number[]): UteTeachInInfo | undefined {
   const control = payload[0];
   const requestType = uteRequestTypes[(control >> 4) & 0x03];
   const command = uteCommands[control & 0x0f] ?? 'reserved';
-  const rorg = payload[4];
+  const type = payload[4];
   const func = payload[5];
-  const type = payload[6];
+  const rorg = payload[6];
+  const response = command === 'response' ? uteResponseResults[(control >> 4) & 0x03] : undefined;
   return {
     control,
     channel: payload[1],
@@ -86,6 +94,7 @@ export function parseUteInfo(payload: number[]): UteTeachInInfo | undefined {
     responseExpected: (control & 0x40) === 0,
     requestType,
     command,
+    ...(response ? { response } : {}),
   };
 }
 
@@ -112,22 +121,18 @@ function responseControl(response: UteResponse): number {
   return 0x80 | (uteResponseCodes[response] << 4) | 0x01;
 }
 
-export function buildUteTeachInResponse(
-  controllerId: number,
-  targetId: number,
-  requestPayload: number[],
-  response: UteResponse = 'teachInAccepted',
-): Buffer {
-  if (controllerId === 0 || targetId === 0) {
-    throw new Error('UTE controller and target IDs must be non-zero EnOcean identifiers');
+function validateIdentifier(value: number, field: string): void {
+  if (!Number.isInteger(value) || value < 1 || value > 0xffffffff) {
+    throw new Error(`UTE ${field} ID must be a non-zero EnOcean identifier`);
   }
-  if (requestPayload.length !== 7) {
-    throw new Error('UTE request payload must contain exactly seven bytes');
-  }
-  const payload = [...requestPayload];
-  payload[0] = responseControl(response);
+}
 
-  const data = [0xd4, ...payload, ...toHex(controllerId), 0];
+function buildUteFrame(senderId: number, targetId: number, payload: number[]): Buffer {
+  validateIdentifier(senderId, 'controller');
+  if (!Number.isInteger(targetId) || targetId < 0 || targetId > 0xffffffff) {
+    throw new Error('UTE target ID must be an EnOcean identifier');
+  }
+  const data = [0xd4, ...payload, ...toHex(senderId), 0];
   const optionalData = [3, ...toHex(targetId), 0xff, 0];
   const header = [0, data.length, optionalData.length, 1];
   return Buffer.from([
@@ -138,4 +143,48 @@ export function buildUteTeachInResponse(
     ...optionalData,
     getChecksum([data, optionalData]),
   ]);
+}
+
+export function buildUteTeachInQuery(
+  controllerId: number,
+  targetId = 0xffffffff,
+  options: { channel?: number; manufacturerId?: number; eep?: string } = {},
+): Buffer {
+  const channel = options.channel ?? 0xff;
+  const manufacturerId = options.manufacturerId ?? 0x000b;
+  const eep = options.eep ?? 'D2-50-00';
+  const match = /^(?:0x)?([0-9a-f]{2})-([0-9a-f]{2})-([0-9a-f]{2})$/i.exec(eep);
+  if (!match) throw new Error(`Invalid UTE EEP: ${eep}`);
+  if (!Number.isInteger(channel) || channel < 0 || channel > 0xff) {
+    throw new Error('UTE channel must be a byte');
+  }
+  if (!Number.isInteger(manufacturerId) || manufacturerId < 0 || manufacturerId > 0x7ff) {
+    throw new Error('UTE manufacturer ID must be an 11-bit value');
+  }
+  return buildUteFrame(controllerId, targetId, [
+    0x80,
+    channel,
+    manufacturerId & 0xff,
+    manufacturerId >> 8,
+    Number.parseInt(match[3], 16),
+    Number.parseInt(match[2], 16),
+    Number.parseInt(match[1], 16),
+  ]);
+}
+
+export function buildUteTeachInResponse(
+  controllerId: number,
+  targetId: number,
+  requestPayload: number[],
+  response: UteResponse = 'teachInAccepted',
+): Buffer {
+  validateIdentifier(controllerId, 'controller');
+  validateIdentifier(targetId, 'target');
+  if (requestPayload.length !== 7) {
+    throw new Error('UTE request payload must contain exactly seven bytes');
+  }
+  const payload = [...requestPayload];
+  payload[0] = responseControl(response);
+
+  return buildUteFrame(controllerId, targetId, payload);
 }

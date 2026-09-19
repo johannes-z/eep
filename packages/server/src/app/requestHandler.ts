@@ -24,6 +24,7 @@ export interface MqttStatus {
 
 export interface RequestHandlerOptions {
   registry?: DeviceRegistry;
+  controllerId?: number;
   teachIn?: TeachInManager;
   webRoot?: string;
   transportSettings?: TransportSettings;
@@ -248,11 +249,19 @@ function parseHomeAssistantSettings(
   return next;
 }
 
-function findLegacyDevice(room: string, key: string): Device | undefined {
+function parseRouteId(value: string): number {
+  const normalized = value.trim();
+  if (/^0x/i.test(normalized) || /[a-f]/i.test(normalized)) {
+    return Number.parseInt(normalized.replace(/^0x/i, ''), 16);
+  }
+  return Number(normalized);
+}
+
+function findLegacyDevice(source: string, target: string): Device | undefined {
+  const sourceId = parseRouteId(source);
+  const targetId = parseRouteId(target);
   const device = initialDevices.find(
-    (item) =>
-      item.roomId.toUpperCase() === room.toUpperCase() &&
-      item.key.toUpperCase() === key.toUpperCase(),
+    (item) => item.sourceId === sourceId && item.targetId === targetId,
   );
   return device ? { ...device } : undefined;
 }
@@ -318,7 +327,14 @@ export function createRequestHandler(
   }
 
   async function sendCommand(device: Device, request: unknown): Promise<void> {
-    await sendDeviceCommand(getSocket(), options.registry, device, request, profiles);
+    await sendDeviceCommand(
+      getSocket(),
+      options.registry,
+      device,
+      request,
+      profiles,
+      options.controllerId,
+    );
   }
 
   return async function handleRequest(request: Request): Promise<Response> {
@@ -449,21 +465,15 @@ export function createRequestHandler(
       }
 
       if (parts[1] === 'devices' && request.method === 'PUT' && parts.length === 3) {
-        const targetId = Number(parts[2]);
+        return json({ error: 'Device metadata is not configurable' }, 405);
+      }
+
+      if (parts[1] === 'devices' && request.method === 'DELETE' && parts.length === 3) {
+        const sourceId = parseRouteId(parts[2]);
         const registry = options.registry;
-        if (!registry || !Number.isInteger(targetId)) return json({ error: 'Unknown device' }, 404);
-        if (!registry.findByTargetId(targetId)) return json({ error: 'Unknown device' }, 404);
-        try {
-          const rawBody: unknown = await request.json();
-          if (!rawBody || typeof rawBody !== 'object' || Array.isArray(rawBody)) {
-            throw new Error('Request body must be an object');
-          }
-          const name = readString(rawBody as Record<string, unknown>, 'name', undefined);
-          if (!name) throw new Error('name must not be empty');
-          return json(await registry.update(targetId, { name }));
-        } catch (error) {
-          return json({ error: (error as Error).message }, 400);
-        }
+        if (!registry || !Number.isInteger(sourceId)) return json({ error: 'Unknown device' }, 404);
+        if (!(await registry.remove(sourceId))) return json({ error: 'Unknown device' }, 404);
+        return json({ ok: true });
       }
 
       if (parts[1] === 'pairing' && request.method === 'GET' && parts.length === 2) {
@@ -494,17 +504,26 @@ export function createRequestHandler(
         );
       }
 
+      if (parts[1] === 'pairing' && request.method === 'POST' && parts[2] === 'transmit') {
+        if (!options.teachIn) return json({ error: 'Teach-in is unavailable' }, 503);
+        try {
+          await options.teachIn.transmit();
+          return json({
+            active: options.teachIn.isActive(),
+            candidates: options.teachIn.listCandidates(),
+          });
+        } catch (error) {
+          return json({ error: (error as Error).message }, 400);
+        }
+      }
+
       if (parts[1] === 'pairing' && parts[2] === 'accept' && request.method === 'POST') {
         if (!options.teachIn) return json({ error: 'Teach-in is unavailable' }, 503);
         try {
           const body = (await request.json()) as {
             targetId: number;
-            roomId: string;
-            roomName: string;
-            key: string;
-            name: string;
           };
-          return json(await options.teachIn.accept(Number(body.targetId), body));
+          return json(await options.teachIn.accept(Number(body.targetId)));
         } catch (error) {
           return json({ error: (error as Error).message }, 400);
         }
@@ -527,9 +546,9 @@ export function createRequestHandler(
         parts[3] === 'command' &&
         request.method === 'POST'
       ) {
-        const targetId = Number(parts[2]);
-        const device = options.registry?.findByTargetId(targetId);
-        if (!device || !Number.isInteger(targetId)) return json({ error: 'Unknown device' }, 404);
+        const sourceId = parseRouteId(parts[2]);
+        const device = options.registry?.findBySourceId(sourceId);
+        if (!device || !Number.isInteger(sourceId)) return json({ error: 'Unknown device' }, 404);
         try {
           await sendCommand(device, await request.json());
           return json({ ok: true });
@@ -557,12 +576,12 @@ export function createRequestHandler(
     if (parts.length !== 3) return new Response(null, { status: 404 });
     if (request.method !== 'GET') return new Response(null, { status: 405 });
 
-    const [room, device, value] = parts;
-    console.log('Received request with params:', { room, device, value });
+    const [source, target, value] = parts;
+    console.log('Received request with params:', { source, target, value });
 
     const deviceConfig = options.registry
-      ? options.registry.findByLocation(room, device)
-      : findLegacyDevice(room, device);
+      ? options.registry.findBySourceId(parseRouteId(source))
+      : findLegacyDevice(source, target);
 
     if (!deviceConfig) return new Response(null, { status: 400 });
 

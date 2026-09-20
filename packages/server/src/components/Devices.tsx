@@ -102,7 +102,6 @@ function DeviceRow({ device }: { device: Device }) {
   const entity = device.profile?.entity;
   const state = device.entityState;
   const hasState = device.reportedState !== undefined || device.desiredState !== undefined;
-  const pending = device.desiredState !== undefined;
   const disabled = busyTargets.has(device.sourceId) || !transport.connected;
   const percentage =
     entity?.percentage && state?.percentage !== undefined
@@ -124,7 +123,7 @@ function DeviceRow({ device }: { device: Device }) {
 
   return (
     <>
-      <tr className={pending ? 'pending-row' : undefined}>
+      <tr>
         <td>
           <div className="device-name">
             <span
@@ -150,7 +149,6 @@ function DeviceRow({ device }: { device: Device }) {
                 : 'Closed'
               : (state?.preset ??
                 (state?.isOn ? (levels.length ? `${percentage}%` : 'On') : 'Off'))}
-          {pending && <span className="pending-label">Pending</span>}
         </td>
         <td data-label="Control">
           <div className="device-controls">

@@ -571,15 +571,6 @@ p {
   padding: 5px 10px;
   font-size: 11px;
 }
-.pending-row {
-  background: #fdfaf1;
-}
-.pending-label {
-  display: block;
-  margin-top: 5px;
-  font-size: 10px;
-  color: var(--warning);
-}
 .empty-table {
   height: 180px;
   text-align: center;

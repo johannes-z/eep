@@ -57,36 +57,3 @@ export function bridgeDeviceInfo(): Record<string, unknown> {
     model: 'Bridge',
   };
 }
-
-export function isBridgeDiscovery(payload: Buffer): boolean {
-  if (!payload.length) return false;
-  try {
-    const value = JSON.parse(payload.toString()) as Record<string, unknown>;
-    const uniqueId = typeof value.unique_id === 'string' ? value.unique_id : '';
-    const objectId = typeof value.object_id === 'string' ? value.object_id : '';
-    const device = value.device as Record<string, unknown> | undefined;
-    const identifiers = Array.isArray(device?.identifiers) ? device.identifiers : [];
-    return (
-      uniqueId.startsWith('eep_') ||
-      objectId.startsWith('eep_') ||
-      device?.via_device === bridgeDeviceId ||
-      identifiers.includes(bridgeDeviceId) ||
-      identifiers.some(
-        (identifier) => typeof identifier === 'string' && identifier.startsWith('eep_'),
-      )
-    );
-  } catch {
-    return false;
-  }
-}
-
-export function discoverySourceId(topic: string, discoveryPrefix: string): number | undefined {
-  const prefix = `${discoveryPrefix}/`;
-  if (!topic.startsWith(prefix)) return undefined;
-  const parts = topic.slice(prefix.length).split('/');
-  if (parts.length !== 3 || parts[2] !== 'config') return undefined;
-  const directId = /^[0-9a-f]{8}$/i.exec(parts[1]);
-  const diagnosticId = /^eep_([0-9a-f]{8})(?:_|$)/i.exec(parts[1]);
-  const value = directId?.[0] ?? diagnosticId?.[1];
-  return value === undefined ? undefined : Number.parseInt(value, 16);
-}

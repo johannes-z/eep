@@ -105,15 +105,7 @@ export function Sidebar({
   );
 }
 
-export function TopBar({
-  title,
-  pairing,
-  onPairing,
-}: {
-  title: string;
-  pairing: boolean;
-  onPairing: () => void;
-}) {
+export function TopBar({ title }: { title: string }) {
   return (
     <header className="topbar">
       <div className="topbar-title">
@@ -125,14 +117,6 @@ export function TopBar({
           <span className="status-dot online" />
           Running
         </span>
-        <button
-          aria-pressed={pairing}
-          className={`pair-button ${pairing ? 'active' : ''}`}
-          onClick={onPairing}
-          type="button"
-        >
-          {pairing ? 'Stop joining' : 'Permit join'}
-        </button>
       </div>
     </header>
   );

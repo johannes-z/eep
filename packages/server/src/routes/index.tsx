@@ -4,30 +4,14 @@ import { useAppContext } from '../App';
 import { routeMetadata } from '../ui/routes';
 
 function OverviewRoute() {
-  const {
-    busyTarget,
-    candidates,
-    devices,
-    onAcceptCandidate,
-    onCommand,
-    onDeleteDevice,
-    onRenameDevice,
-    onPairing,
-    onTransmitPairing,
-    pairing,
-  } = useAppContext();
+  const { busyTarget, devices, onCommand, onDeleteDevice, onRenameDevice } = useAppContext();
   return (
     <Overview
       busyTarget={busyTarget}
-      candidates={candidates}
       devices={devices}
-      onAccept={onAcceptCandidate}
       onCommand={onCommand}
       onDelete={onDeleteDevice}
       onRename={onRenameDevice}
-      onPairing={onPairing}
-      onTransmitPairing={onTransmitPairing}
-      pairing={pairing}
     />
   );
 }

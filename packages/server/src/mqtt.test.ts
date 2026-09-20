@@ -175,27 +175,6 @@ test('clears retained discovery when a device is removed', async () => {
   await bridge.stop();
 });
 
-test('clears stale bridge discovery received from MQTT', async () => {
-  const { bridge, client } = await createBridge();
-
-  client.send(
-    'homeassistant/fan/ffe76690/config',
-    JSON.stringify({
-      unique_id: 'eep_fan_ffe76690',
-      object_id: 'old_vent',
-      device: { identifiers: ['eep_ffe76690'], via_device: 'eep_bridge' },
-    }),
-  );
-  await new Promise((resolve) => setTimeout(resolve, 0));
-
-  expect(
-    client.published
-      .filter((message) => message.topic === 'homeassistant/fan/ffe76690/config')
-      .at(-1)?.payload,
-  ).toBe('');
-  await bridge.stop();
-});
-
 test('uses configured Home Assistant topics and keeps unknown devices unavailable', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-mqtt-topics-'));
   const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));

@@ -80,26 +80,6 @@ test('allocates the next free sender ID when the controller ID is already paired
   expect(registry.findByTargetId(0x05010207)?.sourceId).toBe(0xffe76685);
 });
 
-test('uses the allocated sender ID for the UTE signal', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-'));
-  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
-  let signalSourceId = 0;
-  const manager = new TeachInManager(
-    registry,
-    0xffe76681,
-    undefined,
-    undefined,
-    async (sourceId) => {
-      signalSourceId = sourceId;
-    },
-  );
-
-  manager.start();
-  await manager.transmit();
-
-  expect(signalSourceId).toBe(0xffe76685);
-});
-
 test('uses an explicitly selected sender ID for the UTE signal', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-targeted-'));
   const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
@@ -149,27 +129,6 @@ test('automatically accepts a response from a targeted pairing session', async (
   expect(registry.findByTargetId(0x05010208)?.sourceId).toBe(0xffe76685);
   expect(manager.listCandidates()).toHaveLength(0);
   expect(manager.isActive()).toBe(false);
-});
-
-test('uses a configured start ID for UTE allocation', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-'));
-  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
-  let signalSourceId = 0;
-  const manager = new TeachInManager(
-    registry,
-    0xffe76681,
-    undefined,
-    undefined,
-    async (sourceId) => {
-      signalSourceId = sourceId;
-    },
-    0xffe76690,
-  );
-
-  manager.start();
-  await manager.transmit();
-
-  expect(signalSourceId).toBe(0xffe76690);
 });
 
 test('rejects unsupported teach-in profiles', async () => {

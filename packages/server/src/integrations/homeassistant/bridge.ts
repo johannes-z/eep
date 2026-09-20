@@ -15,8 +15,6 @@ import {
   deviceAvailability,
   deviceInfo,
   diagnosticValues,
-  discoverySourceId,
-  isBridgeDiscovery,
   profileContext,
 } from './device';
 import { publish, publishOptions, subscribe } from './publisher';
@@ -36,7 +34,6 @@ export class MqttEntityBridge {
   private readonly removeTeachInListener: () => void;
   private readonly statePublisher: HomeAssistantStatePublisher;
   private readonly publishedEntityObjectIds = new Map<number, string>();
-  private discoveryCleanupSubscribed = false;
 
   constructor(
     private readonly client: MqttClientLike,
@@ -155,7 +152,6 @@ export class MqttEntityBridge {
       }
       return;
     }
-    await this.subscribeDiscoveryCleanup();
     await publish(this.client, this.bridgeAvailability, 'online', this.bridgePublishOptions);
     await this.publishRestartDiscovery();
     await this.publishPermitJoinDiscovery();
@@ -304,20 +300,6 @@ export class MqttEntityBridge {
     }
   }
 
-  private async subscribeDiscoveryCleanup(): Promise<void> {
-    if (this.discoveryCleanupSubscribed) return;
-    await subscribe(this.client, `${this.discoveryPrefix}/+/+/config`);
-    this.discoveryCleanupSubscribed = true;
-  }
-
-  private async clearStaleDiscovery(topic: string, payload: Buffer): Promise<boolean> {
-    if (!isBridgeDiscovery(payload)) return false;
-    const sourceId = discoverySourceId(topic, this.discoveryPrefix);
-    if (sourceId === undefined || this.registry.findBySourceId(sourceId)) return false;
-    await publish(this.client, topic, '', { ...publishOptions, retain: true });
-    return true;
-  }
-
   private async clearEntityDiscovery(
     device: Device,
     options = { ...publishOptions, retain: true },
@@ -433,7 +415,6 @@ export class MqttEntityBridge {
   }
 
   private async handleMessage(topic: string, payload: Buffer): Promise<void> {
-    if (await this.clearStaleDiscovery(topic, payload)) return;
     if (this.homeAssistantEnabled) {
       const permitTopics = permitJoinTopics(
         this.discoveryPrefix,

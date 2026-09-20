@@ -92,10 +92,9 @@ function deserializeDevice(
   value: unknown,
   sourceIdValue: unknown,
   profiles: ProfileRegistry,
-  includeRuntimeState = false,
 ): Device {
   if (!isRecord(value)) throw new Error('Invalid device record');
-  const sourceId = parseIdentifier(sourceIdValue ?? value.sourceId, 'sourceId');
+  const sourceId = parseIdentifier(sourceIdValue, 'sourceId');
   const name =
     value.name === undefined
       ? `EnOcean ${sourceId.toString(16).padStart(8, '0')}`
@@ -110,9 +109,6 @@ function deserializeDevice(
         if (!isJsonValue(opaque)) throw new Error('Invalid capabilities');
         return opaque;
       })();
-  const runtimeState: DeviceRuntimeState = includeRuntimeState
-    ? deserializeRuntimeState(value, profile, capabilities)
-    : { availability: 'unknown' };
   return {
     sourceId,
     targetId: parseIdentifier(value.targetId, 'targetId'),
@@ -120,7 +116,7 @@ function deserializeDevice(
     profileId,
     capabilities,
     ...(value.teachIn === undefined ? {} : { teachIn: validateTeachInInfo(value.teachIn) }),
-    ...runtimeState,
+    availability: 'unknown',
   };
 }
 
@@ -188,15 +184,6 @@ export const initialDevices = deserializeConfiguredDevices(
   (initialConfiguration as { devices: unknown }).devices,
   defaultProfiles,
 );
-
-function runtimeStateOf(device: Device): DeviceRuntimeState {
-  return {
-    availability: device.availability,
-    ...(device.lastSeen === undefined ? {} : { lastSeen: device.lastSeen }),
-    ...(device.reportedState === undefined ? {} : { reportedState: device.reportedState }),
-    ...(device.desiredState === undefined ? {} : { desiredState: device.desiredState }),
-  };
-}
 
 export class DeviceRegistry {
   private devices: Device[];

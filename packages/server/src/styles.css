@@ -250,7 +250,6 @@ select:focus-visible {
   background: var(--danger);
 }
 
-.pair-button,
 .save-button,
 .small-button {
   border: 1px solid #151619;
@@ -261,20 +260,9 @@ select:focus-visible {
   font-weight: 650;
 }
 
-.pair-button {
-  min-height: 32px;
-  padding: 0 13px;
-}
-
-.pair-button:hover,
 .save-button:hover,
 .small-button:hover {
   background: #36383d;
-}
-
-.pair-button.active {
-  border-color: var(--danger);
-  background: var(--danger);
 }
 
 .page-content {
@@ -287,7 +275,6 @@ select:focus-visible {
 }
 
 .overview-toolbar,
-.panel-toolbar,
 .settings-heading {
   display: flex;
   align-items: center;
@@ -307,20 +294,11 @@ select:focus-visible {
   letter-spacing: -0.02em;
 }
 
-.overview-toolbar > div > span,
-.panel-toolbar > div > span {
+.overview-toolbar > div > span {
   display: block;
   margin-top: 4px;
   color: var(--muted);
   font-size: 11px;
-}
-
-.panel-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  flex-wrap: wrap;
 }
 
 .search-field {
@@ -352,7 +330,7 @@ select:focus-visible {
 
 .metric-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   margin-bottom: 18px;
   border: 1px solid var(--line);
   background: var(--surface);
@@ -390,10 +368,6 @@ select:focus-visible {
 
 .success-text {
   color: var(--success) !important;
-}
-
-.warning-text {
-  color: var(--warning) !important;
 }
 
 .data-table-wrap {
@@ -602,13 +576,6 @@ select:focus-visible {
   text-align: center;
 }
 
-.pairing-panel {
-  margin-bottom: 18px;
-  padding: 14px;
-  border: 1px solid #e9d9a9;
-  background: #fffdf5;
-}
-
 .listener-panel {
   margin-bottom: 18px;
   padding: 14px;
@@ -664,51 +631,12 @@ select:focus-visible {
   white-space: nowrap;
 }
 
-.panel-toolbar h3 {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 650;
-}
-
 .text-button {
   border: 0;
   background: transparent;
   color: var(--accent);
   font-size: 11px;
   font-weight: 650;
-}
-
-.candidate-list {
-  display: grid;
-  gap: 6px;
-  margin-top: 12px;
-}
-
-.candidate-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 9px 10px;
-  border: 1px solid #eadfbf;
-  background: var(--surface);
-}
-
-.candidate-row strong,
-.candidate-row span {
-  display: block;
-}
-
-.candidate-row strong {
-  color: var(--ink);
-  font-size: 11px;
-}
-
-.candidate-row span {
-  margin-top: 3px;
-  color: var(--muted);
-  font-family: 'IBM Plex Mono', Consolas, monospace;
-  font-size: 10px;
 }
 
 .small-button {

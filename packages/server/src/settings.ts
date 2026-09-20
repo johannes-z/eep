@@ -16,7 +16,6 @@ export interface PersistedConfiguration {
 
 const writeQueues = new Map<string, Promise<void>>();
 const secretMarker = '__EEP_SECRET__';
-const includeMarker = '__EEP_INCLUDE__';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -33,9 +32,7 @@ function validateSection(data: Record<string, unknown>, key: string): void {
 }
 
 function normalizeYamlTags(text: string): string {
-  return text
-    .replace(/!secret\s+([A-Za-z0-9_.-]+)/g, `"${secretMarker}$1"`)
-    .replace(/!include\s+([^\s#]+)/g, `"${includeMarker}$1"`);
+  return text.replace(/!secret\s+([A-Za-z0-9_.-]+)/g, `"${secretMarker}$1"`);
 }
 
 function stringifyYaml(value: unknown): string {
@@ -89,14 +86,6 @@ async function resolveSecrets(
         throw new Error(`Missing secret: ${key}`);
       }
       (resolvedMqtt as Record<string, unknown>)[field] = secrets[key];
-      changed = true;
-    } else if (value.startsWith(includeMarker)) {
-      const includedPath = join(dirname(filePath), value.slice(includeMarker.length));
-      const included = Bun.YAML.parse(await readFile(includedPath, 'utf8'));
-      if (typeof included !== 'string' || !included) {
-        throw new Error(`Included secret must be a scalar: ${includedPath}`);
-      }
-      resolvedMqtt[field] = included;
       changed = true;
     }
   }

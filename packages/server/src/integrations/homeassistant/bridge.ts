@@ -29,7 +29,7 @@ export class MqttEntityBridge {
   private readonly baseTopic: string;
   private readonly bridgePublishOptions: { qos: 1; retain: boolean };
   private readonly includeDeviceInformation: boolean;
-  private readonly enabled: boolean;
+  private readonly homeAssistantEnabled: boolean;
   private readonly bridgeAvailability: string;
   private readonly removeChangeListener: () => void;
   private readonly removeDeviceListener: () => void;
@@ -50,7 +50,7 @@ export class MqttEntityBridge {
     private readonly teachIn?: TeachInManager,
     private readonly restart?: () => Promise<void>,
   ) {
-    this.enabled = settings.homeAssistant?.enabled !== false;
+    this.homeAssistantEnabled = settings.homeAssistant?.enabled !== false;
     this.discoveryPrefix =
       settings.homeAssistant?.discoveryTopic ?? settings.discoveryPrefix ?? 'homeassistant';
     this.baseTopic = settings.baseTopic ?? 'eep';
@@ -65,7 +65,6 @@ export class MqttEntityBridge {
       this.registry,
       this.profiles,
       {
-        enabled: this.enabled,
         discoveryPrefix: this.discoveryPrefix,
         baseTopic: this.baseTopic,
         bridgeAvailability: this.bridgeAvailability,
@@ -82,7 +81,11 @@ export class MqttEntityBridge {
       }) ?? (() => undefined);
     this.removeChangeListener = this.registry.onChange((device) => {
       void Promise.resolve()
-        .then(() => (this.enabled ? this.publishDiscovery(device) : undefined))
+        .then(() =>
+          this.homeAssistantEnabled
+            ? this.publishDiscovery(device)
+            : this.subscribeDeviceCommands(device),
+        )
         .then(() => this.statePublisher.publishState(device, deviceAvailability(device)))
         .catch((error: unknown) => console.error('MQTT device update failed:', error));
     });
@@ -143,8 +146,13 @@ export class MqttEntityBridge {
   }
 
   async publishAll(): Promise<void> {
-    if (!this.enabled) {
+    if (!this.homeAssistantEnabled) {
       await this.clearDiscovery();
+      await this.statePublisher.publishAvailability('online');
+      for (const device of this.registry.list()) {
+        await this.subscribeDeviceCommands(device);
+        await this.statePublisher.publishState(device, deviceAvailability(device));
+      }
       return;
     }
     await this.subscribeDiscoveryCleanup();
@@ -220,6 +228,21 @@ export class MqttEntityBridge {
     );
     this.publishedEntityObjectIds.set(device.sourceId, objectId);
     await this.publishDeviceDiagnosticDiscovery(device, descriptor.protocol);
+    await this.subscribeDeviceCommands(device);
+  }
+
+  private async subscribeDeviceCommands(device: Device): Promise<void> {
+    const entity = this.profiles.get(device.profileId)?.entity;
+    if (!entity) return;
+    const descriptor = entity.describe(profileContext(device));
+    const presets = descriptor.presets ?? [];
+    const topics = entityTopics(
+      device,
+      descriptor.kind,
+      this.discoveryPrefix,
+      this.baseTopic,
+      this.bridgeAvailability,
+    );
     if (descriptor.commands.includes('command')) await subscribe(this.client, topics.command);
     if (descriptor.commands.includes('percentage') && descriptor.percentage) {
       await subscribe(this.client, topics.percentageCommand);
@@ -324,7 +347,6 @@ export class MqttEntityBridge {
   }
 
   private async publishDeviceDiagnosticDiscovery(device: Device, model: string): Promise<void> {
-    if (!this.enabled) return;
     for (const diagnostic of diagnosticValues(device)) {
       const topics = deviceDiagnosticTopics(
         device,
@@ -376,7 +398,7 @@ export class MqttEntityBridge {
   }
 
   private async publishPermitJoinDiscovery(): Promise<void> {
-    if (!this.enabled || !this.teachIn) return;
+    if (!this.homeAssistantEnabled || !this.teachIn) return;
     const topics = permitJoinTopics(this.discoveryPrefix, this.baseTopic, this.bridgeAvailability);
     const payload = {
       name: 'Permit join',
@@ -408,7 +430,7 @@ export class MqttEntityBridge {
   }
 
   private async publishRestartDiscovery(): Promise<void> {
-    if (!this.enabled) return;
+    if (!this.homeAssistantEnabled) return;
     const topics = restartTopics(this.discoveryPrefix, this.baseTopic, this.bridgeAvailability);
     const payload = {
       name: 'Restart',
@@ -435,7 +457,7 @@ export class MqttEntityBridge {
   }
 
   private async publishPermitJoinState(): Promise<void> {
-    if (!this.enabled || !this.teachIn) return;
+    if (!this.homeAssistantEnabled || !this.teachIn) return;
     const topics = permitJoinTopics(this.discoveryPrefix, this.baseTopic, this.bridgeAvailability);
     await publish(
       this.client,
@@ -447,29 +469,30 @@ export class MqttEntityBridge {
 
   private async handleMessage(topic: string, payload: Buffer): Promise<void> {
     if (await this.clearStaleDiscovery(topic, payload)) return;
-    if (!this.enabled) return;
-    const permitTopics = permitJoinTopics(
-      this.discoveryPrefix,
-      this.baseTopic,
-      this.bridgeAvailability,
-    );
-    if (this.teachIn && topic === permitTopics.command) {
-      const message = payload.toString().trim().toUpperCase();
-      if (message === 'ON') {
-        this.teachIn.start();
-        await this.teachIn.transmit();
-      } else if (message === 'OFF') this.teachIn.stop();
-      else throw new Error(`Unsupported Permit join state: ${message}`);
-      await this.publishPermitJoinState();
-      return;
-    }
-    const restart = restartTopics(this.discoveryPrefix, this.baseTopic, this.bridgeAvailability);
-    if (topic === restart.command) {
-      if (payload.toString().trim().toUpperCase() !== 'PRESS') {
-        throw new Error('Unsupported restart command');
+    if (this.homeAssistantEnabled) {
+      const permitTopics = permitJoinTopics(
+        this.discoveryPrefix,
+        this.baseTopic,
+        this.bridgeAvailability,
+      );
+      if (this.teachIn && topic === permitTopics.command) {
+        const message = payload.toString().trim().toUpperCase();
+        if (message === 'ON') {
+          this.teachIn.start();
+          await this.teachIn.transmit();
+        } else if (message === 'OFF') this.teachIn.stop();
+        else throw new Error(`Unsupported Permit join state: ${message}`);
+        await this.publishPermitJoinState();
+        return;
       }
-      await this.restart?.();
-      return;
+      const restart = restartTopics(this.discoveryPrefix, this.baseTopic, this.bridgeAvailability);
+      if (topic === restart.command) {
+        if (payload.toString().trim().toUpperCase() !== 'PRESS') {
+          throw new Error('Unsupported restart command');
+        }
+        await this.restart?.();
+        return;
+      }
     }
     const device = this.registry.list().find((item) => {
       const entity = this.profiles.get(item.profileId)?.entity;

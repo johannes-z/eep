@@ -237,6 +237,46 @@ test('maps fan MQTT commands to D2 values', async () => {
   expect(commands).toEqual([3, 3, 3, 1, 0]);
 });
 
+test('keeps MQTT state and commands active when Home Assistant is disabled', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-mqtt-without-ha-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  await registry.update(0xffe76681, { availability: 'online' });
+  const client = new FakeMqttClient();
+  const commands: number[] = [];
+  const bridge = new MqttFanBridge(
+    client,
+    registry,
+    async (_device, value) => {
+      commands.push(value as number);
+    },
+    {
+      baseTopic: 'eep',
+      homeAssistant: {
+        enabled: false,
+        discoveryTopic: 'homeassistant',
+        statusTopic: 'eep/status',
+        experimentalEventEntities: false,
+        legacyActionSensor: false,
+      },
+    },
+  );
+
+  bridge.start();
+  await bridge.publishAll();
+  client.send('eep/fan/ffe76681/percentage/set', '75');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  expect(
+    client.published.find((message) => message.topic === 'eep/fan/ffe76681/state'),
+  ).toBeDefined();
+  expect(commands).toEqual([3]);
+  expect(
+    client.published.find((message) => message.topic === 'homeassistant/fan/ffe76681/config')
+      ?.payload,
+  ).toBe('');
+  await bridge.stop();
+});
+
 test('rejects MQTT presets that are not configured for a device', async () => {
   const { client, commands } = await createBridge();
   client.send('eep/fan/ffe76681/preset/set', 'Automatic on demand');

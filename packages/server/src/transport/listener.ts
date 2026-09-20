@@ -1,9 +1,12 @@
 import type { RadioERP1Packet } from '../devices/inbound';
-import type { Esp3Frame } from './esp3';
+import { Esp3Parser, parseRadioERP1, type Esp3Frame } from './esp3';
+
+export type ListenDirection = 'rx' | 'tx';
 
 export interface ListenPacket {
   id: number;
   timestamp: string;
+  direction: ListenDirection;
   packetType: number;
   data: string;
   optionalData: string;
@@ -53,7 +56,11 @@ export class PacketListener {
     return { active: this.active, packets: this.packets.map((packet) => ({ ...packet })) };
   }
 
-  capture(frame: Esp3Frame, radioPacket?: RadioERP1Packet): void {
+  capture(
+    frame: Esp3Frame,
+    radioPacket?: RadioERP1Packet,
+    direction: ListenDirection = 'rx',
+  ): void {
     if (!this.active) return;
     const eep = teachInEep(radioPacket?.teachInInfo);
     const radio = radioPacket
@@ -70,6 +77,7 @@ export class PacketListener {
       {
         id: this.nextId,
         timestamp: new Date().toISOString(),
+        direction,
         packetType: frame.packetType,
         data: bytesToHex(frame.data),
         optionalData: bytesToHex(frame.optionalData),
@@ -77,5 +85,13 @@ export class PacketListener {
       },
     ].slice(-PacketListener.maxPackets);
     this.nextId += 1;
+  }
+
+  captureOutgoing(payload: ArrayLike<number>): void {
+    if (!this.active) return;
+    const parser = new Esp3Parser();
+    for (const frame of parser.push(payload)) {
+      this.capture(frame, parseRadioERP1(frame), 'tx');
+    }
   }
 }

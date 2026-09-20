@@ -7,6 +7,7 @@ import type { TransportSettings } from './config';
 import { DeviceRegistry } from './devices/registry';
 import { TeachInManager } from './devices/teachin';
 import { PacketListener } from './transport/listener';
+import { buildCommonCommand } from './transport/esp3';
 
 void mock.module('bun-serialport', () => ({
   SerialPort: class {
@@ -150,7 +151,19 @@ test('starts, reads, and stops the packet listener', async () => {
   const current = await handler(new Request('http://localhost/api/listen'));
   expect(await current.json()).toMatchObject({
     active: true,
-    packets: [{ data: 'D2 01 02', optionalData: '03 04', radio: { senderId: 'ffe76681' } }],
+    packets: [
+      {
+        direction: 'rx',
+        data: 'D2 01 02',
+        optionalData: '03 04',
+        radio: { senderId: 'ffe76681' },
+      },
+    ],
+  });
+
+  listener.captureOutgoing(buildCommonCommand(0x08));
+  expect(await (await handler(new Request('http://localhost/api/listen'))).json()).toMatchObject({
+    packets: [{ direction: 'rx' }, { direction: 'tx', packetType: 5, data: '08' }],
   });
 
   const stop = await handler(new Request('http://localhost/api/listen/stop', { method: 'POST' }));

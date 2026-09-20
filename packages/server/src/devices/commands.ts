@@ -3,6 +3,8 @@ import { createDefaultProfileRegistry, type ProfileRegistry } from '../profiles'
 import type { DeviceRegistry } from './registry';
 import type { TransportConnection } from '../transport/adapters';
 
+export type TransmitListener = (payload: Uint8Array) => void | Promise<void>;
+
 async function writePayload(socket: TransportConnection, payload: Uint8Array): Promise<void> {
   await socket.write(payload);
 }
@@ -14,6 +16,7 @@ export async function sendDeviceCommand(
   request: unknown,
   profiles: ProfileRegistry = createDefaultProfileRegistry(),
   senderId?: number,
+  onTransmit?: TransmitListener,
 ): Promise<void> {
   const profile = profiles.require(device.profileId);
   const context = {
@@ -27,6 +30,7 @@ export async function sendDeviceCommand(
   const command = profile.parseCommand(context, normalizeCommandRequest(request));
   const payload = profile.encodeCommand(context, command);
   await writePayload(socket, payload);
+  await onTransmit?.(payload);
   if (registry && command.desiredState !== undefined) {
     await registry.update(device.sourceId, {
       desiredState: command.desiredState as Device['desiredState'],

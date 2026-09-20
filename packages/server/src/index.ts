@@ -112,24 +112,28 @@ export function getMqttSettings(
 
 function createTeachInResponder(
   getSocket: () => RequestTransport,
+  onTransmit: (payload: Uint8Array) => void,
 ): (candidate: TeachInCandidate, response: UteResponse) => Promise<void> {
   return async (candidate, response): Promise<void> => {
-    await getSocket().write(
-      buildUteTeachInResponse(
-        candidate.sourceId,
-        candidate.targetId,
-        candidate.requestPayload,
-        response,
-      ),
+    const payload = buildUteTeachInResponse(
+      candidate.sourceId,
+      candidate.targetId,
+      candidate.requestPayload,
+      response,
     );
+    await getSocket().write(payload);
+    onTransmit(payload);
   };
 }
 
 function createTeachInSignalSender(
   getSocket: () => RequestTransport,
+  onTransmit: (payload: Uint8Array) => void,
 ): (sourceId: number, targetId?: number) => Promise<void> {
   return async (sourceId, targetId): Promise<void> => {
-    await getSocket().write(buildUteTeachInQuery(sourceId, targetId));
+    const payload = buildUteTeachInQuery(sourceId, targetId);
+    await getSocket().write(payload);
+    onTransmit(payload);
   };
 }
 
@@ -212,12 +216,13 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
     const controllerId = serverConfig.controllerId ?? configuredControllerId ?? defaultSourceId;
     let activeTransportRuntime: TransportRuntime;
     const packetListener = new PacketListener();
+    const captureTransmit = (payload: Uint8Array): void => packetListener.captureOutgoing(payload);
     const teachIn = new TeachInManager(
       loadedRegistry,
       controllerId,
-      createTeachInResponder(() => activeTransportRuntime.current),
+      createTeachInResponder(() => activeTransportRuntime.current, captureTransmit),
       profiles,
-      createTeachInSignalSender(() => activeTransportRuntime.current),
+      createTeachInSignalSender(() => activeTransportRuntime.current, captureTransmit),
       startId,
     );
     activeTransportRuntime = new TransportRuntime(
@@ -237,7 +242,15 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
     const activeMqttRuntime = new MqttRuntime(
       loadedRegistry,
       (device, value) =>
-        sendDeviceCommand(activeTransportRuntime.current, loadedRegistry, device, value, profiles),
+        sendDeviceCommand(
+          activeTransportRuntime.current,
+          loadedRegistry,
+          device,
+          value,
+          profiles,
+          undefined,
+          captureTransmit,
+        ),
       mqttStatus,
       profiles,
       teachIn,
@@ -295,6 +308,7 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
         applyMqttSettings,
         mqttStatus: () => ({ ...mqttStatus }),
         listener: packetListener,
+        onTransmit: captureTransmit,
         profiles,
       }),
     });

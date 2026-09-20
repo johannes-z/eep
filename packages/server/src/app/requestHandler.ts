@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, resolve } from 'node:path';
 import { resolveServerConfig } from '../config';
 import type { Device, GeneralSettings, HomeAssistantSettings, TransportSettings } from '../config';
-import { sendDeviceCommand } from '../devices/commands';
+import { sendDeviceCommand, type TransmitListener } from '../devices/commands';
 import { initialDevices } from '../devices/registry';
 import type { DeviceRegistry } from '../devices/registry';
 import type { TeachInManager } from '../devices/teachin';
@@ -53,6 +53,7 @@ export interface RequestHandlerOptions {
   applyMqttSettings?: (settings: MqttSettings) => Promise<void>;
   mqttStatus?: () => MqttStatus;
   listener?: PacketListener;
+  onTransmit?: TransmitListener;
   profiles?: ProfileRegistry;
 }
 
@@ -138,7 +139,15 @@ export function createRequestHandler(
   }
 
   async function sendCommand(device: Device, request: unknown): Promise<void> {
-    await sendDeviceCommand(getSocket(), options.registry, device, request, profiles);
+    await sendDeviceCommand(
+      getSocket(),
+      options.registry,
+      device,
+      request,
+      profiles,
+      undefined,
+      options.onTransmit,
+    );
   }
 
   return async function handleRequest(request: Request): Promise<Response> {

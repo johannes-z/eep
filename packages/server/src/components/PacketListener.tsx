@@ -65,7 +65,9 @@ function PacketRow({ packet }: { packet: ListenPacket }) {
   return (
     <div className="packet-row">
       <div>
-        <strong>{title}</strong>
+        <strong>
+          {packet.direction.toUpperCase()} · {title}
+        </strong>
         <span>
           {radio?.eep ? `${radio.eep} · ` : ''}
           {new Date(packet.timestamp).toLocaleTimeString()}

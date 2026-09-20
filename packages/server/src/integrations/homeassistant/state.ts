@@ -7,7 +7,6 @@ import { diagnosticValues, profileContext, type DeviceAvailability } from './dev
 import { publish } from './publisher';
 
 interface StatePublisherOptions {
-  enabled: boolean;
   discoveryPrefix: string;
   baseTopic: string;
   bridgeAvailability: string;
@@ -52,7 +51,6 @@ export class HomeAssistantStatePublisher {
       availability,
       this.options.bridgePublishOptions,
     );
-    if (!this.options.enabled) return;
     for (const device of this.registry.list()) {
       const entity = this.profiles.get(device.profileId)?.entity;
       if (!entity) continue;
@@ -74,7 +72,6 @@ export class HomeAssistantStatePublisher {
   }
 
   private async publishStateNow(device: Device, availability: DeviceAvailability): Promise<void> {
-    if (!this.options.enabled) return;
     const entity = this.profiles.get(device.profileId)?.entity;
     if (!entity) return;
     const descriptor = entity.describe(profileContext(device));
@@ -132,7 +129,6 @@ export class HomeAssistantStatePublisher {
     device: Device,
     availability: DeviceAvailability,
   ): Promise<void> {
-    if (!this.options.enabled) return;
     for (const diagnostic of diagnosticValues(device)) {
       const topics = deviceDiagnosticTopics(
         device,
@@ -155,7 +151,6 @@ export class HomeAssistantStatePublisher {
     device: Device,
     availability: DeviceAvailability,
   ): Promise<void> {
-    if (!this.options.enabled) return;
     for (const diagnostic of diagnosticValues(device)) {
       const topics = deviceDiagnosticTopics(
         device,

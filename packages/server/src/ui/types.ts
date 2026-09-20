@@ -52,6 +52,7 @@ export interface PairingResponse {
 export interface ListenPacket {
   id: number;
   timestamp: string;
+  direction: 'rx' | 'tx';
   packetType: number;
   data: string;
   optionalData: string;

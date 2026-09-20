@@ -61,6 +61,50 @@ mqtt:
 
 The same values can be reviewed and updated from the web UI. Transport changes are persisted and applied by replacing the active connection; a failed replacement leaves the last known-good connection active.
 
+An unavailable transceiver no longer prevents the management server from starting. TCP connection
+attempts time out after five seconds. Lost connections retry in the background with exponential
+backoff from one to thirty seconds, and connection changes are pushed to the UI. Disabled or
+disconnected transports reject commands rather than silently accepting them. Transceiver base IDs
+and available channels are refreshed after connection recovery or replacement.
+
+Saving unrelated settings leaves unchanged MQTT secrets untouched, including the existing secrets
+file's comments and formatting.
+
+## Application boundaries
+
+- `index.ts` composes the registry, transport, teach-in, MQTT, HTTP, and live-state services.
+- `devices/registry.ts` owns normalized device state and notifies integrations of changes.
+- `devices/commands.ts` is the shared command path for HTTP and MQTT. Encoding and decoding stay in `profiles/`.
+- `transport/runtime.ts` owns connection replacement, recovery, packet reception, and connectivity events. Adapters handle serial/TCP I/O.
+- `app/requestHandler.ts` validates HTTP input and projects backend state. `app/stateUpdates.ts` broadcasts snapshots.
+- `ui/useLiveSnapshot.ts` owns browser WebSocket connection and reconnection. Forms preserve unsaved drafts across snapshots; device state is never a separate frontend authority.
+- `components/` renders the management interface. The UI uses locally bundled fonts and icons, with no external asset service required.
+
+The console includes device search and availability filters, device details and state inspection,
+dedicated pairing, RX/TX packet filters and JSON export, and configuration forms. Navigation and
+device rows adapt to narrow screens; the live indicator reflects receipt of a server snapshot.
+
+## Development
+
+From the repository root:
+
+```sh
+bun install
+bun run dev
+bun test packages/server/src
+bun run typecheck
+bun run lint
+bun run --cwd packages/server build
+```
+
+For UI-only development, use a temporary `DATA_DIR` and `TRANSPORT_TYPE=none`. Keep that directory
+separate from a running installation's configuration and SQLite state. A real serial transceiver
+or TCP bridge is required to verify radio communication; unit tests use simulated connections.
+
+The development runner watches `src/` and `public/`, regenerates routes, and restarts the server
+after edits. Refresh the browser to load frontend changes. It intentionally uses production-mode
+frontend bundling because the current TanStack Router/Bun combination fails in router HMR setup.
+
 ## Device capabilities
 
 Each paired device is stored in `DATA_DIR/configuration.yaml` under its `sourceId`. Device entries contain the friendly `name` and protocol configuration. Availability, last-seen time, and reported or desired state are runtime values persisted in `DATA_DIR/state.db`, not YAML. For a `D2-50-00` vent, configure the `capabilities` array with IDs from the protocol matrix, for example:
@@ -83,10 +127,12 @@ devices:
 
 Omit `level4` or `automaticOnDemand` when the device does not support them. Home Assistant discovery, web controls, command validation, and percentage-to-speed mapping all use this list. Runtime state is stored in SQLite and is independent of the user-editable YAML configuration.
 
-## Permit join and UTE
+## Pairing and UTE
 
-Permit join is available from the web console and, when MQTT/Home Assistant is enabled, as the
-discovered `Permit join` switch with the `mdi:access-point-network` icon. The bridge also exposes a
+Web-console pairing starts with `Pair` on a specific sender-channel row. There is no global
+permit-join control in the web UI; `Cancel pairing` is available while a session is active.
+When MQTT/Home Assistant is enabled, the integration exposes the discovered `Permit join`
+switch with the `mdi:access-point-network` icon. The bridge also exposes a
 `Restart` button with the `mdi:restart` icon. Both controls are attached to the bridge device.
 
 Automatic joining uses the EEP Universal Teach-In (UTE) D4 telegram format. The server accepts
@@ -95,11 +141,14 @@ bidirectional requests immediately. Unsupported EEPs receive the UTE `EEP not su
 response; teach-out, malformed, and reserved requests are not added as candidates. Adding a
 candidate in the web console stores its metadata and enables normal profile-based operation.
 
-For receiver-driven devices such as the AEROline vent, select a receiver channel and activate its
-local learn mode first. Then open Permit join and use `Send controller signal` in the web console,
-or turn the Home Assistant switch `ON`, while the receiver's 30-second learning window is open.
+For receiver-driven devices such as the AEROline vent, activate its local learn mode, then select
+a free sender channel on the Pairing page and choose `Pair` in its row while the receiver's learning
+window is open. Alternatively, use the Home Assistant permit-join switch.
 The server broadcasts a D4 UTE query using the first free sender ID at or above `startId`; an
-accepted response identifies the vent and creates the pending candidate. The USB 300 base ID is
+explicit channel selection takes precedence. Targeted responses are accepted and persisted
+automatically; untargeted candidates can be added or dismissed on the Pairing page. Pairing expires
+after sixty seconds. Stopping or expiring a session clears pending candidates and channel targeting;
+a failed transmission closes the session. The USB 300 base ID is
 read from the transport and shown read-only in General settings. It is not used as the last-used
 allocation cursor and is not persisted in `configuration.yaml`.
 

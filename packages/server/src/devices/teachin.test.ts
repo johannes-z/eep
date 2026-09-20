@@ -5,6 +5,64 @@ import { join } from 'node:path';
 import { DeviceRegistry } from './registry';
 import { TeachInManager } from './teachin';
 
+test('pairing expires automatically and notifies subscribers', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-expiry-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  const manager = new TeachInManager(registry, 0xffe76685);
+  const stopped = new Promise<void>((resolve) => {
+    manager.onStateChange((active) => {
+      if (!active) resolve();
+    });
+  });
+  manager.start(10);
+  await stopped;
+  expect(manager.isActive()).toBe(false);
+  await registry.close();
+});
+
+test('failed transmission closes the pairing session', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-failed-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  const manager = new TeachInManager(registry, 0xffe76685, undefined, undefined, async () => {
+    throw new Error('Disconnected');
+  });
+  manager.start();
+  expect(manager.transmit(0xffe76686)).rejects.toThrow('Disconnected');
+  expect(manager.isActive()).toBe(false);
+  await registry.close();
+});
+
+test('stopping pairing clears targeted allocation before another session', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-cancel-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  const manager = new TeachInManager(registry, 0xffe76685);
+  manager.start();
+  await manager.transmit(0xffe76686);
+  manager.stop();
+  manager.start();
+  const candidate = manager.observe({
+    RORG: 0xd4,
+    senderId: '05010203',
+    payload: [0x80, 0xff, 0x0b, 0, 0xd2, 0x50, 0],
+    teachIn: true,
+    teachInInfo: {
+      control: 0x80,
+      channel: 0xff,
+      manufacturer: 0x000b,
+      eep: 'd2-50-00',
+      direction: 'bidirectional',
+      responseExpected: true,
+      requestType: 'teachIn',
+      command: 'query',
+    },
+  });
+  expect(candidate?.sourceId).toBe(0xffe76685);
+  expect(manager.listCandidates()).toHaveLength(1);
+  manager.stop();
+  expect(manager.listCandidates()).toHaveLength(0);
+  await registry.close();
+});
+
 test('collects and accepts a supported D2-50-00 candidate', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-'));
   const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));

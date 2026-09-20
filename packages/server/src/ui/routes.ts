@@ -19,6 +19,14 @@ export const appRoutes = [
     section: 'general',
   },
   {
+    path: '/pairing',
+    view: 'pairing',
+    title: 'Pairing',
+    label: 'Pairing',
+    icon: 'radio',
+    section: 'general',
+  },
+  {
     path: '/packet-listener',
     view: 'packet-listener',
     title: 'Packet listener',

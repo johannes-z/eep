@@ -8,18 +8,12 @@ export function GeneralSettings({
   saving,
   onChange,
   onSave,
-  onPairChannel,
-  pairingSourceId,
-  pairingMessage,
 }: {
   settings: GeneralResponse;
   message: SettingsFormMessage;
   saving: boolean;
   onChange: (settings: GeneralResponse) => void;
   onSave: (settings: GeneralResponse) => void;
-  onPairChannel: (sourceId: number) => void;
-  pairingSourceId: number | null;
-  pairingMessage: SettingsFormMessage;
 }) {
   const update = <K extends keyof GeneralResponse>(key: K, value: GeneralResponse[K]) =>
     onChange({ ...settings, [key]: value });
@@ -31,8 +25,8 @@ export function GeneralSettings({
   return (
     <SettingsLayout
       description="Configure the first EnOcean sender ID used for automatic teach-in."
-      status={pairingSourceId === null ? 'Ready' : 'Pairing'}
-      statusTone={pairingSourceId === null ? 'online' : 'warning'}
+      status="Ready"
+      statusTone="online"
       title="General"
     >
       <form
@@ -62,83 +56,6 @@ export function GeneralSettings({
             value={settings.base_id ?? 'Unavailable'}
           />
         </label>
-        <div className="channel-section">
-          <div className="form-section">
-            <h3>USB 300 channels</h3>
-            <span className="channel-summary">
-              {settings.channels.filter((channel) => channel.used).length} used /{' '}
-              {settings.channels.filter((channel) => !channel.used).length} free
-            </span>
-          </div>
-          {pairingMessage.text && (
-            <p
-              className={`channel-feedback ${pairingMessage.error ? 'error' : ''}`}
-              role="status"
-            >
-              {pairingMessage.text}
-            </p>
-          )}
-          <div className="data-table-wrap channel-table-wrap">
-            <table className="data-table channel-table">
-              <thead>
-                <tr>
-                  <th>Channel</th>
-                  <th>Sender address</th>
-                  <th>Device</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {settings.channels.length ? (
-                  settings.channels.map((channel) => (
-                    <tr
-                      className={channel.used ? 'used-row' : undefined}
-                      key={channel.id}
-                    >
-                      <td data-label="Channel">CH {channel.channel.toString().padStart(3, '0')}</td>
-                      <td data-label="Sender address">
-                        <code>{channel.id}</code>
-                      </td>
-                      <td data-label="Device">{channel.device ?? 'Unassigned'}</td>
-                      <td data-label="Status">
-                        <span className={`availability ${channel.used ? 'unknown' : 'online'}`}>
-                          <span className="status-dot" />
-                          {channel.used ? 'Used' : 'Available'}
-                        </span>
-                      </td>
-                      <td data-label="Actions">
-                        {channel.used ? (
-                          <span className="muted-copy">Assigned</span>
-                        ) : (
-                          <button
-                            className="small-button"
-                            disabled={pairingSourceId !== null}
-                            onClick={() => onPairChannel(Number.parseInt(channel.id, 16))}
-                            type="button"
-                          >
-                            {pairingSourceId === Number.parseInt(channel.id, 16)
-                              ? 'Pairing...'
-                              : 'Pair'}
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td
-                      className="empty-table"
-                      colSpan={5}
-                    >
-                      USB 300 channels unavailable.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
         <SettingsActions
           label="Save general"
           message={message}

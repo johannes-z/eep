@@ -21,13 +21,14 @@ export function TransportSettings({
     event.preventDefault();
     onSave(settings);
   };
-  const status = settings.type === 'none' ? 'Disabled' : settings.type.toUpperCase();
+  const status =
+    settings.type === 'none' ? 'Disabled' : settings.connected ? 'Connected' : 'Disconnected';
 
   return (
     <SettingsLayout
       description="Connection settings for the EnOcean transport."
       status={status}
-      statusTone={settings.type === 'none' ? 'neutral' : 'online'}
+      statusTone={settings.type === 'none' ? 'neutral' : settings.connected ? 'online' : 'error'}
       title="Transport"
     >
       <form
@@ -51,6 +52,7 @@ export function TransportSettings({
         <label className="setting-field wide">
           <span>Port</span>
           <input
+            disabled={settings.type === 'none'}
             onChange={(event) => update('port', event.target.value)}
             placeholder={settings.type === 'tcp' ? 'tcp://192.168.1.49:20108' : '/dev/ttyUSB0'}
             value={settings.port}
@@ -59,6 +61,7 @@ export function TransportSettings({
         <label className="setting-field">
           <span>Baud rate</span>
           <input
+            disabled={settings.type !== 'serial'}
             min="1"
             onChange={(event) => update('baudrate', Number(event.target.value))}
             type="number"
@@ -68,6 +71,7 @@ export function TransportSettings({
         <label className="switch-field standalone-switch">
           <input
             checked={settings.rtscts}
+            disabled={settings.type !== 'serial'}
             onChange={(event) => update('rtscts', event.target.checked)}
             type="checkbox"
           />

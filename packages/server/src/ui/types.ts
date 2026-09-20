@@ -1,5 +1,6 @@
 export type AppView =
   | 'overview'
+  | 'pairing'
   | 'packet-listener'
   | 'settings'
   | 'mqtt'

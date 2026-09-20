@@ -11,7 +11,11 @@ export interface TransportConnection {
 
 export async function openTransport(settings: TransportSettings): Promise<TransportConnection> {
   if (settings.type === 'none' || !settings.path) {
-    return { write: () => undefined };
+    return {
+      write: () => {
+        throw new Error('EnOcean transport is not connected');
+      },
+    };
   }
 
   const tcp = isTcpPath(settings.path);
@@ -41,9 +45,14 @@ export async function openTransport(settings: TransportSettings): Promise<Transp
 
   return await new Promise<Socket>((resolve, reject) => {
     let settled = false;
+    const timer = setTimeout(() => {
+      settle(() => reject(new Error('Timed out connecting to EnOcean transport')));
+      socket.destroy();
+    }, 5000);
     const settle = (callback: () => void): void => {
       if (settled) return;
       settled = true;
+      clearTimeout(timer);
       callback();
     };
 

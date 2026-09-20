@@ -8,24 +8,13 @@ function LoadingPage() {
 }
 
 function GeneralRoute() {
-  const {
-    general,
-    generalMessage,
-    onGeneralChange,
-    onPairChannel,
-    onSaveGeneral,
-    pairingMessage,
-    pairingSourceId,
-    savingGeneral,
-  } = useAppContext();
+  const { general, generalMessage, onGeneralChange, onSaveGeneral, savingGeneral } =
+    useAppContext();
   return general ? (
     <GeneralSettings
       message={generalMessage}
       onChange={onGeneralChange}
       onSave={onSaveGeneral}
-      onPairChannel={onPairChannel}
-      pairingMessage={pairingMessage}
-      pairingSourceId={pairingSourceId}
       saving={savingGeneral}
       settings={general}
     />

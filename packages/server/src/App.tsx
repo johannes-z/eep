@@ -1,11 +1,11 @@
 import { Outlet, useRouterState } from '@tanstack/react-router';
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useRef, useState } from 'react';
 import { Sidebar, TopBar } from './components/Navigation';
+import { useLiveSnapshot } from './ui/useLiveSnapshot';
 import type { MqttSaveResult } from './components/MqttSettings';
 import { getAppRoute } from './ui/routes';
 import { formatEnOceanId } from './util';
 import type {
-  AppSnapshot,
   CommandBody,
   Device,
   GeneralResponse,
@@ -42,14 +42,14 @@ export interface AppContextValue {
   mqtt: MqttForm | null;
   mqttMessage: SettingsFormMessage;
   onAcceptCandidate: (candidate: TeachInCandidate) => void;
+  onRejectCandidate: (candidate: TeachInCandidate) => void;
   onCommand: (sourceId: number, body: CommandBody) => void;
   onGeneralChange: (settings: GeneralResponse) => void;
   onHomeAssistantChange: (settings: HomeAssistantResponse) => void;
   onListen: () => void;
   onMqttChange: (settings: MqttForm) => void;
-  onPairing: () => void;
+  onCancelPairing: () => void;
   onPairChannel: (sourceId: number) => void;
-  onTransmitPairing: () => void;
   onDeleteDevice: (sourceId: number) => Promise<void>;
   onRenameDevice: (sourceId: number, name: string) => Promise<void>;
   onSaveHomeAssistant: (settings: HomeAssistantResponse) => void;
@@ -115,8 +115,13 @@ export function App() {
     error: false,
   });
   const [error, setError] = useState('');
-  const [connectionError, setConnectionError] = useState('');
-  const settingsDirty = useRef({ general: false, transport: false, homeAssistant: false, mqtt: false });
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const settingsDirty = useRef({
+    general: false,
+    transport: false,
+    homeAssistant: false,
+    mqtt: false,
+  });
 
   function applyDevices(latest: Device[]) {
     setDevices(latest);
@@ -151,71 +156,42 @@ export function App() {
     });
   }
 
-  useEffect(() => {
-    let stopped = false;
-    let socket: WebSocket;
-    let retryTimer: number | undefined;
-    let retryDelay = 500;
-    const url = new URL('/api/events', window.location.href);
-    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-
-    function connect() {
-      socket = new WebSocket(url);
-      socket.onmessage = (event) => {
-        if (stopped) return;
-        try {
-          const message = JSON.parse(String(event.data)) as { type: string; state: AppSnapshot };
-          if (message.type !== 'snapshot') return;
-          const latest = message.state;
-          applyDevices(latest.devices);
-          applyMqtt(latest.mqtt);
-          setPairing(latest.pairing.active);
-          setCandidates(latest.pairing.candidates);
-          setListen(latest.listen);
-          setGeneral((current) =>
-            current && settingsDirty.current.general
-              ? { ...latest.general, start_id: current.start_id }
-              : latest.general,
-          );
-          setTransport((current) =>
-            current && settingsDirty.current.transport
-              ? { ...current, connected: latest.transport.connected }
-              : latest.transport,
-          );
-          setHomeAssistant((current) =>
-            current && settingsDirty.current.homeAssistant ? current : latest.homeAssistant,
-          );
-          retryDelay = 500;
-          setConnectionError('');
-        } catch {
-          socket.close();
-        }
-      };
-      socket.onerror = () => socket.close();
-      socket.onclose = () => {
-        if (stopped) return;
-        setConnectionError('Server connection lost. Reconnecting...');
-        retryTimer = window.setTimeout(connect, retryDelay);
-        retryDelay = Math.min(retryDelay * 2, 10000);
-      };
+  const connectionStatus = useLiveSnapshot((latest) => {
+    applyDevices(latest.devices);
+    if (!latest.pairing.active && pairingSourceRef.current !== null) {
+      pairingSourceRef.current = null;
+      setPairingSourceId(null);
+      setPairingMessage({ text: 'Pairing session ended.', error: false });
     }
+    applyMqtt(latest.mqtt);
+    setPairing(latest.pairing.active);
+    setCandidates(latest.pairing.candidates);
+    setListen(latest.listen);
+    setGeneral((current) =>
+      current && settingsDirty.current.general
+        ? { ...latest.general, start_id: current.start_id }
+        : latest.general,
+    );
+    setTransport((current) =>
+      current && settingsDirty.current.transport
+        ? { ...current, connected: latest.transport.connected }
+        : latest.transport,
+    );
+    setHomeAssistant((current) =>
+      current && settingsDirty.current.homeAssistant ? current : latest.homeAssistant,
+    );
+  });
+  const connectionError =
+    connectionStatus === 'disconnected' ? 'Server connection lost. Reconnecting...' : '';
 
-    connect();
-    return () => {
-      stopped = true;
-      window.clearTimeout(retryTimer);
-      socket.close();
-    };
-  }, []);
-
-  async function togglePairing() {
+  async function cancelPairing() {
     setError('');
     try {
-      await request<PairingResponse>(`/api/pairing/${pairing ? 'stop' : 'start'}`, {
+      await request<PairingResponse>('/api/pairing/stop', {
         method: 'POST',
       });
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Unable to change pairing state');
+      setError(reason instanceof Error ? reason.message : 'Unable to cancel pairing');
     }
   }
 
@@ -226,15 +202,6 @@ export function App() {
       setListen(await request<ListenResponse>(`/api/listen/${action}`, { method: 'POST' }));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Unable to change listen state');
-    }
-  }
-
-  async function transmitPairing() {
-    setError('');
-    try {
-      await request<PairingResponse>('/api/pairing/transmit', { method: 'POST' });
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Unable to send pairing signal');
     }
   }
 
@@ -274,6 +241,7 @@ export function App() {
   }
 
   async function acceptCandidate(candidate: TeachInCandidate) {
+    setError('');
     try {
       await request('/api/pairing/accept', {
         body: JSON.stringify({
@@ -284,6 +252,19 @@ export function App() {
       });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Unable to accept device');
+    }
+  }
+
+  async function rejectCandidate(candidate: TeachInCandidate) {
+    setError('');
+    try {
+      await request('/api/pairing/reject', {
+        body: JSON.stringify({ targetId: candidate.targetId }),
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
+      });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Unable to dismiss device');
     }
   }
 
@@ -476,6 +457,7 @@ export function App() {
     mqtt,
     mqttMessage,
     onAcceptCandidate: acceptCandidate,
+    onRejectCandidate: rejectCandidate,
     onCommand: command,
     onGeneralChange: (settings) => {
       settingsDirty.current.general = true;
@@ -490,9 +472,8 @@ export function App() {
       settingsDirty.current.mqtt = true;
       setMqtt(settings);
     },
-    onPairing: togglePairing,
+    onCancelPairing: cancelPairing,
     onPairChannel: pairChannel,
-    onTransmitPairing: transmitPairing,
     onDeleteDevice: deleteDevice,
     onRenameDevice: renameDevice,
     onSaveHomeAssistant: saveHomeAssistant,
@@ -516,16 +497,27 @@ export function App() {
 
   return (
     <AppContext.Provider value={context}>
-      <div className="app-shell">
+      <a
+        className="skip-link"
+        href="#main-content"
+      >
+        Skip to content
+      </a>
+      <div className={`app-shell ${navigationOpen ? 'navigation-open' : ''}`}>
         <Sidebar
           mqtt={mqtt}
           transport={transport}
+          onNavigate={() => setNavigationOpen(false)}
         />
-        <main className="main-content">
+        <main
+          className="main-content"
+          id="main-content"
+        >
           <TopBar
-            onPairing={togglePairing}
-            pairing={pairing}
             title={title}
+            connectionStatus={connectionStatus}
+            navigationOpen={navigationOpen}
+            onToggleNavigation={() => setNavigationOpen(!navigationOpen)}
           />
           {(connectionError || error) && (
             <div

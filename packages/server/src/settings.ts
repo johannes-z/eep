@@ -116,6 +116,7 @@ async function writeSecretFile(filePath: string, key: string, value: string): Pr
     } catch (error) {
       if (!(error as Error).message.startsWith('Missing secrets file:')) throw error;
     }
+    if (secrets[key] === value) return;
     secrets[key] = value;
     await writeFile(temporaryPath, stringifyYaml(secrets), 'utf8');
     await rename(temporaryPath, filePath);

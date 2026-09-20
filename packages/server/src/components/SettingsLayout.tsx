@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
+import { LoaderCircle, Save } from 'lucide-react';
 
 export function SettingsLayout({
   title,
-  description,
   status,
   statusTone = 'neutral',
   children,
@@ -18,7 +18,6 @@ export function SettingsLayout({
       <div className="settings-heading">
         <div>
           <h2>{title}</h2>
-          <p>{description}</p>
         </div>
         <span className={`settings-status ${statusTone}`}>
           <span className="status-dot" />
@@ -46,9 +45,26 @@ export function SettingsActions({
         disabled={saving}
         type="submit"
       >
+        {saving ? (
+          <LoaderCircle
+            size={16}
+            className="spin"
+            aria-hidden="true"
+          />
+        ) : (
+          <Save
+            size={16}
+            aria-hidden="true"
+          />
+        )}
         {saving ? 'Saving...' : label}
       </button>
-      <span className={message.error ? 'form-message error' : 'form-message'}>{message.text}</span>
+      <span
+        role="status"
+        className={message.error ? 'form-message error' : 'form-message'}
+      >
+        {message.text}
+      </span>
     </div>
   );
 }

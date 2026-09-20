@@ -9,15 +9,18 @@
   "scripts": {
     "build": "bun run generate-routes && bun scripts/build.js && bun build ./src/index.ts --outdir ./dist --target bun --external bun-serialport && bun build ./src/main.ts --outdir ./dist --target bun --external bun-serialport",
     "build:release": "bun run generate-routes && bun scripts/build-release.js",
-    "dev": "bun run generate-routes && bun --watch ./scripts/dev.js",
+    "dev": "bun scripts/dev.js",
     "generate-routes": "tsr generate",
     "start": "bun dist/main.js",
     "test": "bun test ./src",
     "typecheck": "bun run generate-routes && bunx tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@fontsource-variable/public-sans": "^5.3.0",
     "@tanstack/react-router": "^1.170.38",
     "bun-serialport": "0.2.0",
+    "lucide-react": "^1.47.0",
     "mqtt": "^5.16.0",
     "polycrc": "1.1.1",
     "react": "^19.0.0",

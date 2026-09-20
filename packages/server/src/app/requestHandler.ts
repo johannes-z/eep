@@ -35,7 +35,7 @@ export type { MqttStatus } from './settings';
 export interface RequestHandlerOptions {
   registry?: DeviceRegistry;
   controllerId?: number;
-  baseId?: number;
+  baseId?: number | (() => number | undefined);
   generalSettings?: GeneralSettings;
   saveGeneralSettings?: (settings: GeneralSettings) => Promise<void>;
   applyGeneralSettings?: (settings: GeneralSettings) => Promise<void>;
@@ -107,6 +107,8 @@ export function createRequestHandler(
   };
   let mqttSettings = { ...(options.mqttSettings ?? defaultMqttSettings()) };
   const getSocket = typeof socket === 'function' ? socket : () => socket;
+  const getBaseId = () =>
+    typeof options.baseId === 'function' ? options.baseId() : options.baseId;
   const profiles = options.profiles ?? createDefaultProfileRegistry();
   const transportConnected = (settings: TransportSettings): boolean =>
     options.transportConnected?.() ?? settings.type !== 'none';
@@ -147,10 +149,13 @@ export function createRequestHandler(
       devices: (options.registry?.list() ?? initialDevices).map(deviceResponse),
       general: generalSettingsResponse(
         generalSettings,
-        options.baseId,
+        getBaseId(),
         options.registry?.list() ?? initialDevices,
       ),
-      transport: transportSettingsResponse(transportSettings, transportConnected(transportSettings)),
+      transport: transportSettingsResponse(
+        transportSettings,
+        transportConnected(transportSettings),
+      ),
       homeAssistant: homeAssistantSettingsResponse(homeAssistantSettings),
       mqtt: mqttSettingsResponse(
         mqttSettings,
@@ -177,7 +182,7 @@ export function createRequestHandler(
         return json(
           generalSettingsResponse(
             generalSettings,
-            options.baseId,
+            getBaseId(),
             options.registry?.list() ?? initialDevices,
           ),
         );
@@ -198,7 +203,7 @@ export function createRequestHandler(
           return json({
             ...generalSettingsResponse(
               next,
-              options.baseId,
+              getBaseId(),
               options.registry?.list() ?? initialDevices,
             ),
             restartRequired: !options.applyGeneralSettings,
@@ -472,11 +477,14 @@ export function createRequestHandler(
     return new Response(null, { status: 404 });
   }
 
-  return Object.assign(async (request: Request): Promise<Response> => {
-    try {
-      return await handleRequest(request);
-    } finally {
-      if (request.method !== 'GET' && request.method !== 'HEAD') options.onChange?.();
-    }
-  }, { snapshot });
+  return Object.assign(
+    async (request: Request): Promise<Response> => {
+      try {
+        return await handleRequest(request);
+      } finally {
+        if (request.method !== 'GET' && request.method !== 'HEAD') options.onChange?.();
+      }
+    },
+    { snapshot },
+  );
 }

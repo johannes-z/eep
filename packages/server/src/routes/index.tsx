@@ -4,9 +4,20 @@ import { useAppContext } from '../App';
 import { routeMetadata } from '../ui/routes';
 
 function OverviewRoute() {
-  const { busyTarget, devices, onCommand, onDeleteDevice, onRenameDevice } = useAppContext();
+  const { busyTarget, devices, general, transport, onCommand, onDeleteDevice, onRenameDevice } =
+    useAppContext();
+  if (!general)
+    return (
+      <div
+        className="loading-state"
+        role="status"
+      >
+        Loading devices...
+      </div>
+    );
   return (
     <Overview
+      commandsAvailable={Boolean(transport?.connected)}
       busyTarget={busyTarget}
       devices={devices}
       onCommand={onCommand}

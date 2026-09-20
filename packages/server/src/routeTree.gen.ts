@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as PacketListenerRouteImport } from './routes/packet-listener'
+import { Route as PairingRouteImport } from './routes/pairing'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsHomeassistantRouteImport } from './routes/settings.homeassistant'
 import { Route as SettingsMqttRouteImport } from './routes/settings.mqtt'
@@ -24,6 +25,11 @@ const IndexRoute = IndexRouteImport.update({
 const PacketListenerRoute = PacketListenerRouteImport.update({
   id: '/packet-listener',
   path: '/packet-listener',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PairingRoute = PairingRouteImport.update({
+  id: '/pairing',
+  path: '/pairing',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
@@ -50,6 +56,7 @@ const SettingsTransportRoute = SettingsTransportRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/packet-listener': typeof PacketListenerRoute
+  '/pairing': typeof PairingRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/homeassistant': typeof SettingsHomeassistantRoute
   '/settings/mqtt': typeof SettingsMqttRoute
@@ -58,6 +65,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/packet-listener': typeof PacketListenerRoute
+  '/pairing': typeof PairingRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/homeassistant': typeof SettingsHomeassistantRoute
   '/settings/mqtt': typeof SettingsMqttRoute
@@ -67,6 +75,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/packet-listener': typeof PacketListenerRoute
+  '/pairing': typeof PairingRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/homeassistant': typeof SettingsHomeassistantRoute
   '/settings/mqtt': typeof SettingsMqttRoute
@@ -77,6 +86,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/packet-listener'
+    | '/pairing'
     | '/settings/general'
     | '/settings/homeassistant'
     | '/settings/mqtt'
@@ -85,6 +95,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/packet-listener'
+    | '/pairing'
     | '/settings/general'
     | '/settings/homeassistant'
     | '/settings/mqtt'
@@ -93,6 +104,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/packet-listener'
+    | '/pairing'
     | '/settings/general'
     | '/settings/homeassistant'
     | '/settings/mqtt'
@@ -102,6 +114,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   PacketListenerRoute: typeof PacketListenerRoute
+  PairingRoute: typeof PairingRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsHomeassistantRoute: typeof SettingsHomeassistantRoute
   SettingsMqttRoute: typeof SettingsMqttRoute
@@ -122,6 +135,13 @@ declare module '@tanstack/react-router' {
       path: '/packet-listener'
       fullPath: '/packet-listener'
       preLoaderRoute: typeof PacketListenerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pairing': {
+      id: '/pairing'
+      path: '/pairing'
+      fullPath: '/pairing'
+      preLoaderRoute: typeof PairingRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings/general': {
@@ -158,6 +178,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   PacketListenerRoute: PacketListenerRoute,
+  PairingRoute: PairingRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsHomeassistantRoute: SettingsHomeassistantRoute,
   SettingsMqttRoute: SettingsMqttRoute,

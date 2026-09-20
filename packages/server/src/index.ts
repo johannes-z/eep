@@ -133,7 +133,7 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
     for (const unsubscribe of subscriptions) unsubscribe();
     stateUpdates?.dispose();
     try {
-      await server?.stop();
+      await server?.stop(true);
     } catch (error) {
       console.error('HTTP shutdown error:', error);
     }
@@ -179,13 +179,15 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
     let homeAssistantSettings = serverConfig.homeAssistant;
     const mqttStatus: MqttStatus = { connected: false };
 
-    const handleFatalSocketError = (reason: string): void => {
-      console.error(`Fatal socket issue: ${reason}. Exiting to trigger Watchdog.`);
-      process.exit(1);
+    const handleTransportError = (reason: string): void => {
+      console.error(`[transport] ${reason}. Retrying in the background.`);
     };
-    const openedTransport = await openTransport(serverConfig.transport);
+    const openedTransport = await openTransport(serverConfig.transport).catch((error: unknown) => {
+      handleTransportError(String(error));
+      return openTransport({ ...serverConfig.transport, type: 'none' });
+    });
     initialTransport = openedTransport;
-    const baseId = await readBaseId(openedTransport).catch((error: unknown) => {
+    let baseId = await readBaseId(openedTransport).catch((error: unknown) => {
       console.warn(`Unable to read USB 300 base ID: ${(error as Error).message}`);
       return undefined;
     });
@@ -217,7 +219,7 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
       openedTransport,
       loadedRegistry,
       teachIn,
-      handleFatalSocketError,
+      handleTransportError,
       profiles,
     );
     transportRuntime = activeTransportRuntime;
@@ -225,7 +227,7 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
     activeTransportRuntime.onPacket((frame, radioPacket) =>
       packetListener.capture(frame, radioPacket),
     );
-    await activeTransportRuntime.start();
+    await activeTransportRuntime.start(serverConfig.transport);
 
     const activeMqttRuntime = new MqttRuntime(
       loadedRegistry,
@@ -270,30 +272,30 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
     };
 
     const handleRequest = createRequestHandler(() => activeTransportRuntime.current, {
-        registry: loadedRegistry,
-        controllerId,
-        baseId,
-        generalSettings,
-        teachIn,
-        webRoot: serverConfig.webRoot,
-        transportSettings: serverConfig.transport,
-        transportConnected: () => activeTransportRuntime.isConnected,
-        saveTransportSettings: (settings) => saveTransportSettings(configurationPath, settings),
-        applyTransportSettings,
-        saveGeneralSettings: (settings) => saveGeneralSettings(configurationPath, settings),
-        applyGeneralSettings,
-        homeAssistantSettings,
-        saveHomeAssistantSettings: (settings) =>
-          saveHomeAssistantSettings(configurationPath, settings),
-        applyHomeAssistantSettings,
-        mqttSettings: activeMqttSettings ?? defaultMqttSettings(),
-        saveMqttSettings: (settings) => saveMqttSettings(configurationPath, settings),
-        applyMqttSettings,
-        mqttStatus: () => ({ ...mqttStatus }),
-        listener: packetListener,
-        onTransmit: captureTransmit,
-        profiles,
-        onChange: () => stateUpdates?.notify(),
+      registry: loadedRegistry,
+      controllerId,
+      baseId: () => baseId,
+      generalSettings,
+      teachIn,
+      webRoot: serverConfig.webRoot,
+      transportSettings: serverConfig.transport,
+      transportConnected: () => activeTransportRuntime.isConnected,
+      saveTransportSettings: (settings) => saveTransportSettings(configurationPath, settings),
+      applyTransportSettings,
+      saveGeneralSettings: (settings) => saveGeneralSettings(configurationPath, settings),
+      applyGeneralSettings,
+      homeAssistantSettings,
+      saveHomeAssistantSettings: (settings) =>
+        saveHomeAssistantSettings(configurationPath, settings),
+      applyHomeAssistantSettings,
+      mqttSettings: activeMqttSettings ?? defaultMqttSettings(),
+      saveMqttSettings: (settings) => saveMqttSettings(configurationPath, settings),
+      applyMqttSettings,
+      mqttStatus: () => ({ ...mqttStatus }),
+      listener: packetListener,
+      onTransmit: captureTransmit,
+      profiles,
+      onChange: () => stateUpdates?.notify(),
     });
     const updates = createStateUpdates(handleRequest.snapshot);
     stateUpdates = updates;
@@ -303,6 +305,24 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
       teachIn.onChange(updates.notify),
       packetListener.onChange(updates.notify),
       activeMqttRuntime.onStatusChange(updates.notify),
+      activeTransportRuntime.onStatusChange(() => {
+        baseId = undefined;
+        updates.notify();
+        if (!activeTransportRuntime.isConnected) return;
+        const connection = activeTransportRuntime.current;
+        void readBaseId(connection)
+          .then((value) => {
+            if (
+              !activeTransportRuntime.isConnected ||
+              activeTransportRuntime.current !== connection
+            )
+              return;
+            baseId = value;
+            updates.notify();
+          })
+          .catch((error: unknown) => console.warn('[transport] Unable to refresh base ID:', error));
+      }),
+      () => teachIn.stop(),
     );
     const runningServer = Bun.serve<undefined>({
       routes: homepageRoutes,

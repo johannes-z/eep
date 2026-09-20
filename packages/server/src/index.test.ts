@@ -31,6 +31,16 @@ class FakeTransport {
   }
 }
 
+test('general settings reflect a reconnected transceiver base ID', async () => {
+  let baseId: number | undefined;
+  const handler = createRequestHandler(new FakeTransport(), { baseId: () => baseId });
+  expect(handler.snapshot().general).toMatchObject({ base_id: null, channels: [] });
+  baseId = 0xff800000;
+  const response = await handler(new Request('http://localhost/api/general'));
+  expect(await response.json()).toMatchObject({ base_id: 'ff800000' });
+  expect(handler.snapshot().general).toMatchObject({ base_id: 'ff800000' });
+});
+
 test('returns 200 and writes a payload for a configured device', async () => {
   const transport = new FakeTransport();
   const handler = createRequestHandler(transport);

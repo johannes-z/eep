@@ -44,6 +44,7 @@ export class TeachInManager {
   private active = false;
   private activeSourceId: number | undefined;
   private requestedSourceId: number | undefined;
+  private expiryTimer?: ReturnType<typeof setTimeout>;
   private readonly candidates = new Map<number, TeachInCandidate>();
   private readonly stateListeners = new Set<TeachInStateListener>();
   private readonly changeListeners = new Set<() => void>();
@@ -65,14 +66,21 @@ export class TeachInManager {
     this.activeSourceId = undefined;
   }
 
-  start(): void {
+  start(durationMs = 60_000): void {
     if (this.active) return;
     this.active = true;
+    this.expiryTimer = setTimeout(() => this.stop(), durationMs);
+    this.expiryTimer.unref();
     for (const listener of this.stateListeners) listener(true);
     this.notify();
   }
 
   stop(): void {
+    clearTimeout(this.expiryTimer);
+    this.expiryTimer = undefined;
+    this.requestedSourceId = undefined;
+    this.activeSourceId = undefined;
+    this.candidates.clear();
     if (!this.active) return;
     this.active = false;
     for (const listener of this.stateListeners) listener(false);
@@ -251,6 +259,11 @@ export class TeachInManager {
       this.requestedSourceId = sourceId;
       this.activeSourceId = sourceId;
     }
-    await this.sendSignal?.(this.activeSourceId);
+    try {
+      await this.sendSignal?.(this.activeSourceId);
+    } catch (error) {
+      this.stop();
+      throw error;
+    }
   }
 }

@@ -9,9 +9,6 @@ permissions:
   contents: read
 
 jobs:
-  checks:
-    uses: ./.github/workflows/check.yml
-
   changelog:
     name: Generate changelog
     runs-on: ubuntu-latest

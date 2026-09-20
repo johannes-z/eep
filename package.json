@@ -12,16 +12,21 @@
   "main": "index.js",
   "scripts": {
     "build": "bun run --cwd packages/addon build",
+    "build:release": "bun run --cwd packages/server build:release",
+    "changelog": "git-cliff --output CHANGELOG.md",
     "dev": "bun run --cwd packages/server dev",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint .",
+    "release": "bumpp --recursive --all --execute \"bun run changelog\"",
     "test": "bun run --cwd packages/server test",
     "typecheck": "bun run --cwd packages/server typecheck"
   },
   "devDependencies": {
     "@types/bun": "1.4.2",
     "@types/node": "26.6.2",
+    "bumpp": "12.3.0",
+    "git-cliff": "2.14.2",
     "oxfmt": "0.68.0",
     "oxlint": "1.83.0",
     "oxlint-tsgolint": "^7.0.2002",

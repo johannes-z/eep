@@ -8,6 +8,7 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "bun run generate-routes && bun scripts/build.js && bun build ./src/index.ts --outdir ./dist --target bun --external bun-serialport && bun build ./src/main.ts --outdir ./dist --target bun --external bun-serialport",
+    "build:release": "bun run generate-routes && bun scripts/build-release.js",
     "dev": "bun run generate-routes && bun --watch ./scripts/dev.js",
     "generate-routes": "tsr generate --project tsconfig.json --write",
     "start": "bun dist/main.js",

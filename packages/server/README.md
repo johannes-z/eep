@@ -13,6 +13,17 @@ bun run start
 The web UI listens on `127.0.0.1:3000` by default. Set `HOST=0.0.0.0` when the service should be reachable from another host.
 The HTTP API has no built-in authentication; keep it on a trusted network or place it behind an authenticated reverse proxy before exposing it remotely.
 
+## Standalone releases
+
+Tagged releases publish standalone binaries for Windows x64, Linux x64 and arm64, and macOS x64 and arm64.
+Download the binary for the server platform, make it executable on Unix-like systems, and run it with `DATA_DIR` set to a writable directory:
+
+```sh
+DATA_DIR=/var/lib/eep ./eep-server-linux-x64
+```
+
+The Windows binary supports TCP adapters and `ADAPTER_TYPE=none`. The bundled serial adapter uses POSIX APIs and is supported on Linux and macOS; use a TCP serial bridge on Windows.
+
 ## Runtime settings
 
 - `HOST`, `PORT`: HTTP bind address and port.

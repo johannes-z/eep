@@ -1,0 +1,107 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  changelog:
+    name: Generate changelog
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out tag
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        id: changelog
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: .cliff.toml
+          args: --latest --strip header --output CHANGELOG.md
+
+      - name: Upload changelog
+        uses: actions/upload-artifact@v4
+        with:
+          name: changelog
+          path: CHANGELOG.md
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: changelog
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+            bun_target: bun-linux-x64
+            asset: eep-server-linux-x64
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+            bun_target: bun-linux-arm64
+            asset: eep-server-linux-arm64
+          - os: macos-13
+            target: darwin-x64
+            bun_target: bun-darwin-x64
+            asset: eep-server-darwin-x64
+          - os: macos-14
+            target: darwin-arm64
+            bun_target: bun-darwin-arm64
+            asset: eep-server-darwin-arm64
+          - os: windows-latest
+            target: windows-x64
+            bun_target: bun-windows-x64
+            asset: eep-server-windows-x64.exe
+
+    steps:
+      - name: Check out tag
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build standalone binary
+        shell: bash
+        run: |
+          mkdir -p release
+          bun build packages/server/src/main.ts \
+            --compile \
+            --target=${{ matrix.bun_target }} \
+            --outfile=release/${{ matrix.asset }}
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: release/${{ matrix.asset }}
+
+  release:
+    name: Publish GitHub release
+    needs: [changelog, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v5
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release/CHANGELOG.md
+          files: release/*

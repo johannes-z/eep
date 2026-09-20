@@ -14,7 +14,7 @@ interface AppContextValue extends AppSnapshot {
   onRenameDevice: (sourceId: number, name: string) => Promise<void>;
   onPairChannel: (sourceId: number) => void;
   onCancelPairing: () => void;
-  onAcceptCandidate: (candidate: TeachInCandidate) => void;
+  onAcceptCandidate: (candidate: TeachInCandidate, profileId?: string) => void;
   onRejectCandidate: (candidate: TeachInCandidate) => void;
   onListen: () => void;
   pairingSourceId: number | null;
@@ -136,8 +136,8 @@ export function App() {
                   onCancelPairing: () => {
                     void execute('/api/pairing/stop').catch(() => undefined);
                   },
-                  onAcceptCandidate: ({ targetId }) => {
-                    void execute('/api/pairing/accept', 'POST', { targetId }).catch(
+                  onAcceptCandidate: ({ targetId }, profileId) => {
+                    void execute('/api/pairing/accept', 'POST', { targetId, profileId }).catch(
                       () => undefined,
                     );
                   },

@@ -23,6 +23,7 @@ export interface Device extends RegisteredDevice {
 export interface TeachInCandidate {
   targetId: number;
   eep?: string;
+  profileOptions?: string[];
 }
 
 export interface PairingResponse {

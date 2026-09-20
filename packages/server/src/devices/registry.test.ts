@@ -175,13 +175,13 @@ test('retains unknown profiles as unavailable opaque devices', async () => {
   const seed = (await DeviceRegistry.load(filePath)).list()[0];
   await Bun.write(
     filePath,
-    `devices:\n  ${seed.sourceId.toString(16)}:\n    targetId: '${seed.targetId.toString(16)}'\n    profileId: D5-00-01\n    capabilities:\n      contact: true\n`,
+    `devices:\n  ${seed.sourceId.toString(16)}:\n    targetId: '${seed.targetId.toString(16)}'\n    profileId: A5-02-05\n    capabilities:\n      contact: true\n`,
   );
 
   const registry = await DeviceRegistry.load(filePath);
   const device = registry.list()[0];
   expect(device).toMatchObject({
-    profileId: 'D5-00-01',
+    profileId: 'A5-02-05',
     capabilities: { contact: true },
     availability: 'unknown',
   });

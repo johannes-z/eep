@@ -1,9 +1,10 @@
 import { expect, test } from 'bun:test';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { d2ValueToFanState } from './profiles/D2-50-00/fan';
 import { DeviceRegistry } from './devices/registry';
+import { applyRadioPacket } from './devices/inbound';
 import { TeachInManager } from './devices/teachin';
 import type { MqttClientLike } from './mqtt';
 import { MqttEntityBridge } from './integrations/homeassistant/bridge';
@@ -59,6 +60,68 @@ async function createBridge() {
   await bridge.publishAll();
   return { bridge, client, commands, registry };
 }
+
+test.each([true, false])(
+  'publishes D5-00-01 contact state (Home Assistant: %s)',
+  async (enabled) => {
+    const directory = await mkdtemp(join(tmpdir(), 'eep-mqtt-contact-'));
+    const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+    const client = new FakeMqttClient();
+    const bridge = new MqttEntityBridge(client, registry, async () => undefined, {
+      homeAssistant: { enabled, discoveryTopic: 'homeassistant', statusTopic: 'eep/status' },
+    });
+    const stateTopic = 'eep/binary_sensor/ffe76685/state';
+    try {
+      await registry.upsert({
+        sourceId: 0xffe76685,
+        targetId: 0x05010203,
+        name: 'Window contact',
+        profileId: 'D5-00-01',
+        capabilities: ['contact'],
+        availability: 'online',
+      });
+      await bridge.publishAll();
+      expect(client.published.some((message) => message.topic === stateTopic)).toBe(false);
+      const discovery = client.published
+        .filter((message) => message.topic === 'homeassistant/binary_sensor/ffe76685/config')
+        .at(-1);
+      if (enabled) {
+        const configuration = JSON.parse(discovery?.payload ?? '{}');
+        expect(configuration).toMatchObject({
+          device_class: 'opening',
+          state_topic: stateTopic,
+          unique_id: 'eep_binary_sensor_ffe76685',
+        });
+        expect(configuration.command_topic).toBeUndefined();
+        expect(configuration.percentage_command_topic).toBeUndefined();
+      } else {
+        expect(discovery?.payload).toBe('');
+      }
+      expect(client.subscribed.some((topic) => topic.includes('/binary_sensor/'))).toBe(false);
+      for (const { data, expected } of [
+        { data: 0x08, expected: 'ON' },
+        { data: 0x09, expected: 'OFF' },
+      ]) {
+        await applyRadioPacket({ RORG: 0xd5, senderId: '05010203', payload: [data] }, registry);
+        await bridge.publishAll();
+        expect(
+          client.published.filter((message) => message.topic === stateTopic).at(-1)?.payload,
+        ).toBe(expected);
+      }
+      expect(
+        await applyRadioPacket({ RORG: 0xd5, senderId: '05010203', payload: [0x00] }, registry),
+      ).toBeUndefined();
+      await bridge.publishAll();
+      expect(
+        client.published.filter((message) => message.topic === stateTopic).at(-1)?.payload,
+      ).toBe('OFF');
+    } finally {
+      await bridge.stop();
+      await registry.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 test('publishes Home Assistant fan discovery for seeded devices', async () => {
   const { client } = await createBridge();

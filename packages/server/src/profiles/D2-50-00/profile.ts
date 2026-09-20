@@ -40,19 +40,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isBasicStatusPayload(payload: ArrayLike<number>): boolean {
-  return payload.length >= 6 && (payload[0] & 0xf0) === 0x40;
+  return (
+    payload.length === 14 &&
+    Array.from(payload).every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 0xff) &&
+    payload[0] >> 5 === 2
+  );
 }
 
 export function decodeD2Value(payload: ArrayLike<number>): number | undefined {
-  if (payload.length === 0) return undefined;
-  const firstByte = payload[0];
-  if (isBasicStatusPayload(payload)) {
-    const operationMode = firstByte & 0x0f;
-    return isD2ControlValue(operationMode) ? operationMode : undefined;
-  }
-  if (isD2ControlValue(firstByte)) return firstByte;
-  const packedValue = firstByte >> 4;
-  return isD2ControlValue(packedValue) ? packedValue : undefined;
+  if (!isBasicStatusPayload(payload)) return undefined;
+  const operationMode = payload[0] & 0x0f;
+  return isD2ControlValue(operationMode) && operationMode !== 15 ? operationMode : undefined;
 }
 
 function supportedFunctions(value: unknown): string[] {
@@ -90,7 +88,7 @@ function stateValue(value: unknown, field: ProfileStateField, capabilities: unkn
   }
   const functions = supportedFunctions(capabilities);
   const definition = getProtocolFunctionByValue(d2Value);
-  if (!definition || !functions.includes(definition.id)) {
+  if (field === 'desiredState' && (!definition || !functions.includes(definition.id))) {
     throw new Error(`Invalid ${field}.d2Value: unsupported by device`);
   }
   const state = d2ValueToFanState(d2Value, percentage, functions);
@@ -229,13 +227,11 @@ export const d2Profile: EepProfile = {
       previousPercentage(context),
       supportedFunctions(context.capabilities),
     );
-    const physicalStatus = isBasicStatusPayload(packet.payload);
-    const desiredValue = isRecord(context.desiredState) ? context.desiredState.d2Value : undefined;
     return {
       kind: 'reported',
       value,
       reportedState,
-      clearDesiredState: physicalStatus || desiredValue === reportedState.d2Value,
+      clearDesiredState: true,
     };
   },
 

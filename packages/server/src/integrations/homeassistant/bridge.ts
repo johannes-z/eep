@@ -186,6 +186,7 @@ export class MqttEntityBridge {
       unique_id: `eep_${descriptor.kind}_${topics.id}`,
       object_id: objectId,
       default_entity_id: `${descriptor.kind}.${objectId}`,
+      ...(descriptor.deviceClass ? { device_class: descriptor.deviceClass } : {}),
       ...(descriptor.commands.includes('command') ? { command_topic: topics.command } : {}),
       state_topic: topics.state,
       ...(descriptor.percentage

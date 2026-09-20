@@ -2,8 +2,8 @@ import type { JsonValue } from '../profiles/types';
 
 export interface DeviceTeachInInfo {
   eep: string;
-  channel: number;
-  manufacturerId: number;
+  channel?: number;
+  manufacturerId?: number;
   direction: 'unidirectional' | 'bidirectional';
   responseExpected: boolean;
 }

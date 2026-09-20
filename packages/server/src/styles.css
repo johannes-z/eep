@@ -378,6 +378,15 @@ p {
   table-layout: fixed;
   min-width: 620px;
 }
+.pairing-table select {
+  min-height: 36px;
+  max-width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink);
+}
 .devices-table th:first-child {
   width: 40%;
 }
@@ -1060,27 +1069,35 @@ p {
   .devices-table {
     min-width: 0;
   }
-  .devices-table thead {
+  .devices-table thead,
+  .pairing-table thead {
     display: none;
   }
-  .devices-table tbody {
+  .devices-table tbody,
+  .pairing-table tbody {
     display: block;
   }
-  .devices-table tbody > tr {
+  .devices-table tbody > tr,
+  .pairing-table tbody > tr {
     display: grid;
     grid-template-columns: 1fr 1fr;
     padding: 16px;
     border-bottom: 1px solid var(--line);
     gap: 12px;
   }
-  .devices-table tbody > tr:last-child {
+  .devices-table tbody > tr:last-child,
+  .pairing-table tbody > tr:last-child {
     border-bottom: 0;
   }
-  .devices-table td {
+  .devices-table td,
+  .pairing-table td {
     display: block;
     padding: 0;
     border: 0;
     min-width: 0;
+  }
+  .pairing-table td {
+    grid-column: 1 / -1;
   }
   .devices-table td:first-child,
   .devices-table td:nth-child(3) {
@@ -1103,7 +1120,8 @@ p {
     flex: 1;
     max-width: 240px;
   }
-  .devices-table td[data-label]::before {
+  .devices-table td[data-label]::before,
+  .pairing-table td[data-label]::before {
     display: block;
     content: attr(data-label);
     color: var(--muted);

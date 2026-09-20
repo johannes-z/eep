@@ -126,10 +126,14 @@ export const uteResponseCodes = {
 export type UteResponse = keyof typeof uteResponseCodes;
 
 export function parseUteInfo(payload: number[]): UteTeachInInfo | undefined {
-  if (payload.length !== 7) return undefined;
+  if (
+    payload.length !== 7 ||
+    payload.some((value) => !Number.isInteger(value) || value < 0 || value > 0xff)
+  )
+    return undefined;
   const control = payload[0];
-  const requestType = uteRequestTypes[(control >> 4) & 0x03];
   const command = uteCommands[control & 0x0f] ?? 'reserved';
+  const requestType = command === 'query' ? uteRequestTypes[(control >> 4) & 0x03] : 'reserved';
   const type = payload[4];
   const func = payload[5];
   const rorg = payload[6];
@@ -137,10 +141,10 @@ export function parseUteInfo(payload: number[]): UteTeachInInfo | undefined {
   return {
     control,
     channel: payload[1],
-    manufacturer: payload[2] | (payload[3] << 8),
+    manufacturer: payload[2] | ((payload[3] & 0x07) << 8),
     eep: `${rorg.toString(16).padStart(2, '0')}-${func.toString(16).padStart(2, '0')}-${type.toString(16).padStart(2, '0')}`,
     direction: (control & 0x80) === 0 ? 'unidirectional' : 'bidirectional',
-    responseExpected: (control & 0x40) === 0,
+    responseExpected: command === 'query' && (control & 0x40) === 0,
     requestType,
     command,
     ...(response ? { response } : {}),
@@ -161,13 +165,19 @@ export function parseRadioERP1(frame: Esp3Frame): RadioERP1Packet | undefined {
     RORG: rorg,
     payload,
     senderId,
-    teachIn: teachInInfo?.command === 'query' && teachInInfo.requestType === 'teachIn',
+    ...(frame.optionalData.length >= 5
+      ? { destinationId: bytesToId(frame.optionalData.slice(1, 5)) }
+      : {}),
+    teachIn:
+      (rorg === 0xd5 && payload.length === 1 && (payload[0] & 0x08) === 0) ||
+      (teachInInfo?.command === 'query' && teachInInfo.requestType === 'teachIn'),
     teachInInfo,
   };
 }
 
-function responseControl(response: UteResponse): number {
-  return 0x80 | (uteResponseCodes[response] << 4) | 0x01;
+function responseControl(response: UteResponse, requestControl: number): number {
+  if (!Object.hasOwn(uteResponseCodes, response)) throw new Error('Invalid UTE response result');
+  return (requestControl & 0x80) | (uteResponseCodes[response] << 4) | 0x01;
 }
 
 function validateIdentifier(value: number, field: string): void {
@@ -232,8 +242,11 @@ export function buildUteTeachInResponse(
   if (requestPayload.length !== 7) {
     throw new Error('UTE request payload must contain exactly seven bytes');
   }
+  if (parseUteInfo(requestPayload)?.command !== 'query') {
+    throw new Error('UTE response requires a valid query payload');
+  }
   const payload = [...requestPayload];
-  payload[0] = responseControl(response);
+  payload[0] = responseControl(response, requestPayload[0]);
 
   return buildUteFrame(controllerId, targetId, payload);
 }

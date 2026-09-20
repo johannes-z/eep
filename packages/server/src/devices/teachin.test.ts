@@ -1,9 +1,97 @@
-import { expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DeviceRegistry } from './registry';
 import { TeachInManager } from './teachin';
+import { applyRadioPacket } from './inbound';
+import { parseRadioERP1 } from '../transport/esp3';
+import type { RadioERP1Packet } from './inbound';
+
+test.each([false, true])(
+  'pairs a 1BS contact without a UTE response (targeted: %s)',
+  async (targeted) => {
+    const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-contact-'));
+    const filePath = join(directory, 'configuration.yaml');
+    let registry = await DeviceRegistry.load(filePath);
+    const responses: string[] = [];
+    const manager = new TeachInManager(registry, 0xffe76685, async (_candidate, response) => {
+      responses.push(response);
+    });
+    const packet = parseRadioERP1({
+      packetType: 1,
+      data: [0xd5, 0x01, 0x05, 0x01, 0x02, 0x03, 0],
+      optionalData: [],
+    });
+    if (!packet) throw new Error('Expected a 1BS packet');
+    try {
+      expect(packet.teachIn).toBe(true);
+      expect(packet.teachInInfo).toBeUndefined();
+      expect(manager.observe(packet)).toBeUndefined();
+      manager.start();
+      if (targeted) await manager.transmit(0xffe76686);
+      expect(manager.observe(packet)).toMatchObject({
+        eep: undefined,
+        profileOptions: ['D5-00-01'],
+        direction: 'unidirectional',
+        responseExpected: false,
+      });
+      expect(registry.findByTargetId(0x05010203)).toBeUndefined();
+      expect(await manager.accept(0x05010203).catch((error: Error) => error.message)).toBe(
+        'Select an EEP for this teach-in candidate',
+      );
+      expect(
+        await manager.accept(0x05010203, 'D2-50-00').catch((error: Error) => error.message),
+      ).toBe('EEP does not match the teach-in telegram');
+      await manager.accept(0x05010203, 'D5-00-01');
+      const device = registry.findByTargetId(0x05010203);
+      expect(device).toMatchObject({
+        sourceId: targeted ? 0xffe76686 : 0xffe76685,
+        profileId: 'D5-00-01',
+        capabilities: ['contact'],
+        teachIn: { eep: 'D5-00-01', direction: 'unidirectional', responseExpected: false },
+      });
+      expect(device?.teachIn?.manufacturerId).toBeUndefined();
+      expect(device?.teachIn?.channel).toBeUndefined();
+      expect(device?.reportedState).toBeUndefined();
+      expect(responses).toEqual([]);
+      expect(await applyRadioPacket(packet, registry)).toBeUndefined();
+      await applyRadioPacket({ ...packet, payload: [0x08], teachIn: false }, registry);
+      expect(registry.findByTargetId(0x05010203)?.reportedState).toEqual({ open: true });
+      await applyRadioPacket({ ...packet, payload: [0x09], teachIn: false }, registry);
+      expect(registry.findByTargetId(0x05010203)?.reportedState).toEqual({ open: false });
+      manager.stop();
+      await registry.close();
+      registry = await DeviceRegistry.load(filePath);
+      expect(registry.findByTargetId(0x05010203)).toMatchObject({
+        profileId: 'D5-00-01',
+        reportedState: { open: false },
+        teachIn: { eep: 'D5-00-01', direction: 'unidirectional', responseExpected: false },
+      });
+    } finally {
+      manager.stop();
+      await registry.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test('ignores 1BS data and malformed telegrams while pairing', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-contact-invalid-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  const manager = new TeachInManager(registry, 0xffe76685);
+  try {
+    manager.start();
+    for (const payload of [[], [0x08], [0x09], [0x01, 0x00], [-1], [0x100], [0.5]]) {
+      expect(manager.observe({ RORG: 0xd5, senderId: '05010203', payload })).toBeUndefined();
+    }
+    expect(manager.listCandidates()).toEqual([]);
+  } finally {
+    manager.stop();
+    await registry.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test('pairing expires automatically and notifies subscribers', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-expiry-'));
@@ -43,7 +131,7 @@ test('stopping pairing clears targeted allocation before another session', async
   const candidate = manager.observe({
     RORG: 0xd4,
     senderId: '05010203',
-    payload: [0x80, 0xff, 0x0b, 0, 0xd2, 0x50, 0],
+    payload: [0x80, 0xff, 0x0b, 0, 0, 0x50, 0xd2],
     teachIn: true,
     teachInInfo: {
       control: 0x80,
@@ -76,7 +164,7 @@ test('collects and accepts a supported D2-50-00 candidate', async () => {
   manager.observe({
     RORG: 0xd4,
     senderId: '05010203',
-    payload: [0x80, 0xff, 0x0b, 0, 0xd2, 0x50, 0],
+    payload: [0x80, 0xff, 0x0b, 0, 0, 0x50, 0xd2],
     teachIn: true,
     teachInInfo: {
       control: 0x80,
@@ -120,7 +208,7 @@ test('allocates the next free sender ID when the controller ID is already paired
   manager.observe({
     RORG: 0xd4,
     senderId: '05010207',
-    payload: [0x80, 0xff, 0x0b, 0, 0xd2, 0x50, 0],
+    payload: [0x80, 0xff, 0x0b, 0, 0, 0x50, 0xd2],
     teachIn: true,
     teachInInfo: {
       control: 0x80,
@@ -155,7 +243,7 @@ test('reserves distinct sender IDs before acknowledging concurrent candidates', 
       manager.observe({
         RORG: 0xd4,
         senderId,
-        payload: [0x80, 0xff, 0x0b, 0, 0xd2, 0x50, 0],
+        payload: [0x80, 0xff, 0x0b, 0, 0, 0x50, 0xd2],
         teachIn: true,
         teachInInfo: {
           control: 0x80,
@@ -202,16 +290,17 @@ test('uses an explicitly selected sender ID for the UTE signal', async () => {
   expect(signalSourceId).toBe(0xffe76685);
 });
 
-test('automatically accepts a response from a targeted pairing session', async () => {
+test('requires profile confirmation for a correlated response without storing echoed manufacturer data', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-auto-accept-'));
   const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
-  const manager = new TeachInManager(registry, 0xffe76681);
+  const manager = new TeachInManager(registry, 0xffe76681, undefined, undefined, async () => {});
   manager.start();
   await manager.transmit(0xffe76685);
   manager.observe({
     RORG: 0xd4,
     senderId: '05010208',
-    payload: [0x91, 0xff, 0x0b, 0, 0xd2, 0x50, 0],
+    destinationId: 'ffe76685',
+    payload: [0x91, 0xff, 0x0b, 0, 0, 0x50, 0xd2],
     teachIn: false,
     teachInInfo: {
       control: 0x91,
@@ -226,9 +315,15 @@ test('automatically accepts a response from a targeted pairing session', async (
     },
   });
 
-  await new Promise((resolve) => setTimeout(resolve, 25));
-
+  expect(registry.findByTargetId(0x05010208)).toBeUndefined();
+  expect(manager.listCandidates()[0]).toMatchObject({
+    eep: undefined,
+    manufacturer: undefined,
+    channel: undefined,
+  });
+  await manager.accept(0x05010208, 'D2-50-00');
   expect(registry.findByTargetId(0x05010208)?.sourceId).toBe(0xffe76685);
+  expect(registry.findByTargetId(0x05010208)?.teachIn?.manufacturerId).toBeUndefined();
   expect(manager.listCandidates()).toHaveLength(0);
   expect(manager.isActive()).toBe(false);
 });
@@ -244,7 +339,7 @@ test('rejects unsupported teach-in profiles', async () => {
   const candidate = manager.observe({
     RORG: 0xd4,
     senderId: '05010204',
-    payload: [0x80, 0xff, 0x0b, 0, 0xa5, 2, 5],
+    payload: [0x80, 0xff, 0x0b, 0, 5, 2, 0xa5],
     teachIn: true,
     teachInInfo: {
       control: 0x80,
@@ -278,7 +373,7 @@ test('backfills teach-in metadata for an existing device', async () => {
     manager.observe({
       RORG: 0xd4,
       senderId: '0513cefe',
-      payload: [0x80, 0xff, 0x0b, 0, 0xd2, 0x50, 0],
+      payload: [0x80, 0xff, 0x0b, 0, 0, 0x50, 0xd2],
       teachIn: true,
       teachInInfo: {
         control: 0x80,
@@ -315,7 +410,7 @@ test('re-pairing an existing target preserves its assigned sender channel', asyn
   manager.observe({
     RORG: 0xd4,
     senderId: '05126787',
-    payload: [0x80, 0xff, 0x61, 0, 0xd2, 0x50, 0],
+    payload: [0x80, 0xff, 0x61, 0, 0, 0x50, 0xd2],
     teachIn: true,
     teachInInfo: {
       control: 0x80,
@@ -344,7 +439,7 @@ test('moves an existing target to an explicitly selected sender channel', async 
   manager.observe({
     RORG: 0xd4,
     senderId: '05126787',
-    payload: [0x80, 0xff, 0x61, 0, 0xd2, 0x50, 0],
+    payload: [0x80, 0xff, 0x61, 0, 0, 0x50, 0xd2],
     teachIn: true,
     teachInInfo: {
       control: 0x80,
@@ -376,7 +471,7 @@ test('does not answer one-way teach-in and rejects teach-out requests', async ()
   const candidate = manager.observe({
     RORG: 0xd4,
     senderId: '05010205',
-    payload: [0x40, 0xff, 0x0b, 0, 0xd2, 0x50, 0],
+    payload: [0x40, 0xff, 0x0b, 0, 0, 0x50, 0xd2],
     teachIn: true,
     teachInInfo: {
       control: 0x40,
@@ -396,7 +491,7 @@ test('does not answer one-way teach-in and rejects teach-out requests', async ()
     manager.observe({
       RORG: 0xd4,
       senderId: '05010206',
-      payload: [0x90, 0xff, 0x0b, 0, 0xd2, 0x50, 0],
+      payload: [0x90, 0xff, 0x0b, 0, 0, 0x50, 0xd2],
       teachIn: false,
       teachInInfo: {
         control: 0x90,
@@ -412,4 +507,166 @@ test('does not answer one-way teach-in and rejects teach-out requests', async ()
   ).toBeUndefined();
   expect(responses).toEqual(['general']);
   expect(manager.listCandidates()).toHaveLength(1);
+});
+
+describe('UTE acceptance safeguards', () => {
+  let directory: string;
+  let registry: DeviceRegistry;
+  let manager: TeachInManager;
+  let responses: string[];
+  const query: RadioERP1Packet = {
+    RORG: 0xd4,
+    senderId: '05010203',
+    payload: [0x80, 0xff, 0x61, 0, 0, 0x50, 0xd2],
+  };
+  const reply: RadioERP1Packet = {
+    RORG: 0xd4,
+    senderId: '05010203',
+    destinationId: 'ffe76685',
+    payload: [0x91, 0xff, 0x0b, 0, 0, 0x50, 0xd2],
+  };
+
+  beforeEach(async () => {
+    directory = await mkdtemp(join(tmpdir(), 'eep-ute-safeguards-'));
+    registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+    responses = [];
+    manager = new TeachInManager(
+      registry,
+      0xffe76685,
+      async (candidate, response) => {
+        if (response === 'teachInAccepted') {
+          expect(registry.findByTargetId(candidate.targetId)?.profileId).toBe(candidate.eep);
+        }
+        responses.push(response);
+      },
+      undefined,
+      async () => {},
+    );
+    manager.start();
+  });
+
+  afterEach(async () => {
+    manager.stop();
+    await registry.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  test('persists once before replying and ignores concurrent duplicate queries', async () => {
+    const save = spyOn(registry, 'upsert');
+    manager.observe(query);
+    manager.observe(query);
+    await manager.accept(0x05010203);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(responses).toEqual(['teachInAccepted']);
+    expect(manager.listCandidates()).toEqual([]);
+  });
+
+  test('does not positively acknowledge a persistence failure', async () => {
+    const save = spyOn(registry, 'upsert').mockRejectedValue(new Error('Disk unavailable'));
+    const log = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      manager.observe(query);
+      expect(await manager.accept(0x05010203).catch((error: Error) => error.message)).toBe(
+        'Disk unavailable',
+      );
+      expect(responses).toEqual(['general']);
+      expect(registry.findByTargetId(0x05010203)).toBeUndefined();
+    } finally {
+      save.mockRestore();
+      log.mockRestore();
+    }
+  });
+
+  test('does not reply or close a newer session after an in-flight save', async () => {
+    const originalSave = registry.upsert.bind(registry);
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const save = spyOn(registry, 'upsert').mockImplementation(async (device) => {
+      await blocked;
+      return originalSave(device);
+    });
+    try {
+      await manager.transmit(0xffe76685);
+      manager.observe(query);
+      const acceptance = manager.accept(0x05010203);
+      manager.stop();
+      manager.start();
+      release();
+      await acceptance;
+      expect(manager.isActive()).toBe(true);
+      expect(responses).toEqual([]);
+    } finally {
+      release();
+      save.mockRestore();
+    }
+  });
+
+  test('rejects unsolicited, unaddressed, mismatched and expired replies', async () => {
+    expect(manager.observe(reply)).toBeUndefined();
+    await manager.transmit(0xffe76685);
+    for (const packet of [
+      { ...reply, destinationId: undefined },
+      { ...reply, destinationId: 'ffe76686' },
+      { ...reply, payload: [0x91, 1, 0x0b, 0, 0, 0x50, 0xd2] },
+      { ...reply, payload: [0x91, 0xff, 0x61, 0, 0, 0x50, 0xd2] },
+      { ...reply, payload: [0x11, 0xff, 0x0b, 0, 0, 0x50, 0xd2] },
+      { ...reply, payload: [0x91, 0xff, 0x0b, 0, 1, 0, 0xd5] },
+    ])
+      expect(manager.observe(packet)).toBeUndefined();
+    const now = Date.now();
+    const clock = spyOn(Date, 'now').mockReturnValue(now + 701);
+    try {
+      expect(manager.observe(reply)).toBeUndefined();
+      expect(manager.listCandidates()).toEqual([]);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test('does not send a response after the 500 ms receiver deadline', async () => {
+    const originalSave = registry.upsert.bind(registry);
+    const now = Date.now();
+    const clock = spyOn(Date, 'now').mockReturnValue(now);
+    const save = spyOn(registry, 'upsert').mockImplementation(async (device) => {
+      const accepted = await originalSave(device);
+      clock.mockReturnValue(now + 501);
+      return accepted;
+    });
+    try {
+      manager.observe(query);
+      await manager.accept(0x05010203);
+      expect(responses).toEqual([]);
+    } finally {
+      save.mockRestore();
+      clock.mockRestore();
+    }
+  });
+
+  test('rejects addressed queries for another channel and conflicting re-teach profiles', () => {
+    expect(manager.observe({ ...query, destinationId: 'ffe76686' })).toBeUndefined();
+    expect(
+      manager.observe({
+        ...query,
+        senderId: '0513cefe',
+        payload: [0x80, 0xff, 0x61, 0, 1, 0, 0xd5],
+      }),
+    ).toBeUndefined();
+    expect(registry.findByTargetId(0x0513cefe)?.profileId).toBe('D2-50-00');
+    expect(responses).toEqual(['general']);
+  });
+
+  test('candidate snapshots cannot bypass explicit profile selection', async () => {
+    const candidate = manager.observe({ RORG: 0xd5, senderId: '05010203', payload: [0] })!;
+    candidate.eep = 'D2-50-00';
+    manager.listCandidates()[0].eep = 'D2-50-00';
+    expect(await manager.accept(0x05010203).catch((error: Error) => error.message)).toBe(
+      'Select an EEP for this teach-in candidate',
+    );
+    manager.stop();
+    expect(
+      await manager.accept(0x05010203, 'D5-00-01').catch((error: Error) => error.message),
+    ).toBe('Permit join is not active');
+  });
 });

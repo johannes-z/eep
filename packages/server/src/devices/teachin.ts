@@ -6,15 +6,16 @@ import {
 } from '../profiles';
 import type { RadioERP1Packet, UteTeachInInfo } from './inbound';
 import type { DeviceRegistry } from './registry';
-import type { UteResponse } from '../transport/esp3';
+import { buildUteTeachInQuery, parseUteInfo, type UteResponse } from '../transport/esp3';
 import { parseEnOceanId } from '../util';
 
 export interface TeachInCandidate {
   sourceId: number;
   targetId: number;
-  eep: string;
-  channel: number;
-  manufacturer: number;
+  eep?: string;
+  profileOptions?: string[];
+  channel?: number;
+  manufacturer?: number;
   direction: UteTeachInInfo['direction'];
   responseExpected: boolean;
   seenAt: string;
@@ -41,6 +42,10 @@ export class TeachInManager {
   private requestedSourceId: number | undefined;
   private requestedTargetId: number | undefined;
   private expiryTimer?: ReturnType<typeof setTimeout>;
+  private session = 0;
+  private pendingQuery?: { sourceId: number; payload: number[]; expiresAt: number };
+  private readonly accepting = new Map<number, Promise<Device>>();
+  private readonly reservedSourceIds = new Set<number>();
   private readonly candidates = new Map<number, TeachInCandidate>();
   private readonly stateListeners = new Set<TeachInStateListener>();
   private readonly changeListeners = new Set<() => void>();
@@ -71,6 +76,8 @@ export class TeachInManager {
   }
 
   stop(): void {
+    this.session += 1;
+    this.pendingQuery = undefined;
     clearTimeout(this.expiryTimer);
     this.expiryTimer = undefined;
     this.requestedSourceId = undefined;
@@ -102,102 +109,139 @@ export class TeachInManager {
   }
 
   listCandidates(): TeachInCandidate[] {
-    return [...this.candidates.values()];
+    return structuredClone([...this.candidates.values()]);
   }
 
   private sourceId(): number {
     const usedSourceIds = new Set([
       ...this.registry.list().map((device) => device.sourceId),
       ...this.listCandidates().map((candidate) => candidate.sourceId),
+      ...this.reservedSourceIds,
     ]);
     return nextAvailableSourceId(usedSourceIds, this.activeSourceId ?? this.startId);
   }
 
   observe(packet: RadioERP1Packet): TeachInCandidate | undefined {
-    if (!this.active || packet.RORG !== 0xd4) return undefined;
-    const info = packet.teachInInfo;
+    if (!this.active) return undefined;
+    const is1bsTeachIn =
+      packet.RORG === 0xd5 &&
+      packet.payload.length === 1 &&
+      Number.isInteger(packet.payload[0]) &&
+      packet.payload[0] >= 0 &&
+      packet.payload[0] <= 0xff &&
+      (packet.payload[0] & 0x08) === 0;
+    const info = is1bsTeachIn
+      ? {
+          eep: undefined,
+          channel: undefined,
+          manufacturer: undefined,
+          direction: 'unidirectional' as const,
+          responseExpected: false,
+          command: 'query' as const,
+          requestType: 'teachIn' as const,
+          response: undefined,
+        }
+      : packet.RORG === 0xd4
+        ? parseUteInfo(Array.from(packet.payload))
+        : undefined;
     if (!info) return undefined;
     const isResponse = info.command === 'response';
     if (!isResponse && info.command !== 'query') return undefined;
     if (isResponse && info.response !== 'teachInAccepted') return undefined;
+    if (
+      isResponse &&
+      (!this.pendingQuery ||
+        Date.now() > this.pendingQuery.expiresAt ||
+        parseEnOceanId(packet.destinationId) !== this.pendingQuery.sourceId ||
+        (packet.payload[0] & 0x80) !== (this.pendingQuery.payload[0] & 0x80) ||
+        this.pendingQuery.payload
+          .slice(1)
+          .some((byte, index) => byte !== packet.payload[index + 1]))
+    )
+      return undefined;
     const targetId = parseEnOceanId(packet.senderId);
-    if (targetId === undefined || targetId < 1) {
+    if (targetId === undefined || targetId < 1 || targetId === 0xffffffff) {
       return undefined;
     }
     if (this.requestedTargetId !== undefined) return undefined;
     const existing = this.registry.findByTargetId(targetId);
+    if (this.accepting.has(targetId)) return undefined;
     const candidate: TeachInCandidate = {
       sourceId:
+        (isResponse ? this.pendingQuery?.sourceId : undefined) ??
         this.requestedSourceId ??
         existing?.sourceId ??
         this.candidates.get(targetId)?.sourceId ??
         this.sourceId(),
       targetId,
-      eep: info.eep.toUpperCase(),
-      channel: info.channel,
-      manufacturer: info.manufacturer,
+      eep: isResponse ? undefined : info.eep?.toUpperCase(),
+      ...(is1bsTeachIn || isResponse
+        ? {
+            profileOptions: (is1bsTeachIn
+              ? this.profiles.getByRorg(0xd5)
+              : this.profiles.list()
+            ).map((profile) => profile.metadata.id),
+          }
+        : {}),
+      channel: isResponse ? undefined : info.channel,
+      manufacturer: isResponse ? undefined : info.manufacturer,
       direction: info.direction,
       responseExpected: isResponse ? false : info.responseExpected,
       seenAt: new Date().toISOString(),
       requestPayload: Array.from(packet.payload),
     };
+    const destinationId = parseEnOceanId(packet.destinationId);
+    if (
+      destinationId !== undefined &&
+      destinationId !== 0xffffffff &&
+      destinationId !== candidate.sourceId
+    )
+      return undefined;
+    if (candidate.sourceId === targetId) return undefined;
 
     if (!isResponse && info.requestType !== 'teachIn') {
-      this.respond(candidate, 'general');
+      void this.respond(candidate, 'general');
       return undefined;
+    }
+
+    if (is1bsTeachIn || isResponse) {
+      if (this.requestedSourceId !== undefined) this.requestedTargetId = targetId;
+      if (isResponse) this.pendingQuery = undefined;
+      this.candidates.set(targetId, candidate);
+      this.notify();
+      return structuredClone(candidate);
     }
 
     let profileId: string;
     try {
-      profileId = normalizeProfileId(candidate.eep);
+      profileId = normalizeProfileId(candidate.eep!);
     } catch {
-      this.respond(candidate, 'eepNotSupported');
+      void this.respond(candidate, 'eepNotSupported');
       return undefined;
     }
     if (!this.profiles.get(profileId)) {
-      this.respond(candidate, 'eepNotSupported');
+      void this.respond(candidate, 'eepNotSupported');
+      return undefined;
+    }
+    if (existing && normalizeProfileId(existing.profileId) !== profileId) {
+      void this.respond(candidate, 'general');
       return undefined;
     }
     if (this.requestedSourceId !== undefined) this.requestedTargetId = targetId;
 
-    if (existing) {
-      const update = {
-        teachIn: {
-          eep: candidate.eep,
-          channel: candidate.channel,
-          manufacturerId: candidate.manufacturer,
-          direction: candidate.direction,
-          responseExpected: candidate.responseExpected,
-        },
-      };
-      void (
-        candidate.sourceId === existing.sourceId
-          ? this.registry.update(existing.sourceId, update)
-          : this.registry.reassignSourceId(existing.sourceId, candidate.sourceId, update)
-      )
-        .then(() => {
-          this.respond(candidate, 'teachInAccepted');
-          this.finishTargetedPairing();
-        })
-        .catch((error: unknown) => {
-          this.requestedTargetId = undefined;
-          console.error('Teach-in metadata update failed:', error);
-        });
-      return undefined;
-    }
-
     this.candidates.set(candidate.targetId, candidate);
     this.notify();
-    if (!isResponse) this.respond(candidate, 'teachInAccepted');
-    if (this.requestedSourceId !== undefined) {
-      void this.accept(candidate.targetId)
-        .then(() => this.finishTargetedPairing())
-        .catch((error: unknown) => {
+    if (existing || candidate.responseExpected || this.requestedSourceId !== undefined) {
+      const session = this.session;
+      void this.accept(candidate.targetId).catch((error: unknown) => {
+        if (this.active && this.session === session) {
           this.requestedTargetId = undefined;
-          console.error('Targeted teach-in acceptance failed:', error);
-        });
+          void this.respond(candidate, 'general');
+        }
+        console.error('Teach-in acceptance failed:', error);
+      });
     }
-    return candidate;
+    return existing ? undefined : structuredClone(candidate);
   }
 
   private finishTargetedPairing(): void {
@@ -207,20 +251,32 @@ export class TeachInManager {
     this.stop();
   }
 
-  private respond(candidate: TeachInCandidate, response: UteResponse): void {
+  private async respond(candidate: TeachInCandidate, response: UteResponse): Promise<void> {
     if (!candidate.responseExpected || !this.sendResponse) return;
-    void this.sendResponse(candidate, response).catch((error: unknown) => {
+    if (Date.now() - Date.parse(candidate.seenAt) >= 500) return;
+    await this.sendResponse(structuredClone(candidate), response).catch((error: unknown) => {
       console.error('UTE teach-in response failed:', error);
     });
   }
 
-  async accept(targetId: number): Promise<Device> {
-    if (!Number.isInteger(targetId) || targetId < 0 || targetId > 0xffffffff) {
+  async accept(targetId: number, selectedProfileId?: string): Promise<Device> {
+    if (!this.active) throw new Error('Permit join is not active');
+    if (!Number.isInteger(targetId) || targetId < 1 || targetId >= 0xffffffff) {
       throw new Error('targetId must be a valid EnOcean identifier');
     }
+    const pending = this.accepting.get(targetId);
+    if (pending) return pending;
     const candidate = this.candidates.get(targetId);
     if (!candidate) throw new Error('Unknown teach-in candidate');
-    const profileId = normalizeProfileId(candidate.eep);
+    const requestedProfile = selectedProfileId ?? candidate.eep;
+    if (!requestedProfile) throw new Error('Select an EEP for this teach-in candidate');
+    const profileId = normalizeProfileId(requestedProfile);
+    if (candidate.profileOptions && !candidate.profileOptions.includes(profileId)) {
+      throw new Error('EEP does not match the teach-in telegram');
+    }
+    if (candidate.eep && normalizeProfileId(candidate.eep) !== profileId) {
+      throw new Error('EEP does not match the teach-in telegram');
+    }
     const profile = this.profiles.get(profileId);
     if (!profile) throw new Error(`Unsupported EEP: ${candidate.eep}`);
     const capabilities = profile.defaultCapabilities();
@@ -229,35 +285,62 @@ export class TeachInManager {
     if (assigned && assigned.targetId !== targetId) {
       throw new Error(`Source ID is already assigned: ${sourceId}`);
     }
+    const existing = this.registry.findByTargetId(targetId);
+    if (existing && normalizeProfileId(existing.profileId) !== profileId) {
+      throw new Error('EEP does not match the paired device');
+    }
 
     const device: Device = {
       sourceId,
       targetId,
-      name: `EnOcean ${sourceId.toString(16).padStart(8, '0')}`,
+      name: existing?.name ?? `EnOcean ${sourceId.toString(16).padStart(8, '0')}`,
       profileId,
-      capabilities,
+      capabilities: existing?.capabilities ?? capabilities,
       teachIn: {
-        eep: candidate.eep,
-        channel: candidate.channel,
-        manufacturerId: candidate.manufacturer,
+        ...existing?.teachIn,
+        eep: profileId,
+        ...(candidate.channel !== undefined ? { channel: candidate.channel } : {}),
+        ...(candidate.manufacturer !== undefined ? { manufacturerId: candidate.manufacturer } : {}),
         direction: candidate.direction,
         responseExpected: candidate.responseExpected,
       },
       availability: 'online',
       lastSeen: candidate.seenAt,
     };
-    const accepted = await this.registry.upsert(device);
-    this.candidates.delete(targetId);
-    this.notify();
-    return accepted;
+    const session = this.session;
+    this.reservedSourceIds.add(sourceId);
+    const operation = (async () => {
+      const accepted = existing
+        ? await this.registry.reassignSourceId(existing.sourceId, sourceId, device)
+        : await this.registry.upsert(device);
+      if (this.active && this.session === session) {
+        await this.respond(candidate, 'teachInAccepted');
+        if (this.active && this.session === session) {
+          this.candidates.delete(targetId);
+          this.notify();
+          this.finishTargetedPairing();
+        }
+      }
+      return accepted;
+    })();
+    this.accepting.set(targetId, operation);
+    try {
+      return await operation;
+    } finally {
+      this.accepting.delete(targetId);
+      this.reservedSourceIds.delete(sourceId);
+    }
   }
 
   reject(targetId: number): void {
+    if (this.accepting.has(targetId)) return;
+    if (this.requestedTargetId === targetId) this.requestedTargetId = undefined;
     if (this.candidates.delete(targetId)) this.notify();
   }
 
   async transmit(sourceId?: number): Promise<void> {
     if (!this.active) throw new Error('Permit join is not active');
+    const session = this.session;
     if (this.requestedTargetId !== undefined) throw new Error('Teach-in acceptance is in progress');
     if (sourceId === undefined) {
       this.requestedSourceId = undefined;
@@ -268,6 +351,7 @@ export class TeachInManager {
       }
       if (
         this.registry.findBySourceId(sourceId) ||
+        this.reservedSourceIds.has(sourceId) ||
         this.listCandidates().some((candidate) => candidate.sourceId === sourceId)
       ) {
         throw new Error(`Source ID is already assigned: ${sourceId}`);
@@ -276,9 +360,16 @@ export class TeachInManager {
       this.activeSourceId = sourceId;
     }
     try {
+      this.pendingQuery = this.sendSignal
+        ? {
+            sourceId: this.activeSourceId,
+            payload: Array.from(buildUteTeachInQuery(this.activeSourceId).slice(7, 14)),
+            expiresAt: Date.now() + 700,
+          }
+        : undefined;
       await this.sendSignal?.(this.activeSourceId);
     } catch (error) {
-      this.stop();
+      if (this.session === session) this.stop();
       throw error;
     }
   }

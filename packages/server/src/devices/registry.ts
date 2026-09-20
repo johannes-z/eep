@@ -47,14 +47,16 @@ function validateTeachInInfo(value: unknown): DeviceTeachInInfo {
   const channel = value.channel;
   const manufacturerId = value.manufacturerId;
   if (
-    typeof channel !== 'number' ||
-    !Number.isInteger(channel) ||
-    channel < 0 ||
-    channel > 255 ||
-    typeof manufacturerId !== 'number' ||
-    !Number.isInteger(manufacturerId) ||
-    manufacturerId < 0 ||
-    manufacturerId > 0x7ff
+    (channel !== undefined &&
+      (typeof channel !== 'number' ||
+        !Number.isInteger(channel) ||
+        channel < 0 ||
+        channel > 255)) ||
+    (manufacturerId !== undefined &&
+      (typeof manufacturerId !== 'number' ||
+        !Number.isInteger(manufacturerId) ||
+        manufacturerId < 0 ||
+        manufacturerId > 0x7ff))
   ) {
     throw new Error('Invalid teachIn channel or manufacturerId');
   }
@@ -66,8 +68,8 @@ function validateTeachInInfo(value: unknown): DeviceTeachInInfo {
   }
   return {
     eep: readText(value.eep, 'teachIn.eep').toUpperCase(),
-    channel,
-    manufacturerId,
+    ...(channel !== undefined ? { channel } : {}),
+    ...(manufacturerId !== undefined ? { manufacturerId } : {}),
     direction: value.direction,
     responseExpected: value.responseExpected,
   };

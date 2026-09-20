@@ -1,4 +1,5 @@
 import { Check, Radio, X } from 'lucide-react';
+import { useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import type { GeneralResponse, SettingsFormMessage, TeachInCandidate } from '../ui/types';
 import { formatTargetId } from './deviceUtils';
@@ -23,15 +24,16 @@ export function Pairing({
   sourceId: number | null;
   onPair: (sourceId: number) => void;
   onCancel: () => void;
-  onAccept: (candidate: TeachInCandidate) => void;
+  onAccept: (candidate: TeachInCandidate, profileId?: string) => void;
   onReject: (candidate: TeachInCandidate) => void;
 }) {
+  const [selectedProfiles, setSelectedProfiles] = useState<Record<number, string>>({});
   return (
     <section className="settings-view">
       <div className="settings-heading">
         <div>
           <h2>Pairing</h2>
-          <p>Universal Teach-In</p>
+          <p>UTE / 1BS</p>
         </div>
         <span
           className={`settings-status ${active ? 'online' : 'neutral'}`}
@@ -153,7 +155,7 @@ export function Pairing({
         </h3>
         {candidates.length ? (
           <div className="data-table-wrap">
-            <table className="data-table">
+            <table className="data-table pairing-table">
               <thead>
                 <tr>
                   <th>Device address</th>
@@ -164,16 +166,50 @@ export function Pairing({
               <tbody>
                 {candidates.map((candidate) => (
                   <tr key={candidate.targetId}>
-                    <td>
+                    <td data-label="Device address">
                       <code>{formatTargetId(candidate.targetId)}</code>
                     </td>
-                    <td>{candidate.eep ?? 'Unknown'}</td>
+                    <td data-label="EEP">
+                      {candidate.eep ?? (
+                        <select
+                          aria-label={`EEP for ${formatTargetId(candidate.targetId)}`}
+                          value={selectedProfiles[candidate.targetId] ?? ''}
+                          onChange={(event) =>
+                            setSelectedProfiles({
+                              ...selectedProfiles,
+                              [candidate.targetId]: event.target.value,
+                            })
+                          }
+                        >
+                          <option value="">Select EEP</option>
+                          {candidate.profileOptions?.map((profileId) => (
+                            <option
+                              key={profileId}
+                              value={profileId}
+                            >
+                              {profileId}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </td>
                     <td>
                       <div className="device-actions">
                         <button
                           className="small-button"
                           type="button"
-                          onClick={() => onAccept(candidate)}
+                          disabled={
+                            !candidate.eep &&
+                            !candidate.profileOptions?.includes(
+                              selectedProfiles[candidate.targetId] ?? '',
+                            )
+                          }
+                          onClick={() =>
+                            onAccept(
+                              candidate,
+                              candidate.eep ?? selectedProfiles[candidate.targetId],
+                            )
+                          }
                         >
                           <Check
                             size={15}

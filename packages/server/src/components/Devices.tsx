@@ -144,7 +144,12 @@ function DeviceRow({ device }: { device: Device }) {
         <td data-label="State">
           {!hasState
             ? 'Not reported'
-            : (state?.preset ?? (state?.isOn ? (levels.length ? `${percentage}%` : 'On') : 'Off'))}
+            : entity?.deviceClass === 'opening'
+              ? state?.isOn
+                ? 'Open'
+                : 'Closed'
+              : (state?.preset ??
+                (state?.isOn ? (levels.length ? `${percentage}%` : 'On') : 'Off'))}
           {pending && <span className="pending-label">Pending</span>}
         </td>
         <td data-label="Control">

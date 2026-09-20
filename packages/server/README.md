@@ -155,11 +155,34 @@ devices:
 
 Omit `level4` or `automaticOnDemand` when the device does not support them. Home Assistant discovery, web controls, command validation, and percentage-to-speed mapping all use this list. Runtime state is stored in SQLite and is independent of the user-editable YAML configuration.
 
+### D2-50-00 ventilation
+
+Fan commands use the six-byte control message (MT=1), with the direct operating mode in
+the low nibble and CO2, humidity, and air-quality thresholds set to the specified default
+value `0x7f`. Value 15 means no action, not a status request. Fan reports require a complete
+14-byte basic-status message (MT=2); requests, controls, reserved modes, and truncated
+telegrams cannot change device state. Reported operating modes are accepted independently
+of the configured command capabilities and clear pending desired state.
+
+The current adapter exposes fan operating mode only. Basic-status sensor/diagnostic fields,
+extended-status telemetry, threshold controls, and remote status-request commands are not
+yet exposed. All received telegrams remain available in the Packet Listener. These formats
+follow EEP 2.6.8, D2-50-00 (pages 309-318); short vendor-specific status formats are not accepted.
+
 Runtime-only device updates do not rewrite YAML. Home Assistant entities require both the bridge
 and device to be online. Reassigning a sender channel clears the old discovery entries before
 publishing the replacement, and MQTT shutdown drains active publications before offline cleanup.
 
-## Pairing and UTE
+### D5-00-01 contacts
+
+Single Input Contact sensors use the receive-only `D5-00-01` profile with `capabilities: [contact]`
+(also the default when omitted). DB0.0 is zero for open and one for closed; reports expose
+`reportedState.open` as a boolean. The web UI shows Open/Closed, and Home Assistant discovers an
+`opening` binary sensor. MQTT publishes `ON` for open and `OFF` for closed on
+`<base_topic>/binary_sensor/<sourceId>/state`, including when Home Assistant is disabled.
+No state is published until the first data telegram arrives. Commands are not supported.
+
+## Pairing and Teach-In
 
 Web-console pairing starts with `Pair` on a specific sender-channel row. There is no global
 permit-join control in the web UI; `Cancel pairing` is available while a session is active.
@@ -168,19 +191,36 @@ switch with the `mdi:access-point-network` icon. The bridge also exposes a
 `Restart` button with the `mdi:restart` icon. Both controls are attached to the bridge device.
 
 Automatic joining uses the EEP Universal Teach-In (UTE) D4 telegram format. The server accepts
-valid UTE teach-in queries for profiles present in its profile registry and acknowledges
-bidirectional requests immediately. Unsupported EEPs receive the UTE `EEP not supported`
-response; teach-out, malformed, and reserved requests are not added as candidates. Adding a
-candidate in the web console stores its metadata and enables normal profile-based operation.
+valid UTE teach-in queries for profiles present in its profile registry. Queries that expect a
+response are accepted and persisted automatically during permit-join before a positive reply
+is sent. Replies preserve the query's direction and echo its channel, manufacturer, and EEP.
+They are not sent after the 500 ms response deadline; slow storage or failed transmission may
+require repeating teach-in. Queries that request no response are never answered.
+Unsupported EEPs receive `EEP not supported` when a response is requested. Teach-out,
+unspecified teach-in/deletion, malformed, and reserved requests are not paired. Re-teaching
+a known sender with a conflicting EEP is rejected without changing its existing profile.
+
+D5-00-01 sensors also support 1BS teach-in: start pairing, then press the sensor's learn button.
+Telegram DB0.3 must be zero for teach-in; ordinary contact reports do not create candidates.
+The sender appears as a candidate without an EEP, even when a channel was selected. Select
+`D5-00-01` and add the device explicitly: a 1BS learn telegram contains neither an EEP nor a
+manufacturer ID (EEP 2.6.8, appendix 3.2). No teach-in response is sent, and no manufacturer or
+channel metadata is inferred. Learn telegrams never update contact state.
 
 For receiver-driven devices such as the AEROline vent, activate its local learn mode, then select
 a free sender channel on the Pairing page and choose `Pair` in its row while the receiver's learning
 window is open. Alternatively, use the Home Assistant permit-join switch.
 The server broadcasts a D4 UTE query using the first free sender ID at or above `startId`; an
-explicit channel selection takes precedence. Targeted responses are accepted and persisted
-automatically; untargeted candidates can be added or dismissed on the Pairing page. Pairing expires
+explicit channel selection takes precedence. A response must be addressed to that sender ID,
+echo the outstanding query, and arrive within 700 ms. Because its EEP and manufacturer describe
+the requester rather than the responding device, select the responding device's EEP explicitly
+on the Pairing page before adding it; echoed manufacturer/channel data is not stored as device
+metadata. Incoming supported queries on a selected channel can be accepted automatically.
+Untargeted no-response queries remain candidates for manual acceptance. Pairing expires
 after sixty seconds. Stopping or expiring a session clears pending candidates and channel targeting;
-a failed transmission closes the session. The USB 300 base ID is
+a failed transmission closes the session. A persistence operation already in progress may still
+complete after cancellation, but it cannot send a late reply or close a newer session.
+The USB 300 base ID is
 read from the transport and shown read-only in Transport & dongle settings. It is not used as the last-used
 allocation cursor and is not persisted in `configuration.yaml`.
 

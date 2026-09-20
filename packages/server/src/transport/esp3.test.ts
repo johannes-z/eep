@@ -9,6 +9,7 @@ import {
   readBaseId,
   Esp3Parser,
   parseRadioERP1,
+  parseUteInfo,
   type Esp3Frame,
 } from './esp3';
 import type { TransportConnection } from './adapters';
@@ -27,7 +28,11 @@ test('parses a fragmented ERP1 frame', () => {
   const radio = parseRadioERP1(parsed[0]);
 
   expect(parsed).toHaveLength(1);
-  expect(radio).toMatchObject({ RORG: 0xd2, senderId: 'ffe76681', payload: [13, 0, 0, 0, 0, 0] });
+  expect(radio).toMatchObject({
+    RORG: 0xd2,
+    senderId: 'ffe76681',
+    payload: [0x2d, 0, 0x7f, 0x7f, 0x7f, 0],
+  });
 });
 
 test('builds a successful UTE teach-in response', () => {
@@ -37,7 +42,7 @@ test('builds a successful UTE teach-in response', () => {
 
   expect(parsed).toHaveLength(1);
   expect(parsed[0].packetType).toBe(1);
-  expect(parsed[0].data.slice(0, 8)).toEqual([0xd4, 0x91, 0, 0, 0, 0, 0x50, 0xd2]);
+  expect(parsed[0].data.slice(0, 8)).toEqual([0xd4, 0x11, 0, 0, 0, 0, 0x50, 0xd2]);
   expect(parsed[0].optionalData.slice(0, 5)).toEqual([3, 0x05, 0x01, 0x02, 0x03]);
 });
 
@@ -182,4 +187,36 @@ test('rejects invalid UTE response inputs', () => {
   expect(() => buildUteTeachInResponse(0xffe76681, 0x05010203, [0, 0, 0, 0, 0, 0])).toThrow(
     'exactly seven bytes',
   );
+});
+
+test.each([0x00, 0x40, 0x80, 0xc0])(
+  'preserves UTE direction and echoes query metadata (%s)',
+  (control) => {
+    const request = [control, 3, 0x23, 0xfa, 1, 0, 0xd5];
+    const response = buildUteTeachInResponse(0xffe76681, 0x05010203, request);
+    const frame = new Esp3Parser().push(response)[0];
+    expect(parseRadioERP1(frame)?.destinationId).toBe('05010203');
+    expect(frame.data.slice(1, 8)).toEqual([(control & 0x80) | 0x11, ...request.slice(1)]);
+    expect(parseUteInfo(request)?.manufacturer).toBe(0x223);
+    expect(parseUteInfo(frame.data.slice(1, 8))).toMatchObject({
+      command: 'response',
+      requestType: 'reserved',
+      response: 'teachInAccepted',
+      responseExpected: false,
+    });
+  },
+);
+
+test.each([-1, 256, 1.5, Number.NaN])('rejects invalid UTE payload bytes (%s)', (value) => {
+  const request = [0x80, 0xff, value, 0, 0, 0x50, 0xd2];
+  expect(parseUteInfo(request)).toBeUndefined();
+  expect(() => buildUteTeachInResponse(0xffe76681, 0x05010203, request)).toThrow('valid query');
+});
+
+test('does not build a UTE response to a response or reserved command', () => {
+  for (const control of [0x91, 0x8f]) {
+    expect(() =>
+      buildUteTeachInResponse(0xffe76681, 0x05010203, [control, 0xff, 0, 0, 0, 0x50, 0xd2]),
+    ).toThrow('valid query');
+  }
 });

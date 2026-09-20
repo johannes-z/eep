@@ -244,10 +244,14 @@ export function createRequestHandler(
         try {
           const body = (await request.json()) as {
             targetId: number;
+            profileId?: string;
           };
+          if (body.profileId !== undefined && typeof body.profileId !== 'string') {
+            throw new Error('profileId must be an EEP string');
+          }
           const targetId = parseEnOceanId(body.targetId);
           if (targetId === undefined) throw new Error('targetId must be an EnOcean identifier');
-          return json(await options.teachIn.accept(targetId));
+          return json(await options.teachIn.accept(targetId, body.profileId));
         } catch (error) {
           return json({ error: (error as Error).message }, 400);
         }

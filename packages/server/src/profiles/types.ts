@@ -48,6 +48,7 @@ export type ProfileEntityContext = ProfileDeviceContext;
 
 export interface ProfileEntityDescriptor {
   readonly kind: string;
+  readonly deviceClass?: string;
   readonly protocol: string;
   readonly power: boolean;
   readonly commands: readonly string[];

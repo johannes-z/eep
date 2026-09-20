@@ -95,4 +95,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body_path: release/CHANGELOG.md
-          files: release/*
+          files: |
+            release/eep-server-linux-x64
+            release/eep-server-linux-arm64
+            release/eep-server-darwin-x64
+            release/eep-server-darwin-arm64
+            release/eep-server-windows-x64.exe

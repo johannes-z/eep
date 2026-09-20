@@ -53,6 +53,26 @@ class FakeTransport {
   }
 }
 
+test('requires explicit profile selection when accepting a 1BS candidate', async () => {
+  const teachIn = new TeachInManager(fixtureRegistry, 0xffe76685);
+  const handler = createRequestHandler(new FakeTransport(), { teachIn });
+  teachIn.start();
+  teachIn.observe({ RORG: 0xd5, senderId: '05010203', payload: [0x01] });
+  const accept = (body: unknown) =>
+    handler(
+      new Request('http://localhost/api/pairing/accept', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
+  expect((await accept({ targetId: '05010203' })).status).toBe(400);
+  expect((await accept({ targetId: '05010203', profileId: 1 })).status).toBe(400);
+  const response = await accept({ targetId: '05010203', profileId: 'D5-00-01' });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ profileId: 'D5-00-01', targetId: 0x05010203 });
+});
+
 test('rejects cross-origin commands before transmitting', async () => {
   const transport = new FakeTransport();
   const handler = createRequestHandler(transport);
@@ -108,7 +128,7 @@ test('returns 200 and writes a payload for a configured device', async () => {
   expect(transport.writes).toHaveLength(1);
   expect(transport.writes[0]).toBeInstanceOf(Uint8Array);
   expect(transport.writes[0][6]).toBe(0xd2);
-  expect(transport.writes[0][7]).toBe(13);
+  expect(Array.from(transport.writes[0].slice(7, 13))).toEqual([0x2d, 0, 0x7f, 0x7f, 0x7f, 0]);
 });
 
 test('uses each device source ID when sending a command', async () => {

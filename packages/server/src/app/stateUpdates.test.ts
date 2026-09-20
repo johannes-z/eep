@@ -141,7 +141,7 @@ test('pushes API snapshots for device, settings, pairing, and packet changes', a
     teachIn.observe({
       RORG: 0xd4,
       senderId: '05010203',
-      payload: [0x80, 0xff, 0x0b, 0, 0xd2, 0x50, 0],
+      payload: [0x40, 0xff, 0x0b, 0, 0, 0x50, 0xd2],
       teachIn: true,
       teachInInfo: {
         control: 0x80,

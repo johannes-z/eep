@@ -28,6 +28,7 @@ export interface RadioERP1Packet {
   RORG: number;
   payload: ArrayLike<number>;
   senderId: string | number;
+  destinationId?: string | number;
   teachIn?: boolean;
   teachInInfo?: UteTeachInInfo;
 }

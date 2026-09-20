@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 ## Unreleased
 
+## v1.0.4
+
+
+### Miscellaneous
+
+- Release v1.0.4 (2fca6f1)
+
 ## v1.0.3
 
 

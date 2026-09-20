@@ -1,4 +1,4 @@
-import type { Device } from '../../config';
+import type { Device } from '../../devices/types';
 
 export interface EntityTopics {
   id: string;

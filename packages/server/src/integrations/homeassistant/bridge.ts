@@ -1,4 +1,5 @@
-import type { Device, HomeAssistantSettings } from '../../config';
+import type { HomeAssistantSettings } from '../../config';
+import type { Device } from '../../devices/types';
 import type { DeviceRegistry } from '../../devices/registry';
 import type { TeachInManager } from '../../devices/teachin';
 import type { MqttClientLike, MqttSettings } from '../../mqtt';
@@ -10,13 +11,7 @@ import {
   permitJoinTopics,
   restartTopics,
 } from './topics';
-import {
-  bridgeDeviceInfo,
-  deviceAvailability,
-  deviceInfo,
-  diagnosticValues,
-  profileContext,
-} from './device';
+import { bridgeDeviceInfo, deviceAvailability, deviceInfo, diagnosticValues } from './device';
 import { publish, publishOptions, subscribe } from './publisher';
 import { HomeAssistantStatePublisher } from './state';
 
@@ -34,6 +29,7 @@ export class MqttEntityBridge {
   private readonly removeTeachInListener: () => void;
   private readonly statePublisher: HomeAssistantStatePublisher;
   private readonly publishedEntityObjectIds = new Map<number, string>();
+  private publicationQueue: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly client: MqttClientLike,
@@ -41,15 +37,14 @@ export class MqttEntityBridge {
     private readonly sendCommand: (device: Device, request: unknown) => Promise<void>,
     settings: Pick<
       MqttSettings,
-      'discoveryPrefix' | 'baseTopic' | 'forceDisableRetain' | 'includeDeviceInformation'
+      'baseTopic' | 'forceDisableRetain' | 'includeDeviceInformation'
     > & { homeAssistant?: HomeAssistantSettings } = {},
     private readonly profiles: ProfileRegistry = createDefaultProfileRegistry(),
     private readonly teachIn?: TeachInManager,
     private readonly restart?: () => Promise<void>,
   ) {
     this.homeAssistantEnabled = settings.homeAssistant?.enabled !== false;
-    this.discoveryPrefix =
-      settings.homeAssistant?.discoveryTopic ?? settings.discoveryPrefix ?? 'homeassistant';
+    this.discoveryPrefix = settings.homeAssistant?.discoveryTopic ?? 'homeassistant';
     this.baseTopic = settings.baseTopic ?? 'eep';
     this.bridgeAvailability = settings.homeAssistant?.statusTopic ?? `${this.baseTopic}/status`;
     this.bridgePublishOptions = {
@@ -71,30 +66,25 @@ export class MqttEntityBridge {
     this.removeTeachInListener =
       this.teachIn?.onStateChange(() => {
         if (this.started && !this.stopped) {
-          void this.publishPermitJoinState().catch((error: unknown) =>
-            console.error('MQTT Permit join state update failed:', error),
+          void this.enqueuePublication(() => this.publishPermitJoinState()).catch(
+            (error: unknown) => console.error('MQTT Permit join state update failed:', error),
           );
         }
       }) ?? (() => undefined);
     this.removeChangeListener = this.registry.onChange((device) => {
-      void Promise.resolve()
-        .then(() =>
-          this.homeAssistantEnabled
-            ? this.publishDiscovery(device)
-            : this.subscribeDeviceCommands(device),
-        )
-        .then(() => this.statePublisher.publishState(device, deviceAvailability(device)))
-        .catch((error: unknown) => console.error('MQTT device update failed:', error));
+      if (!this.started || this.stopped || this.client.connected === false) return;
+      void this.enqueuePublication(async () => {
+        if (this.homeAssistantEnabled) await this.publishDiscovery(device);
+        else await this.subscribeDeviceCommands(device);
+        await this.statePublisher.publishState(device, deviceAvailability(device));
+      }).catch((error: unknown) => console.error('MQTT device update failed:', error));
     });
-    this.removeDeviceListener =
-      typeof this.registry.onRemove === 'function'
-        ? this.registry.onRemove((device) => {
-            if (!this.started || this.stopped) return;
-            void this.clearDeviceDiscovery(device).catch((error: unknown) =>
-              console.error('MQTT removed device cleanup failed:', error),
-            );
-          })
-        : () => undefined;
+    this.removeDeviceListener = this.registry.onRemove((device) => {
+      if (!this.started || this.stopped) return;
+      void this.enqueuePublication(() => this.clearDeviceDiscovery(device)).catch(
+        (error: unknown) => console.error('MQTT removed device cleanup failed:', error),
+      );
+    });
   }
 
   start(): void {
@@ -107,13 +97,6 @@ export class MqttEntityBridge {
           console.error('MQTT discovery publish failed:', error),
         ),
     );
-    this.client.on('close', () => {
-      if (!this.stopped) {
-        void this.statePublisher
-          .publishAvailability('offline')
-          .catch((error: unknown) => console.error('MQTT availability publish failed:', error));
-      }
-    });
     this.client.on(
       'message',
       (topic, payload) =>
@@ -123,8 +106,14 @@ export class MqttEntityBridge {
     );
   }
 
-  async stop(): Promise<void> {
+  async stop({ publishOffline = true }: { publishOffline?: boolean } = {}): Promise<void> {
     if (this.stopped) return;
+    this.stopped = true;
+    this.removeTeachInListener();
+    this.removeChangeListener();
+    this.removeDeviceListener();
+    await this.publicationQueue;
+    if (!publishOffline) return;
     try {
       await this.statePublisher.publishAvailability('offline');
     } catch (error) {
@@ -134,15 +123,23 @@ export class MqttEntityBridge {
       await this.clearDiscovery();
     } catch (error) {
       console.error('MQTT discovery cleanup failed:', error);
-    } finally {
-      this.stopped = true;
-      this.removeTeachInListener();
-      this.removeChangeListener();
-      this.removeDeviceListener();
     }
   }
 
-  async publishAll(): Promise<void> {
+  private enqueuePublication(operation: () => Promise<void>): Promise<void> {
+    const next = this.publicationQueue.then(() => {
+      if (this.stopped || this.client.connected === false) return;
+      return operation();
+    });
+    this.publicationQueue = next.catch(() => undefined);
+    return next;
+  }
+
+  publishAll(): Promise<void> {
+    return this.enqueuePublication(() => this.publishSnapshot());
+  }
+
+  private async publishSnapshot(): Promise<void> {
     if (!this.homeAssistantEnabled) {
       await this.clearDiscovery();
       await this.statePublisher.publishAvailability('online');
@@ -167,7 +164,7 @@ export class MqttEntityBridge {
   private async publishDiscovery(device: Device): Promise<void> {
     const entity = this.profiles.get(device.profileId)?.entity;
     if (!entity) return;
-    const descriptor = entity.describe(profileContext(device));
+    const descriptor = entity.describe(device);
     const topics = entityTopics(
       device,
       descriptor.kind,
@@ -207,7 +204,7 @@ export class MqttEntityBridge {
           }
         : {}),
       availability: [{ topic: topics.bridgeAvailability }, { topic: topics.availability }],
-      availability_mode: 'any',
+      availability_mode: 'all',
       ...(isFan ? { payload_on: 'ON', payload_off: 'OFF', payload_reset_preset_mode: 'None' } : {}),
       ...(this.includeDeviceInformation
         ? {
@@ -229,7 +226,7 @@ export class MqttEntityBridge {
   private async subscribeDeviceCommands(device: Device): Promise<void> {
     const entity = this.profiles.get(device.profileId)?.entity;
     if (!entity) return;
-    const descriptor = entity.describe(profileContext(device));
+    const descriptor = entity.describe(device);
     const presets = descriptor.presets ?? [];
     const topics = entityTopics(
       device,
@@ -260,21 +257,7 @@ export class MqttEntityBridge {
     const restart = restartTopics(this.discoveryPrefix, this.baseTopic, this.bridgeAvailability);
     await publish(this.client, restart.discovery, '', clearOptions);
     for (const device of this.registry.list()) {
-      await this.clearEntityDiscovery(device, clearOptions);
-      for (const diagnostic of diagnosticValues(device)) {
-        await publish(
-          this.client,
-          deviceDiagnosticTopics(
-            device,
-            diagnostic.field,
-            this.discoveryPrefix,
-            this.baseTopic,
-            this.bridgeAvailability,
-          ).discovery,
-          '',
-          clearOptions,
-        );
-      }
+      await this.clearDeviceDiscovery(device, clearOptions);
     }
     this.publishedEntityObjectIds.clear();
   }
@@ -283,6 +266,7 @@ export class MqttEntityBridge {
     device: Device,
     options = { ...publishOptions, retain: true },
   ): Promise<void> {
+    this.publishedEntityObjectIds.delete(device.sourceId);
     await this.clearEntityDiscovery(device, options);
     for (const diagnostic of diagnosticValues(device)) {
       await publish(
@@ -308,7 +292,7 @@ export class MqttEntityBridge {
     if (!entity) return;
     const topics = entityTopics(
       device,
-      entity.describe(profileContext(device)).kind,
+      entity.describe(device).kind,
       this.discoveryPrefix,
       this.baseTopic,
       this.bridgeAvailability,
@@ -335,7 +319,7 @@ export class MqttEntityBridge {
           object_id: objectId,
           state_topic: topics.state,
           availability: [{ topic: topics.bridgeAvailability }, { topic: topics.availability }],
-          availability_mode: 'any',
+          availability_mode: 'all',
           entity_category: 'diagnostic',
           ...(this.includeDeviceInformation ? { device: deviceInfo(device, model) } : {}),
         }),
@@ -415,6 +399,7 @@ export class MqttEntityBridge {
   }
 
   private async handleMessage(topic: string, payload: Buffer): Promise<void> {
+    if (this.stopped) return;
     if (this.homeAssistantEnabled) {
       const permitTopics = permitJoinTopics(
         this.discoveryPrefix,
@@ -428,7 +413,7 @@ export class MqttEntityBridge {
           await this.teachIn.transmit();
         } else if (message === 'OFF') this.teachIn.stop();
         else throw new Error(`Unsupported Permit join state: ${message}`);
-        await this.publishPermitJoinState();
+        await this.enqueuePublication(() => this.publishPermitJoinState());
         return;
       }
       const restart = restartTopics(this.discoveryPrefix, this.baseTopic, this.bridgeAvailability);
@@ -443,7 +428,7 @@ export class MqttEntityBridge {
     const device = this.registry.list().find((item) => {
       const entity = this.profiles.get(item.profileId)?.entity;
       if (!entity) return false;
-      const descriptor = entity.describe(profileContext(item));
+      const descriptor = entity.describe(item);
       const topics = entityTopics(
         item,
         descriptor.kind,
@@ -464,7 +449,7 @@ export class MqttEntityBridge {
 
     const entity = this.profiles.get(device.profileId)?.entity;
     if (!entity) return;
-    const descriptor = entity.describe(profileContext(device));
+    const descriptor = entity.describe(device);
     const topics = entityTopics(
       device,
       descriptor.kind,
@@ -483,7 +468,7 @@ export class MqttEntityBridge {
               ? 'preset'
               : undefined;
       if (!field) return;
-      const request = entity.parseCommand(profileContext(device), field, message);
+      const request = entity.parseCommand(device, field, message);
       await this.sendCommand(device, typeof request === 'number' ? { value: request } : request);
       const updatedDevice = this.registry.findBySourceId(device.sourceId) ?? device;
       await this.statePublisher.publishState(updatedDevice, deviceAvailability(updatedDevice));

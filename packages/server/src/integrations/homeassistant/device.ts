@@ -1,5 +1,4 @@
-import type { Device } from '../../config';
-import type { ProfileDeviceContext } from '../../profiles';
+import type { Device } from '../../devices/types';
 import { type DeviceDiagnosticField } from './topics';
 
 export const bridgeDeviceId = 'eep_bridge';
@@ -8,16 +7,6 @@ export type DeviceAvailability = 'online' | 'offline';
 
 export function deviceAvailability(device: Device): DeviceAvailability {
   return device.availability === 'online' ? 'online' : 'offline';
-}
-
-export function profileContext(device: Device): ProfileDeviceContext {
-  return {
-    sourceId: device.sourceId,
-    targetId: device.targetId,
-    capabilities: device.capabilities,
-    reportedState: device.reportedState,
-    desiredState: device.desiredState,
-  };
 }
 
 export function diagnosticValues(

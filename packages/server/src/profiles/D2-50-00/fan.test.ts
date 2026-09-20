@@ -1,7 +1,6 @@
 import { expect, test } from 'bun:test';
 import {
   d2ValueToFanState,
-  fanMqttPercentageToD2Value,
   fanPercentageToD2Value,
   fanPresetToD2Value,
   fanSpeedToD2Value,
@@ -26,8 +25,8 @@ test('maps Home Assistant fan commands to D2 values', () => {
   expect(fanPercentageToD2Value(54)).toBe(3);
   expect(fanPercentageToD2Value(26)).toBe(2);
   expect(fanPercentageToD2Value(76)).toBe(4);
-  expect(fanMqttPercentageToD2Value(3)).toBe(3);
-  expect(fanMqttPercentageToD2Value(54)).toBe(3);
+  expect(fanSpeedToD2Value(3)).toBe(3);
+  expect(() => fanSpeedToD2Value(54)).toThrow();
   expect(fanPresetToD2Value('Automatic on demand')).toBe(12);
   expect(parseD2Value('15')).toBe(15);
   expect(() => parseD2Value('10')).toThrow();
@@ -39,7 +38,7 @@ test('maps a three-speed device to contiguous Home Assistant speeds', () => {
   const supportedFunctions = ['off', 'level1', 'level2', 'level3'];
 
   expect(fanPercentageToD2Value(100, supportedFunctions)).toBe(3);
-  expect(fanMqttPercentageToD2Value(3, supportedFunctions)).toBe(3);
+  expect(fanSpeedToD2Value(3, supportedFunctions)).toBe(3);
   expect(d2ValueToFanState(3, 0, supportedFunctions)).toMatchObject({
     percentage: 100,
   });

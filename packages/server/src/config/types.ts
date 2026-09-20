@@ -1,27 +1,4 @@
-import type { JsonValue } from '../profiles/types';
-
-export interface DeviceTeachInInfo {
-  eep: string;
-  channel: number;
-  manufacturerId: number;
-  direction: 'unidirectional' | 'bidirectional';
-  responseExpected: boolean;
-}
-
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
-
-export interface Device {
-  sourceId: number;
-  targetId: number;
-  name: string;
-  profileId: string;
-  capabilities: JsonValue;
-  teachIn?: DeviceTeachInInfo;
-  lastSeen?: string;
-  availability: 'online' | 'offline' | 'unknown';
-  reportedState?: unknown;
-  desiredState?: unknown;
-}
 
 export interface GeneralSettings {
   startId: number;
@@ -31,7 +8,6 @@ export interface AddonConfig {
   host?: string;
   port?: number;
   dataDir?: string;
-  controllerId?: number;
   startId?: number;
   transport?: Partial<TransportSettings>;
   homeAssistant?: Partial<HomeAssistantSettings>;
@@ -58,8 +34,6 @@ export interface ServerConfig {
   host: string;
   port: number;
   dataDir: string;
-  webRoot?: string;
-  controllerId?: number;
   startId?: number;
   transport: TransportSettings;
   homeAssistant: HomeAssistantSettings;
@@ -71,7 +45,6 @@ export interface MqttConfig {
   username?: string;
   password?: string;
   tls?: boolean;
-  discoveryPrefix?: string;
   baseTopic?: string;
   clientId?: string;
   keepalive?: number;

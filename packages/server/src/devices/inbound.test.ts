@@ -6,6 +6,15 @@ import { DeviceRegistry } from './registry';
 import { applyRadioPacket } from './inbound';
 import { decodeD2Value } from '../profiles/D2-50-00/profile';
 
+test.each(['0513cefe-invalid', -1, 0x100000000, Number.NaN])(
+  'rejects an invalid sender identifier %s before looking up a device',
+  async (senderId) => {
+    expect(
+      applyRadioPacket({ RORG: 0xd2, senderId, payload: [1] }, {} as DeviceRegistry),
+    ).rejects.toThrow('Invalid EnOcean sender ID');
+  },
+);
+
 test('decodes raw and packed D2 operating values', () => {
   expect(decodeD2Value([3])).toBe(3);
   expect(decodeD2Value([0xd1])).toBe(13);

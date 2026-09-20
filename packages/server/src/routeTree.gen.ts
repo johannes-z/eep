@@ -10,9 +10,9 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as DevicesRouteImport } from './routes/devices'
 import { Route as PacketListenerRouteImport } from './routes/packet-listener'
 import { Route as PairingRouteImport } from './routes/pairing'
-import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsHomeassistantRouteImport } from './routes/settings.homeassistant'
 import { Route as SettingsMqttRouteImport } from './routes/settings.mqtt'
 import { Route as SettingsTransportRouteImport } from './routes/settings.transport'
@@ -20,6 +20,11 @@ import { Route as SettingsTransportRouteImport } from './routes/settings.transpo
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DevicesRoute = DevicesRouteImport.update({
+  id: '/devices',
+  path: '/devices',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PacketListenerRoute = PacketListenerRouteImport.update({
@@ -30,11 +35,6 @@ const PacketListenerRoute = PacketListenerRouteImport.update({
 const PairingRoute = PairingRouteImport.update({
   id: '/pairing',
   path: '/pairing',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
-  id: '/settings/general',
-  path: '/settings/general',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsHomeassistantRoute = SettingsHomeassistantRouteImport.update({
@@ -55,18 +55,18 @@ const SettingsTransportRoute = SettingsTransportRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/devices': typeof DevicesRoute
   '/packet-listener': typeof PacketListenerRoute
   '/pairing': typeof PairingRoute
-  '/settings/general': typeof SettingsGeneralRoute
   '/settings/homeassistant': typeof SettingsHomeassistantRoute
   '/settings/mqtt': typeof SettingsMqttRoute
   '/settings/transport': typeof SettingsTransportRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/devices': typeof DevicesRoute
   '/packet-listener': typeof PacketListenerRoute
   '/pairing': typeof PairingRoute
-  '/settings/general': typeof SettingsGeneralRoute
   '/settings/homeassistant': typeof SettingsHomeassistantRoute
   '/settings/mqtt': typeof SettingsMqttRoute
   '/settings/transport': typeof SettingsTransportRoute
@@ -74,9 +74,9 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/devices': typeof DevicesRoute
   '/packet-listener': typeof PacketListenerRoute
   '/pairing': typeof PairingRoute
-  '/settings/general': typeof SettingsGeneralRoute
   '/settings/homeassistant': typeof SettingsHomeassistantRoute
   '/settings/mqtt': typeof SettingsMqttRoute
   '/settings/transport': typeof SettingsTransportRoute
@@ -85,27 +85,27 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/devices'
     | '/packet-listener'
     | '/pairing'
-    | '/settings/general'
     | '/settings/homeassistant'
     | '/settings/mqtt'
     | '/settings/transport'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/devices'
     | '/packet-listener'
     | '/pairing'
-    | '/settings/general'
     | '/settings/homeassistant'
     | '/settings/mqtt'
     | '/settings/transport'
   id:
     | '__root__'
     | '/'
+    | '/devices'
     | '/packet-listener'
     | '/pairing'
-    | '/settings/general'
     | '/settings/homeassistant'
     | '/settings/mqtt'
     | '/settings/transport'
@@ -113,9 +113,9 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  DevicesRoute: typeof DevicesRoute
   PacketListenerRoute: typeof PacketListenerRoute
   PairingRoute: typeof PairingRoute
-  SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsHomeassistantRoute: typeof SettingsHomeassistantRoute
   SettingsMqttRoute: typeof SettingsMqttRoute
   SettingsTransportRoute: typeof SettingsTransportRoute
@@ -130,6 +130,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/devices': {
+      id: '/devices'
+      path: '/devices'
+      fullPath: '/devices'
+      preLoaderRoute: typeof DevicesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/packet-listener': {
       id: '/packet-listener'
       path: '/packet-listener'
@@ -142,13 +149,6 @@ declare module '@tanstack/react-router' {
       path: '/pairing'
       fullPath: '/pairing'
       preLoaderRoute: typeof PairingRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/settings/general': {
-      id: '/settings/general'
-      path: '/settings/general'
-      fullPath: '/settings/general'
-      preLoaderRoute: typeof SettingsGeneralRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings/homeassistant': {
@@ -177,9 +177,9 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  DevicesRoute: DevicesRoute,
   PacketListenerRoute: PacketListenerRoute,
   PairingRoute: PairingRoute,
-  SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsHomeassistantRoute: SettingsHomeassistantRoute,
   SettingsMqttRoute: SettingsMqttRoute,
   SettingsTransportRoute: SettingsTransportRoute,

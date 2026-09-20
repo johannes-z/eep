@@ -8,8 +8,8 @@
   "main": "index.js",
   "scripts": {
     "build": "bun scripts/build.js && bun build ./src/index.js --outfile ./dist/index.js --bundle --target bun --external bun-serialport",
-    "dev": "bun --watch ./src/index.js",
-    "start": "bun index.js"
+    "dev": "bun run --cwd ../server dev",
+    "start": "bun dist/index.js"
   },
   "dependencies": {
     "bun-serialport": "0.2.0"

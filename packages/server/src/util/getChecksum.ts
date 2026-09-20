@@ -1,6 +1,5 @@
-const polycrc = require('polycrc');
-const crc8 = polycrc.crc8;
+const { crc8 } = require('polycrc') as { crc8: (payload: Uint8Array) => number };
 
-export function getChecksum(payload: any[]) {
-  return crc8(Buffer.from(payload.flat(Infinity)));
+export function getChecksum(payload: ReadonlyArray<number | readonly number[]>): number {
+  return crc8(Buffer.from(payload.flat()));
 }

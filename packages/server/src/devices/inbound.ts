@@ -1,6 +1,7 @@
-import type { Device } from '../config';
+import type { Device } from './types';
 import { createDefaultProfileRegistry, type ProfileRegistry } from '../profiles';
 import type { DeviceRegistry } from './registry';
+import { requireEnOceanId } from '../util';
 
 export type UteDirection = 'unidirectional' | 'bidirectional';
 export type UteRequestType = 'teachIn' | 'teachOut' | 'unspecified' | 'reserved';
@@ -36,42 +37,24 @@ export interface InboundStateResult {
   value?: unknown;
 }
 
-function parseSenderId(senderId: string | number): number {
-  if (typeof senderId === 'number') return senderId;
-  const value = Number.parseInt(senderId, 16);
-  if (!Number.isInteger(value) || value < 0 || value > 0xffffffff) {
-    throw new Error(`Invalid EnOcean sender ID: ${senderId}`);
-  }
-  return value;
-}
-
 export async function applyRadioPacket(
   packet: RadioERP1Packet,
   registry: DeviceRegistry,
   profiles: ProfileRegistry = createDefaultProfileRegistry(),
 ): Promise<InboundStateResult | undefined> {
-  const targetId = parseSenderId(packet.senderId);
+  const targetId = requireEnOceanId(packet.senderId, 'EnOcean sender ID');
   const device = registry.findByTargetId(targetId);
   if (!device) return undefined;
 
   const profile = profiles.get(device.profileId);
   if (!profile) return undefined;
-  const result = profile.decodeIngress(
-    {
-      sourceId: device.sourceId,
-      targetId: device.targetId,
-      capabilities: device.capabilities,
-      reportedState: device.reportedState,
-      desiredState: device.desiredState,
-    },
-    packet,
-  );
+  const result = profile.decodeIngress(device, packet);
   if (result.kind !== 'reported') return undefined;
-  await registry.update(device.sourceId, {
+  const updated = await registry.update(device.sourceId, {
     availability: 'online',
     lastSeen: new Date().toISOString(),
-    reportedState: result.reportedState as Device['reportedState'],
+    reportedState: result.reportedState,
     ...(result.clearDesiredState ? { desiredState: undefined } : {}),
   });
-  return { device: registry.findByTargetId(targetId) as Device, value: result.value };
+  return { device: updated, value: result.value };
 }

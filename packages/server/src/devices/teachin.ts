@@ -1,4 +1,4 @@
-import type { Device } from '../config';
+import type { Device } from './types';
 import {
   createDefaultProfileRegistry,
   normalizeProfileId,
@@ -7,6 +7,7 @@ import {
 import type { RadioERP1Packet, UteTeachInInfo } from './inbound';
 import type { DeviceRegistry } from './registry';
 import type { UteResponse } from '../transport/esp3';
+import { parseEnOceanId } from '../util';
 
 export interface TeachInCandidate {
   sourceId: number;
@@ -27,13 +28,7 @@ export type TeachInResponder = (
 export type TeachInSignalSender = (sourceId: number, targetId?: number) => Promise<void>;
 export type TeachInStateListener = (active: boolean) => void;
 
-function parseId(value: string | number): number {
-  if (typeof value === 'number') return value;
-  return Number.parseInt(value, 16);
-}
-
-function nextAvailableSourceId(devices: readonly Device[], startId: number): number {
-  const usedSourceIds = new Set(devices.map((device) => device.sourceId));
+function nextAvailableSourceId(usedSourceIds: ReadonlySet<number>, startId: number): number {
   for (let sourceId = startId; sourceId <= 0xffffffff; sourceId += 1) {
     if (!usedSourceIds.has(sourceId)) return sourceId;
   }
@@ -44,6 +39,7 @@ export class TeachInManager {
   private active = false;
   private activeSourceId: number | undefined;
   private requestedSourceId: number | undefined;
+  private requestedTargetId: number | undefined;
   private expiryTimer?: ReturnType<typeof setTimeout>;
   private readonly candidates = new Map<number, TeachInCandidate>();
   private readonly stateListeners = new Set<TeachInStateListener>();
@@ -51,11 +47,10 @@ export class TeachInManager {
 
   constructor(
     private readonly registry: DeviceRegistry,
-    private readonly controllerId: number,
+    private startId: number,
     private readonly sendResponse?: TeachInResponder,
     private readonly profiles: ProfileRegistry = createDefaultProfileRegistry(),
     private readonly sendSignal?: TeachInSignalSender,
-    private startId: number = controllerId,
   ) {}
 
   setStartId(startId: number): void {
@@ -79,6 +74,7 @@ export class TeachInManager {
     clearTimeout(this.expiryTimer);
     this.expiryTimer = undefined;
     this.requestedSourceId = undefined;
+    this.requestedTargetId = undefined;
     this.activeSourceId = undefined;
     this.candidates.clear();
     if (!this.active) return;
@@ -110,7 +106,11 @@ export class TeachInManager {
   }
 
   private sourceId(): number {
-    return nextAvailableSourceId(this.registry.list(), this.activeSourceId ?? this.startId);
+    const usedSourceIds = new Set([
+      ...this.registry.list().map((device) => device.sourceId),
+      ...this.listCandidates().map((candidate) => candidate.sourceId),
+    ]);
+    return nextAvailableSourceId(usedSourceIds, this.activeSourceId ?? this.startId);
   }
 
   observe(packet: RadioERP1Packet): TeachInCandidate | undefined {
@@ -120,14 +120,18 @@ export class TeachInManager {
     const isResponse = info.command === 'response';
     if (!isResponse && info.command !== 'query') return undefined;
     if (isResponse && info.response !== 'teachInAccepted') return undefined;
-    const targetId = parseId(packet.senderId);
-    if (!Number.isInteger(targetId) || targetId < 1 || targetId > 0xffffffff) {
+    const targetId = parseEnOceanId(packet.senderId);
+    if (targetId === undefined || targetId < 1) {
       return undefined;
     }
+    if (this.requestedTargetId !== undefined) return undefined;
     const existing = this.registry.findByTargetId(targetId);
     const candidate: TeachInCandidate = {
       sourceId:
-        this.requestedSourceId ?? existing?.sourceId ?? this.activeSourceId ?? this.controllerId,
+        this.requestedSourceId ??
+        existing?.sourceId ??
+        this.candidates.get(targetId)?.sourceId ??
+        this.sourceId(),
       targetId,
       eep: info.eep.toUpperCase(),
       channel: info.channel,
@@ -154,6 +158,7 @@ export class TeachInManager {
       this.respond(candidate, 'eepNotSupported');
       return undefined;
     }
+    if (this.requestedSourceId !== undefined) this.requestedTargetId = targetId;
 
     if (existing) {
       const update = {
@@ -174,7 +179,10 @@ export class TeachInManager {
           this.respond(candidate, 'teachInAccepted');
           this.finishTargetedPairing();
         })
-        .catch((error: unknown) => console.error('Teach-in metadata update failed:', error));
+        .catch((error: unknown) => {
+          this.requestedTargetId = undefined;
+          console.error('Teach-in metadata update failed:', error);
+        });
       return undefined;
     }
 
@@ -184,7 +192,10 @@ export class TeachInManager {
     if (this.requestedSourceId !== undefined) {
       void this.accept(candidate.targetId)
         .then(() => this.finishTargetedPairing())
-        .catch((error: unknown) => console.error('Targeted teach-in acceptance failed:', error));
+        .catch((error: unknown) => {
+          this.requestedTargetId = undefined;
+          console.error('Targeted teach-in acceptance failed:', error);
+        });
     }
     return candidate;
   }
@@ -213,10 +224,11 @@ export class TeachInManager {
     const profile = this.profiles.get(profileId);
     if (!profile) throw new Error(`Unsupported EEP: ${candidate.eep}`);
     const capabilities = profile.defaultCapabilities();
-    const sourceId =
-      this.registry.findBySourceId(candidate.sourceId) === undefined
-        ? candidate.sourceId
-        : this.sourceId();
+    const sourceId = candidate.sourceId;
+    const assigned = this.registry.findBySourceId(sourceId);
+    if (assigned && assigned.targetId !== targetId) {
+      throw new Error(`Source ID is already assigned: ${sourceId}`);
+    }
 
     const device: Device = {
       sourceId,
@@ -246,6 +258,7 @@ export class TeachInManager {
 
   async transmit(sourceId?: number): Promise<void> {
     if (!this.active) throw new Error('Permit join is not active');
+    if (this.requestedTargetId !== undefined) throw new Error('Teach-in acceptance is in progress');
     if (sourceId === undefined) {
       this.requestedSourceId = undefined;
       this.activeSourceId = this.sourceId();
@@ -253,7 +266,10 @@ export class TeachInManager {
       if (!Number.isInteger(sourceId) || sourceId < 1 || sourceId > 0xffffffff) {
         throw new Error('sourceId must be a non-zero EnOcean identifier');
       }
-      if (this.registry.findBySourceId(sourceId)) {
+      if (
+        this.registry.findBySourceId(sourceId) ||
+        this.listCandidates().some((candidate) => candidate.sourceId === sourceId)
+      ) {
         throw new Error(`Source ID is already assigned: ${sourceId}`);
       }
       this.requestedSourceId = sourceId;

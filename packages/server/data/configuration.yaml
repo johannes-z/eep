@@ -28,7 +28,7 @@ devices:
     profileId: D2-50-00
     targetId: "05126787"
     capabilities:
-      - "off"
+      - off
       - level1
       - level2
       - level3
@@ -47,7 +47,7 @@ devices:
     profileId: D2-50-00
     targetId: 0513cefe
     capabilities:
-      - "off"
+      - off
       - level1
       - level2
       - level3
@@ -66,7 +66,7 @@ devices:
     profileId: D2-50-00
     targetId: 05149bb5
     capabilities:
-      - "off"
+      - off
       - level1
       - level2
       - level3
@@ -85,7 +85,7 @@ devices:
     profileId: D2-50-00
     targetId: 0513cdf8
     capabilities:
-      - "off"
+      - off
       - level1
       - level2
       - level3

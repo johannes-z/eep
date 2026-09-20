@@ -85,11 +85,12 @@ export async function readBaseId(connection: TransportConnection): Promise<numbe
     const onData = (chunk: unknown): void => {
       if (!chunk || typeof chunk !== 'object' || !('length' in chunk)) return;
       for (const frame of parser.push(chunk as ArrayLike<number>)) {
-        if (frame.packetType !== 2 || frame.data.length < 5) continue;
+        if (frame.packetType !== 2 || frame.data.length === 0) continue;
         if (frame.data[0] !== 0) {
           finish(new Error(`USB 300 rejected base ID request with status ${frame.data[0]}`));
           return;
         }
+        if (frame.data.length < 5) continue;
         const baseId =
           (frame.data[1] << 24) | (frame.data[2] << 16) | (frame.data[3] << 8) | frame.data[4];
         finish(undefined, baseId >>> 0);
@@ -98,9 +99,11 @@ export async function readBaseId(connection: TransportConnection): Promise<numbe
     };
     timer = setTimeout(() => finish(new Error('Timed out reading USB 300 base ID')), 3000);
     connection.on?.('data', onData);
-    void Promise.resolve(connection.write(buildCommonCommand(0x08))).catch((error: unknown) =>
-      finish(error instanceof Error ? error : new Error('Failed to read USB 300 base ID')),
-    );
+    void Promise.resolve()
+      .then(() => connection.write(buildCommonCommand(0x08)))
+      .catch((error: unknown) =>
+        finish(error instanceof Error ? error : new Error('Failed to read USB 300 base ID')),
+      );
   });
 }
 

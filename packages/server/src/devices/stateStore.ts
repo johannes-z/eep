@@ -1,5 +1,5 @@
 import { Database } from 'bun:sqlite';
-import type { Device } from '../config';
+import type { Device } from './types';
 
 export type DeviceRuntimeState = Pick<
   Device,

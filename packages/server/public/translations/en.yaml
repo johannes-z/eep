@@ -1,6 +1,0 @@
----
-configuration:
-  transport_path:
-    name: Transport path
-    description: >-
-      The serial device path or TCP endpoint, for example tcp://address:port

@@ -1,16 +1,15 @@
 import { Link } from '@tanstack/react-router';
-import { Activity, Cable, Cpu, House, Menu, Network, Radio, Settings2, X } from 'lucide-react';
+import { Activity, Cable, Cpu, House, Menu, Network, Radio, X } from 'lucide-react';
 import { appRoutes } from '../ui/routes';
-import type { MqttForm, TransportResponse } from '../ui/types';
+import type { MqttResponse, TransportResponse } from '../ui/types';
 
 const icons = {
-  overview: Cpu,
+  devices: Cpu,
   pairing: Radio,
   'packet-listener': Activity,
   settings: Cable,
   mqtt: Network,
   homeassistant: House,
-  general: Settings2,
 };
 
 export function Sidebar({
@@ -18,7 +17,7 @@ export function Sidebar({
   transport,
   onNavigate,
 }: {
-  mqtt: MqttForm | null;
+  mqtt: MqttResponse | null;
   transport: TransportResponse | null;
   onNavigate: () => void;
 }) {
@@ -54,7 +53,7 @@ export function Sidebar({
     >
       <Link
         className="brand"
-        to="/"
+        to="/devices"
         onClick={onNavigate}
       >
         <Radio
@@ -70,60 +69,34 @@ export function Sidebar({
         </div>
       </Link>
       <nav aria-label="Primary navigation">
-        <p className="nav-heading">Workspace</p>
-        {appRoutes
-          .filter((item) => item.section === 'general')
-          .map((item) => (
-            <Link
-              activeOptions={{ exact: true }}
-              activeProps={{
-                'aria-current': 'page',
-                className: 'nav-item selected',
-              }}
-              className="nav-item"
-              key={item.path}
-              to={item.path}
-              onClick={onNavigate}
-            >
-              <span
-                aria-hidden="true"
-                className="nav-icon"
-              >
-                {(() => {
-                  const Icon = icons[item.view];
-                  return <Icon size={18} />;
-                })()}
-              </span>
-              {item.label}
-            </Link>
-          ))}
-        <p className="nav-heading nav-heading-spaced">Configuration</p>
-        {appRoutes
-          .filter((item) => item.section === 'settings')
-          .map((item) => (
-            <Link
-              activeOptions={{ exact: true }}
-              activeProps={{
-                'aria-current': 'page',
-                className: 'nav-item selected',
-              }}
-              className="nav-item"
-              key={item.path}
-              to={item.path}
-              onClick={onNavigate}
-            >
-              <span
-                aria-hidden="true"
-                className="nav-icon"
-              >
-                {(() => {
-                  const Icon = icons[item.view];
-                  return <Icon size={18} />;
-                })()}
-              </span>
-              {item.label}
-            </Link>
-          ))}
+        {(['general', 'settings'] as const).map((section) => (
+          <div key={section}>
+            <p className={`nav-heading ${section === 'settings' ? 'nav-heading-spaced' : ''}`}>
+              {section === 'general' ? 'Workspace' : 'Configuration'}
+            </p>
+            {appRoutes
+              .filter((item) => item.section === section)
+              .map((item) => {
+                const Icon = icons[item.view];
+                return (
+                  <Link
+                    key={item.path}
+                    to={item.path}
+                    onClick={onNavigate}
+                    activeOptions={{ exact: true }}
+                    className="nav-item"
+                    activeProps={{ 'aria-current': 'page', className: 'nav-item selected' }}
+                  >
+                    <Icon
+                      size={18}
+                      aria-hidden="true"
+                    />
+                    {item.label}
+                  </Link>
+                );
+              })}
+          </div>
+        ))}
       </nav>
       <div className="sidebar-footer">
         <p className="nav-heading">Connections</p>

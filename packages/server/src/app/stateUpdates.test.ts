@@ -65,7 +65,7 @@ test('pushes API snapshots for device, settings, pairing, and packet changes', a
   const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
   const teachIn = new TeachInManager(registry, 0xffe76685);
   const listener = new PacketListener();
-  const handler = createRequestHandler({ write() {} }, {
+  const handler = createRequestHandler(() => ({ write() {} }), {
     registry,
     teachIn,
     listener,
@@ -102,8 +102,13 @@ test('pushes API snapshots for device, settings, pairing, and packet changes', a
   try {
     const initial = await nextState(() => true);
     for (const [key, path] of Object.entries({
-      devices: 'devices', general: 'general', transport: 'settings', mqtt: 'mqtt',
-      homeAssistant: 'homeassistant', pairing: 'pairing', listen: 'listen',
+      devices: 'devices',
+      general: 'general',
+      transport: 'settings',
+      mqtt: 'mqtt',
+      homeAssistant: 'homeassistant',
+      pairing: 'pairing',
+      listen: 'listen',
     })) {
       const response = await handler(new Request(`http://localhost/api/${path}`));
       expect(initial[key as keyof AppSnapshot]).toEqual(await response.json());
@@ -113,16 +118,20 @@ test('pushes API snapshots for device, settings, pairing, and packet changes', a
     await registry.update(0xffe76681, { name: 'Renamed' });
     await renamed;
 
-    const removed = nextState((state) => !state.devices.some((device) => device.sourceId === 0xffe76681));
+    const removed = nextState(
+      (state) => !state.devices.some((device) => device.sourceId === 0xffe76681),
+    );
     await registry.remove(0xffe76681);
     await removed;
 
     const configured = nextState((state) => state.general.start_id === 'ffe76685');
-    await handler(new Request('http://localhost/api/general', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ start_id: 'ffe76685' }),
-    }));
+    await handler(
+      new Request('http://localhost/api/general', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ start_id: 'ffe76685' }),
+      }),
+    );
     await configured;
 
     const pairing = nextState((state) => state.pairing.active);
@@ -135,13 +144,22 @@ test('pushes API snapshots for device, settings, pairing, and packet changes', a
       payload: [0x80, 0xff, 0x0b, 0, 0xd2, 0x50, 0],
       teachIn: true,
       teachInInfo: {
-        control: 0x80, channel: 0xff, manufacturer: 0x000b, eep: 'd2-50-00',
-        direction: 'bidirectional', responseExpected: true, requestType: 'teachIn', command: 'query',
+        control: 0x80,
+        channel: 0xff,
+        manufacturer: 0x000b,
+        eep: 'd2-50-00',
+        direction: 'bidirectional',
+        responseExpected: true,
+        requestType: 'teachIn',
+        command: 'query',
       },
     });
     await candidate;
-    const accepted = nextState((state) => state.pairing.candidates.length === 0
-      && state.devices.some((device) => device.targetId === 0x05010203));
+    const accepted = nextState(
+      (state) =>
+        state.pairing.candidates.length === 0 &&
+        state.devices.some((device) => device.targetId === 0x05010203),
+    );
     await teachIn.accept(0x05010203);
     await accepted;
 

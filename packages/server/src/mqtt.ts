@@ -5,6 +5,7 @@ export interface MqttSettings extends MqttConfig {
 }
 
 export interface MqttClientLike {
+  readonly connected?: boolean;
   on(event: 'connect', listener: () => void): this;
   on(event: 'close', listener: () => void): this;
   on(event: 'message', listener: (topic: string, payload: Buffer) => void): this;
@@ -21,7 +22,6 @@ export function defaultMqttSettings(): MqttSettings {
   return {
     url: '',
     baseTopic: 'eep',
-    discoveryPrefix: 'homeassistant',
     keepalive: 60,
     maximumPacketSize: 1048576,
     rejectUnauthorized: true,
@@ -29,5 +29,3 @@ export function defaultMqttSettings(): MqttSettings {
     version: 4,
   };
 }
-
-export { MqttEntityBridge } from './integrations/homeassistant/bridge';

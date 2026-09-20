@@ -5,17 +5,15 @@ export interface AppRoute {
   readonly view: AppView;
   readonly title: string;
   readonly label: string;
-  readonly icon: string;
   readonly section: 'general' | 'settings';
 }
 
 export const appRoutes = [
   {
-    path: '/',
-    view: 'overview',
+    path: '/devices',
+    view: 'devices',
     title: 'Devices',
     label: 'Devices',
-    icon: '⌂',
     section: 'general',
   },
   {
@@ -23,7 +21,6 @@ export const appRoutes = [
     view: 'pairing',
     title: 'Pairing',
     label: 'Pairing',
-    icon: 'radio',
     section: 'general',
   },
   {
@@ -31,23 +28,13 @@ export const appRoutes = [
     view: 'packet-listener',
     title: 'Packet listener',
     label: 'Packet listener',
-    icon: '◉',
     section: 'general',
   },
   {
     path: '/settings/transport',
     view: 'settings',
-    title: 'Transport',
-    label: 'Transport',
-    icon: '◫',
-    section: 'settings',
-  },
-  {
-    path: '/settings/general',
-    view: 'general',
-    title: 'General',
-    label: 'General',
-    icon: '⚙',
+    title: 'Transport & dongle',
+    label: 'Transport & dongle',
     section: 'settings',
   },
   {
@@ -55,7 +42,6 @@ export const appRoutes = [
     view: 'mqtt',
     title: 'MQTT',
     label: 'MQTT',
-    icon: '◌',
     section: 'settings',
   },
   {
@@ -63,12 +49,9 @@ export const appRoutes = [
     view: 'homeassistant',
     title: 'Home Assistant',
     label: 'Home Assistant',
-    icon: '⌘',
     section: 'settings',
   },
 ] as const satisfies readonly AppRoute[];
-
-export const defaultRoute = appRoutes[0];
 
 function normalizePathname(pathname: string): string {
   const normalized = pathname.replace(/\/+$/, '');
@@ -84,8 +67,4 @@ export function routeMetadata(pathname: string): AppRoute {
   const metadata = findAppRoute(pathname);
   if (!metadata) throw new Error(`Missing route metadata for ${pathname}`);
   return metadata;
-}
-
-export function getAppRoute(pathname: string): AppRoute {
-  return findAppRoute(pathname) ?? defaultRoute;
 }

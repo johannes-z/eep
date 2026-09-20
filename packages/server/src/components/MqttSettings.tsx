@@ -1,44 +1,32 @@
-import { type FormEvent } from 'react';
 import type { MqttForm, MqttResponse } from '../ui/types';
-import { SettingsActions, SettingsLayout } from './SettingsLayout';
+import { useSettingsForm } from '../ui/useSettingsForm';
+import { SettingsActions, SettingsForm, SettingsLayout } from './SettingsLayout';
 
-export function MqttSettings({
-  settings,
-  message,
-  saving,
-  onChange,
-  onSave,
-}: {
-  settings: MqttForm;
-  message: { text: string; error: boolean };
-  saving: boolean;
-  onChange: (settings: MqttForm) => void;
-  onSave: (settings: MqttForm) => void;
-}) {
+export function MqttSettings({ settings: live }: { settings: MqttResponse }) {
+  const { settings, message, saving, onChange, onSave } = useSettingsForm<MqttForm>(
+    { ...live, password: '', clearPassword: false },
+    '/api/mqtt',
+    ({ clearPassword, ...values }) => ({ ...values, clear_password: clearPassword }),
+  );
   const update = <K extends keyof MqttForm>(key: K, value: MqttForm[K]) =>
     onChange({ ...settings, [key]: value });
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    onSave(settings);
-  };
-  const status = settings.connected
+  const status = live.connected
     ? 'Connected'
-    : settings.error
+    : live.error
       ? 'Error'
-      : settings.configured
+      : live.configured
         ? 'Connecting'
         : 'Not configured';
 
   return (
     <SettingsLayout
-      description="Broker connection and MQTT protocol settings."
       status={status}
-      statusTone={settings.connected ? 'online' : settings.error ? 'error' : 'neutral'}
+      statusTone={live.connected ? 'online' : live.error ? 'error' : 'neutral'}
       title="MQTT"
     >
-      <form
-        className="settings-panel settings-form"
-        onSubmit={submit}
+      <SettingsForm
+        saving={saving}
+        onSubmit={() => onSave(settings)}
       >
         <div className="form-section">
           <h3>Broker</h3>
@@ -207,9 +195,7 @@ export function MqttSettings({
           message={message}
           saving={saving}
         />
-      </form>
+      </SettingsForm>
     </SettingsLayout>
   );
 }
-
-export type MqttSaveResult = MqttResponse & { restartRequired?: boolean };

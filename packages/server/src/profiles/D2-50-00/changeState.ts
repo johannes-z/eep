@@ -1,9 +1,7 @@
 import { getChecksum } from '../../util/getChecksum';
 import { isD2ControlValue } from './fan';
 
-export function changeState(senderId: number[], receiverId: number[], value: number): Buffer {
-  const senderBytes = senderId;
-  const receiverBytes = receiverId;
+export function changeState(senderBytes: number[], receiverBytes: number[], value: number): Buffer {
   if (senderBytes.length !== 4 || receiverBytes.length !== 4) {
     throw new Error('D2-50-00 sender and receiver IDs must contain four bytes');
   }

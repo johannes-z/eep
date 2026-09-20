@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { parse, stringify, type ScalarTag } from 'yaml';
 import type { GeneralSettings, HomeAssistantSettings, TransportSettings } from './config';
 import type { MqttSettings } from './mqtt';
-import { requireEnOceanId } from './util';
 
 export interface PersistedConfiguration {
   version?: 1;
@@ -15,14 +15,20 @@ export interface PersistedConfiguration {
 }
 
 const writeQueues = new Map<string, Promise<void>>();
-const secretMarker = '__EEP_SECRET__';
+
+class SecretReference {
+  constructor(readonly key: string) {}
+}
+
+const secretTag: ScalarTag = {
+  tag: '!secret',
+  identify: (value) => value instanceof SecretReference,
+  resolve: (key) => new SecretReference(key),
+  stringify: (node) => stringify((node.value as SecretReference).key).trimEnd(),
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function parseIdentifier(value: unknown, field: string): number {
-  return requireEnOceanId(value, field, 1);
 }
 
 function validateSection(data: Record<string, unknown>, key: string): void {
@@ -31,16 +37,12 @@ function validateSection(data: Record<string, unknown>, key: string): void {
   }
 }
 
-function normalizeYamlTags(text: string): string {
-  return text.replace(/!secret\s+([A-Za-z0-9_.-]+)/g, `"${secretMarker}$1"`);
-}
-
 function stringifyYaml(value: unknown): string {
-  return Bun.YAML.stringify(value, null, 2).replace(/[ \t]+$/gm, '');
+  return stringify(value, { customTags: [secretTag], indent: 2 });
 }
 
 function parseDocument(text: string, filePath: string): PersistedConfiguration {
-  const data: unknown = Bun.YAML.parse(normalizeYamlTags(text));
+  const data: unknown = parse(text, { customTags: [secretTag] });
   if (!isRecord(data)) throw new Error(`Invalid configuration file: ${filePath}`);
   if (data.version !== undefined && data.version !== 1) {
     throw new Error(['Unsupported configuration version:', JSON.stringify(data.version)].join(' '));
@@ -75,13 +77,13 @@ async function resolveSecrets(
   const mqtt = configuration.mqtt;
   if (!mqtt) return configuration;
   const resolvedMqtt = { ...mqtt };
+  let secrets: Record<string, unknown> | undefined;
   let changed = false;
   for (const field of ['username', 'password'] as const) {
     const value = mqtt[field];
-    if (typeof value !== 'string') continue;
-    if (value.startsWith(secretMarker)) {
-      const key = value.slice(secretMarker.length);
-      const secrets = await readSecretFile(join(dirname(filePath), 'secrets.yaml'));
+    if (value instanceof SecretReference) {
+      const key = value.key;
+      secrets ??= await readSecretFile(join(dirname(filePath), 'secrets.yaml'));
       if (!Object.prototype.hasOwnProperty.call(secrets, key)) {
         throw new Error(`Missing secret: ${key}`);
       }
@@ -97,7 +99,7 @@ async function resolveSecrets(
   };
 }
 
-async function readConfiguration(filePath: string): Promise<PersistedConfiguration> {
+export async function loadConfiguration(filePath: string): Promise<PersistedConfiguration> {
   try {
     return resolveSecrets(parseDocument(await readFile(filePath, 'utf8'), filePath), filePath);
   } catch (error) {
@@ -118,7 +120,7 @@ async function writeSecretFile(filePath: string, key: string, value: string): Pr
     }
     if (secrets[key] === value) return;
     secrets[key] = value;
-    await writeFile(temporaryPath, stringifyYaml(secrets), 'utf8');
+    await writeFile(temporaryPath, stringifyYaml(secrets), { encoding: 'utf8', mode: 0o600 });
     await rename(temporaryPath, filePath);
   } catch (error) {
     await Bun.file(temporaryPath)
@@ -143,14 +145,10 @@ async function writeConfiguration(
     ] as const) {
       if (typeof data.mqtt?.[field] === 'string' && data.mqtt[field]) {
         await writeSecretFile(secretFilePath, key, data.mqtt[field]);
-        data.mqtt = { ...data.mqtt, [field]: `${secretMarker}${key}` };
+        data.mqtt = { ...data.mqtt, [field]: new SecretReference(key) };
       }
     }
-    let serialized = stringifyYaml(data);
-    for (const key of ['mqtt_username', 'mqtt_password']) {
-      serialized = serialized.replaceAll(`${secretMarker}${key}`, `!secret ${key}`);
-    }
-    await writeFile(temporaryPath, serialized, 'utf8');
+    await writeFile(temporaryPath, stringifyYaml(data), { encoding: 'utf8', mode: 0o600 });
     await rename(temporaryPath, filePath);
   } catch (error) {
     await Bun.file(temporaryPath)
@@ -160,7 +158,7 @@ async function writeConfiguration(
   }
 }
 
-async function updateSettings(
+export async function updateConfiguration(
   filePath: string,
   update: (settings: PersistedConfiguration) => void,
 ): Promise<void> {
@@ -168,7 +166,7 @@ async function updateSettings(
   const next = previous
     .catch(() => undefined)
     .then(async () => {
-      const settings = await readConfiguration(filePath);
+      const settings = await loadConfiguration(filePath);
       update(settings);
       await writeConfiguration(filePath, settings);
     });
@@ -180,80 +178,38 @@ async function updateSettings(
   await next;
 }
 
-export async function loadMqttSettings(
-  filePath: string,
-): Promise<Partial<MqttSettings> | undefined> {
-  const data = await readConfiguration(filePath);
-  return data.mqtt && typeof data.mqtt === 'object' ? data.mqtt : undefined;
-}
-
 export async function saveMqttSettings(filePath: string, settings: MqttSettings): Promise<void> {
-  await updateSettings(filePath, (stored) => {
+  await updateConfiguration(filePath, (stored) => {
     stored.mqtt = { ...settings };
   });
-}
-
-export async function loadTransportSettings(
-  filePath: string,
-): Promise<Partial<TransportSettings> | undefined> {
-  const data = await readConfiguration(filePath);
-  return data.transport && typeof data.transport === 'object' ? data.transport : undefined;
 }
 
 export async function saveTransportSettings(
   filePath: string,
   settings: TransportSettings,
 ): Promise<void> {
-  await updateSettings(filePath, (stored) => {
+  await updateConfiguration(filePath, (stored) => {
     stored.transport = settings;
   });
-}
-
-export async function loadHomeAssistantSettings(
-  filePath: string,
-): Promise<Partial<HomeAssistantSettings> | undefined> {
-  const data = await readConfiguration(filePath);
-  return data.homeassistant && typeof data.homeassistant === 'object'
-    ? data.homeassistant
-    : undefined;
 }
 
 export async function saveHomeAssistantSettings(
   filePath: string,
   settings: HomeAssistantSettings,
 ): Promise<void> {
-  await updateSettings(filePath, (stored) => {
+  await updateConfiguration(filePath, (stored) => {
     stored.homeassistant = settings;
   });
-}
-
-export async function loadGeneralSettings(
-  filePath: string,
-): Promise<Partial<GeneralSettings> | undefined> {
-  const data = await readConfiguration(filePath);
-  const startId = data.general?.startId;
-  return startId === undefined ? undefined : { startId: parseIdentifier(startId, 'startId') };
 }
 
 export async function saveGeneralSettings(
   filePath: string,
   settings: GeneralSettings,
 ): Promise<void> {
-  await updateSettings(filePath, (stored) => {
+  await updateConfiguration(filePath, (stored) => {
     stored.general = {
       ...stored.general,
       startId: settings.startId.toString(16).padStart(8, '0'),
     };
   });
-}
-
-export async function loadConfiguration(filePath: string): Promise<PersistedConfiguration> {
-  return readConfiguration(filePath);
-}
-
-export async function updateConfiguration(
-  filePath: string,
-  update: (configuration: PersistedConfiguration) => void,
-): Promise<void> {
-  await updateSettings(filePath, update);
 }

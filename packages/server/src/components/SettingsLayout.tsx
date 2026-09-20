@@ -8,7 +8,6 @@ export function SettingsLayout({
   children,
 }: {
   title: string;
-  description: string;
   status: string;
   statusTone?: 'neutral' | 'online' | 'warning' | 'error';
   children: ReactNode;
@@ -26,6 +25,32 @@ export function SettingsLayout({
       </div>
       {children}
     </section>
+  );
+}
+
+export function SettingsForm({
+  saving,
+  onSubmit,
+  children,
+}: {
+  saving: boolean;
+  onSubmit: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!saving) onSubmit();
+      }}
+    >
+      <fieldset
+        className="settings-panel settings-form"
+        disabled={saving}
+      >
+        {children}
+      </fieldset>
+    </form>
   );
 }
 

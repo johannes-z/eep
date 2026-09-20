@@ -4,10 +4,12 @@ The server is deployment-independent. It can run directly with Bun, in Docker, o
 
 ## Standalone
 
+From the repository root:
+
 ```sh
-bun install
-bun run build
-bun run start
+bun install --frozen-lockfile
+bun run --cwd packages/server build
+bun run --cwd packages/server start
 ```
 
 The web UI listens on `127.0.0.1:3000` by default. Set `HOST=0.0.0.0` when the service should be reachable from another host.
@@ -16,7 +18,7 @@ The HTTP API has no built-in authentication; keep it on a trusted network or pla
 The web UI receives live state snapshots over `/api/events` using WebSocket, with automatic
 reconnection and resynchronization instead of polling. Commands and settings saves use HTTP.
 Reverse proxies must forward WebSocket upgrades and preserve the original Host and scheme
-so the WebSocket endpoint can validate the browser's Origin. Protect this endpoint with the
+so WebSocket and state-changing HTTP requests can validate the browser's Origin. Protect these endpoints with the
 same authentication as the HTTP API.
 
 ## Standalone releases
@@ -30,6 +32,9 @@ DATA_DIR=/var/lib/eep ./eep-server-linux-x64
 
 The Windows binary supports TCP transports and `TRANSPORT_TYPE=none`. The bundled serial transport uses POSIX APIs and is supported on Linux and macOS; use a TCP serial bridge on Windows.
 
+Build all release targets with `bun run build:release`, or select targets such as
+`bun run build:release windows-x64 linux-arm64`. Targeted builds preserve the other release outputs.
+
 ## Runtime settings
 
 - `HOST`, `PORT`: HTTP bind address and port.
@@ -37,7 +42,6 @@ The Windows binary supports TCP transports and `TRANSPORT_TYPE=none`. The bundle
 - `TRANSPORT_PATH`: serial device path or `tcp://host:port` endpoint.
 - `TRANSPORT_TYPE`: `none`, `serial`, or `tcp`.
 - `BAUD_RATE`, `RTSCTS`: serial transport settings.
-- `CONTROLLER_ID`: optional EnOcean controller ID.
 - `START_ID`: optional first sender ID for automatic UTE allocation. The web UI also stores this as `general.startId` in `configuration.yaml`.
 - `MQTT_URL` or `MQTT_HOST`/`MQTT_PORT`: broker connection.
 - `MQTT_USERNAME`, `MQTT_PASSWORD`: broker credentials.
@@ -55,8 +59,8 @@ mqtt_password: replace-me
 ```yaml
 # configuration.yaml
 mqtt:
-	username: !secret mqtt_username
-	password: !secret mqtt_password
+  username: !secret mqtt_username
+  password: !secret mqtt_password
 ```
 
 The same values can be reviewed and updated from the web UI. Transport changes are persisted and applied by replacing the active connection; a failed replacement leaves the last known-good connection active.
@@ -70,19 +74,34 @@ and available channels are refreshed after connection recovery or replacement.
 Saving unrelated settings leaves unchanged MQTT secrets untouched, including the existing secrets
 file's comments and formatting.
 
+MQTT TLS `ca`, `cert`, and `key` accept file paths or inline PEM. Relative paths resolve from the
+server's working directory; absolute paths are recommended for deployment. Files must be readable
+by the server process. A missing TLS file rejects the change before the current client is stopped.
+MQTT environment booleans accept `true` or `false`; malformed numeric and boolean values fail validation.
+
 ## Application boundaries
 
 - `index.ts` composes the registry, transport, teach-in, MQTT, HTTP, and live-state services.
-- `devices/registry.ts` owns normalized device state and notifies integrations of changes.
+- `config/` owns environment resolution and validation shared with HTTP settings.
+- `devices/types.ts` defines device records independently of configuration. `devices/registry.ts` owns normalized state and returns detached snapshots so callers cannot mutate it outside a persisted operation.
 - `devices/commands.ts` is the shared command path for HTTP and MQTT. Encoding and decoding stay in `profiles/`.
 - `transport/runtime.ts` owns connection replacement, recovery, packet reception, and connectivity events. Adapters handle serial/TCP I/O.
-- `app/requestHandler.ts` validates HTTP input and projects backend state. `app/stateUpdates.ts` broadcasts snapshots.
-- `ui/useLiveSnapshot.ts` owns browser WebSocket connection and reconnection. Forms preserve unsaved drafts across snapshots; device state is never a separate frontend authority.
+- `app/requestHandler.ts` requires the device registry, teach-in manager, and packet listener; it validates HTTP input and projects their state. Bun's registered routes serve the UI, without a filesystem or catch-all app-shell fallback. Settings resources serialize apply/save/rollback transactions. `app/stateUpdates.ts` broadcasts snapshots.
+- `ui/liveSnapshot.ts` owns a reference-counted WebSocket store consumed through React's `useSyncExternalStore`. `ui/App.tsx` provides the live snapshot and device actions, without copying server state into component state.
+- `ui/useSettingsForm.ts` keeps drafts local to each settings view and uses React Actions for pending, success, and error states. Live snapshots cannot overwrite unsaved drafts. Shared device and packet types are imported only as types, without bundling backend code in the browser.
 - `components/` renders the management interface. The UI uses locally bundled fonts and icons, with no external asset service required.
 
-The console includes device search and availability filters, device details and state inspection,
-dedicated pairing, RX/TX packet filters and JSON export, and configuration forms. Navigation and
-device rows adapt to narrow screens; the live indicator reflects receipt of a server snapshot.
+The console opens at `/devices`, with search, compact power/mode controls, and expandable details,
+rename, and removal. Device availability remains an integration concern rather than a list column or
+filter. `/settings/transport` includes the connection, dongle base ID, and sender allocation settings.
+Unregistered pages return 404; there is no `/settings/general` alias. Pairing and the RX/TX packet listener remain
+separate workspaces. Navigation and device rows adapt to narrow screens.
+
+Home Assistant discovery is configured only through `homeassistant.discoveryTopic` or
+`HA_DISCOVERY_TOPIC`. MQTT discovery-prefix aliases and controller-ID overrides are not supported.
+Outgoing commands use the device's assigned `sourceId`. MQTT fan speed commands use the integer
+range advertised by discovery (for example, 0 for off and 1 through 4 for four speeds), not a
+second 0-100 percentage format. HTTP/UI percentage commands remain normalized percentages.
 
 ## Development
 
@@ -91,11 +110,20 @@ From the repository root:
 ```sh
 bun install
 bun run dev
-bun test packages/server/src
-bun run typecheck
-bun run lint
-bun run --cwd packages/server build
+bun run check
 ```
+
+`check` runs formatting, lint, type checking, tests, and builds both workspace packages. Individual
+gates are available as `format:check`, `lint`, `typecheck`, `test`, and `build`. Type checking rejects
+unused locals and parameters throughout the TypeScript tree. Use `bun run format`
+to apply the repository formatter. Runtime `data/` directories are excluded; shipped configuration
+templates remain checked. CI also builds the server Docker image before release jobs run.
+
+The add-on build generates `packages/addon/dist` from its public templates and the server bundle.
+Its manifest, lockfile subset, and add-on version are generated from workspace metadata; edit their
+sources rather than generated output. The same applies to `routeTree.gen.ts`, generated by
+`bun run --cwd packages/server generate-routes`. Installed dependencies, build outputs, release
+binaries, and tool caches are not maintained source files.
 
 For UI-only development, use a temporary `DATA_DIR` and `TRANSPORT_TYPE=none`. Keep that directory
 separate from a running installation's configuration and SQLite state. A real serial transceiver
@@ -111,21 +139,25 @@ Each paired device is stored in `DATA_DIR/configuration.yaml` under its `sourceI
 
 ```yaml
 devices:
-	ffe76681:
-		targetId: '0513cefe'
-		name: Living Room vent
-		profileId: D2-50-00
-		capabilities:
-			- off
-			- level1
-			- level2
-			- level3
-			- automatic
-			- supplyOnly
-			- exhaustOnly
+  ffe76681:
+    targetId: '0513cefe'
+    name: Living Room vent
+    profileId: D2-50-00
+    capabilities:
+      - off
+      - level1
+      - level2
+      - level3
+      - automatic
+      - supplyOnly
+      - exhaustOnly
 ```
 
 Omit `level4` or `automaticOnDemand` when the device does not support them. Home Assistant discovery, web controls, command validation, and percentage-to-speed mapping all use this list. Runtime state is stored in SQLite and is independent of the user-editable YAML configuration.
+
+Runtime-only device updates do not rewrite YAML. Home Assistant entities require both the bridge
+and device to be online. Reassigning a sender channel clears the old discovery entries before
+publishing the replacement, and MQTT shutdown drains active publications before offline cleanup.
 
 ## Pairing and UTE
 
@@ -149,11 +181,13 @@ explicit channel selection takes precedence. Targeted responses are accepted and
 automatically; untargeted candidates can be added or dismissed on the Pairing page. Pairing expires
 after sixty seconds. Stopping or expiring a session clears pending candidates and channel targeting;
 a failed transmission closes the session. The USB 300 base ID is
-read from the transport and shown read-only in General settings. It is not used as the last-used
+read from the transport and shown read-only in Transport & dongle settings. It is not used as the last-used
 allocation cursor and is not persisted in `configuration.yaml`.
 
-UTE responses require a non-zero controller ID. Set `CONTROLLER_ID`, or keep at least one device
-with a valid persisted `sourceId`, before using Permit join.
+Candidate sender IDs are reserved before acknowledgement and retained through acceptance, including
+when several devices are discovered together. Configure `START_ID` or select an available channel
+appropriate for the transceiver. Without an explicit start ID, allocation starts at the dongle's
+base ID plus one when available, otherwise at one; it is never inferred from an existing device.
 
 ## Docker
 
@@ -163,5 +197,9 @@ Build from the repository root so the image uses the workspace lockfile:
 docker build -f packages/server/Dockerfile -t eep-server .
 docker run --rm -p 3000:3000 -v eep-data:/data eep-server
 ```
+
+The build stage installs development tooling for route generation; the runtime stage contains
+production dependencies and the generated server bundle. The Docker build context excludes local
+configuration, secrets, databases, dependencies, and generated artifacts.
 
 Use a secret store or environment injection for MQTT credentials. Do not commit `secrets.yaml` or passwords to `data/configuration.yaml`.

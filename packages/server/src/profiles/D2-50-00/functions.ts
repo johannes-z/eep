@@ -51,9 +51,8 @@ export function getSupportedProtocolFunctions(
 }
 
 export function getProtocolFunctionByValue(value: number): ResolvedProtocolFunction | undefined {
-  return Object.entries(PROTOCOL_FUNCTIONS).reduce<ResolvedProtocolFunction | undefined>(
-    (match, [id, definition]) =>
-      match ?? (definition.d2Value === value ? { id, ...definition } : undefined),
-    undefined,
+  const match = Object.entries(PROTOCOL_FUNCTIONS).find(
+    ([, definition]) => definition.d2Value === value,
   );
+  return match ? { id: match[0], ...match[1] } : undefined;
 }

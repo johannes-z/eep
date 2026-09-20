@@ -1,39 +1,29 @@
-import { type FormEvent } from 'react';
-import type { SettingsFormMessage, TransportResponse } from '../ui/types';
-import { SettingsActions, SettingsLayout } from './SettingsLayout';
+import type { GeneralResponse, TransportResponse } from '../ui/types';
+import { useSettingsForm } from '../ui/useSettingsForm';
+import { SettingsActions, SettingsForm, SettingsLayout } from './SettingsLayout';
 
 export function TransportSettings({
-  settings,
-  message,
-  saving,
-  onChange,
-  onSave,
+  settings: live,
+  general,
 }: {
   settings: TransportResponse;
-  message: SettingsFormMessage;
-  saving: boolean;
-  onChange: (settings: TransportResponse) => void;
-  onSave: (settings: TransportResponse) => void;
+  general: GeneralResponse;
 }) {
+  const { settings, message, saving, onChange, onSave } = useSettingsForm(live, '/api/settings');
+  const sender = useSettingsForm(general, '/api/general', ({ start_id }) => ({ start_id }));
   const update = <K extends keyof TransportResponse>(key: K, value: TransportResponse[K]) =>
     onChange({ ...settings, [key]: value });
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    onSave(settings);
-  };
-  const status =
-    settings.type === 'none' ? 'Disabled' : settings.connected ? 'Connected' : 'Disconnected';
+  const status = live.type === 'none' ? 'Disabled' : live.connected ? 'Connected' : 'Disconnected';
 
   return (
     <SettingsLayout
-      description="Connection settings for the EnOcean transport."
       status={status}
-      statusTone={settings.type === 'none' ? 'neutral' : settings.connected ? 'online' : 'error'}
-      title="Transport"
+      statusTone={live.type === 'none' ? 'neutral' : live.connected ? 'online' : 'error'}
+      title="Transport & dongle"
     >
-      <form
-        className="settings-panel settings-form"
-        onSubmit={submit}
+      <SettingsForm
+        saving={saving}
+        onSubmit={() => onSave(settings)}
       >
         <div className="form-section">
           <h3>Connection</h3>
@@ -85,7 +75,40 @@ export function TransportSettings({
           message={message}
           saving={saving}
         />
-      </form>
+      </SettingsForm>
+      <SettingsForm
+        saving={sender.saving}
+        onSubmit={() => sender.onSave(sender.settings)}
+      >
+        <div className="form-section">
+          <h3>Sender ID allocation</h3>
+        </div>
+        <label className="setting-field">
+          <span>Start ID</span>
+          <input
+            maxLength={8}
+            pattern="[0-9a-fA-F]{1,8}"
+            required
+            spellCheck={false}
+            value={sender.settings.start_id}
+            onChange={(event) =>
+              sender.onChange({ ...sender.settings, start_id: event.target.value })
+            }
+          />
+        </label>
+        <label className="setting-field">
+          <span>USB 300 base ID</span>
+          <input
+            readOnly
+            value={general.base_id ?? 'Unavailable'}
+          />
+        </label>
+        <SettingsActions
+          label="Save sender ID"
+          message={sender.message}
+          saving={sender.saving}
+        />
+      </SettingsForm>
     </SettingsLayout>
   );
 }

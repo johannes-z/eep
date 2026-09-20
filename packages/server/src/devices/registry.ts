@@ -1,6 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import type { Device, DeviceTeachInInfo } from '../config';
+import { isDeepStrictEqual } from 'node:util';
+import type { Device, DeviceTeachInInfo } from './types';
 import {
   createDefaultProfileRegistry,
   normalizeProfileId,
@@ -28,12 +29,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isJsonValue(value: unknown): value is JsonValue {
-  if (
-    value === null ||
-    typeof value === 'boolean' ||
-    typeof value === 'number' ||
-    typeof value === 'string'
-  ) {
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') {
     return true;
   }
   if (Array.isArray(value)) return value.every(isJsonValue);
@@ -178,9 +175,18 @@ function serializeDevice(device: Device): PersistedDevice {
   };
 }
 
+function serializeDevices(devices: Device[]): Record<string, PersistedDevice> {
+  return Object.fromEntries(
+    devices.map((device) => [
+      device.sourceId.toString(16).padStart(8, '0'),
+      serializeDevice(device),
+    ]),
+  );
+}
+
 const defaultProfiles = createDefaultProfileRegistry();
 
-export const initialDevices = deserializeConfiguredDevices(
+const initialDevices = deserializeConfiguredDevices(
   (initialConfiguration as { devices: unknown }).devices,
   defaultProfiles,
 );
@@ -235,17 +241,17 @@ export class DeviceRegistry {
   }
 
   list(): Device[] {
-    return this.devices.map((device) => ({ ...device }));
+    return structuredClone(this.devices);
   }
 
   findByTargetId(targetId: number): Device | undefined {
     const device = this.devices.find((item) => item.targetId === targetId);
-    return device ? { ...device } : undefined;
+    return device ? structuredClone(device) : undefined;
   }
 
   findBySourceId(sourceId: number): Device | undefined {
     const device = this.devices.find((item) => item.sourceId === sourceId);
-    return device ? { ...device } : undefined;
+    return device ? structuredClone(device) : undefined;
   }
 
   onChange(listener: DeviceChangeListener): () => void {
@@ -264,6 +270,7 @@ export class DeviceRegistry {
   }
 
   async upsert(device: Device): Promise<Device> {
+    device = structuredClone(device);
     this.validateDevice(device);
     return this.enqueueMutation(() => {
       const index = this.devices.findIndex((item) => item.sourceId === device.sourceId);
@@ -275,6 +282,10 @@ export class DeviceRegistry {
   }
 
   async update(sourceId: number, update: Partial<Device>): Promise<Device> {
+    update = structuredClone(update);
+    if (update.sourceId !== undefined && update.sourceId !== sourceId) {
+      throw new Error('Use reassignSourceId to change a device source ID');
+    }
     return this.enqueueMutation(() => {
       const index = this.devices.findIndex((item) => item.sourceId === sourceId);
       if (index === -1) throw new Error(`Unknown device: ${sourceId}`);
@@ -291,19 +302,21 @@ export class DeviceRegistry {
     newSourceId: number,
     update: Partial<Device> = {},
   ): Promise<Device> {
+    update = structuredClone(update);
     return this.enqueueMutation(() => {
       const index = this.devices.findIndex((item) => item.sourceId === sourceId);
       if (index === -1) throw new Error(`Unknown device: ${sourceId}`);
       if (newSourceId !== sourceId && this.devices.some((item) => item.sourceId === newSourceId)) {
         throw new Error(`Source ID is already assigned: ${newSourceId}`);
       }
-      const next = { ...this.devices[index], ...update, sourceId: newSourceId };
+      const previous = { ...this.devices[index] };
+      const next = { ...previous, ...update, sourceId: newSourceId };
       this.validateDevice(next);
       this.devices[index] = next;
       return {
         result: { ...next },
         changedDevice: { ...next },
-        ...(newSourceId === sourceId ? {} : { removedSourceId: sourceId }),
+        ...(newSourceId === sourceId ? {} : { removedSourceId: sourceId, removedDevice: previous }),
       };
     });
   }
@@ -319,38 +332,19 @@ export class DeviceRegistry {
   }
 
   private notify(device: Device): void {
-    for (const listener of this.listeners) listener({ ...device });
+    for (const listener of this.listeners) listener(structuredClone(device));
   }
 
   private validateDevice(device: Device): void {
     parseIdentifier(device.sourceId, 'sourceId');
     parseIdentifier(device.targetId, 'targetId');
+    readText(device.name, 'name');
+    readText(device.profileId, 'profileId');
     if (device.teachIn !== undefined) validateTeachInInfo(device.teachIn);
     const profile = this.profiles.get(device.profileId);
-    if (!profile) {
-      if (!isJsonValue(device.capabilities)) throw new Error('Invalid capabilities');
-      if (device.reportedState !== undefined && !isJsonValue(device.reportedState)) {
-        throw new Error('Invalid reportedState');
-      }
-      if (device.desiredState !== undefined && !isJsonValue(device.desiredState)) {
-        throw new Error('Invalid desiredState');
-      }
-      return;
-    }
-    const capabilities = profile.validateCapabilities(device.capabilities);
+    const capabilities = profile?.validateCapabilities(device.capabilities) ?? device.capabilities;
     if (!isJsonValue(capabilities)) throw new Error('Invalid capabilities');
-    if (device.reportedState !== undefined) {
-      const reportedState = profile.validateState(
-        device.reportedState,
-        'reportedState',
-        capabilities,
-      );
-      if (!isJsonValue(reportedState)) throw new Error('Invalid reportedState');
-    }
-    if (device.desiredState !== undefined) {
-      const desiredState = profile.validateState(device.desiredState, 'desiredState', capabilities);
-      if (!isJsonValue(desiredState)) throw new Error('Invalid desiredState');
-    }
+    deserializeRuntimeState({ ...device }, profile, capabilities);
   }
 
   private enqueueMutation<T>(
@@ -364,17 +358,30 @@ export class DeviceRegistry {
     const next = this.writeQueue
       .catch(() => undefined)
       .then(async () => {
-        const { result, changedDevice, removedSourceId, removedDevice } = mutation();
-        await this.save();
+        const previousDevices = this.devices;
+        this.devices = previousDevices.map((device) => ({ ...device }));
+        let change: ReturnType<typeof mutation>;
+        let nextDevices: Device[];
+        try {
+          change = mutation();
+          nextDevices = validateDevices(this.devices);
+        } finally {
+          this.devices = previousDevices;
+        }
+        const { result, changedDevice, removedSourceId, removedDevice } = change;
+        if (!isDeepStrictEqual(serializeDevices(previousDevices), serializeDevices(nextDevices))) {
+          await this.save(nextDevices);
+        }
         if (removedSourceId !== undefined) this.stateStore.remove(removedSourceId);
+        if (changedDevice) this.stateStore.save(changedDevice);
+        this.devices = nextDevices;
         if (removedDevice) {
-          for (const listener of this.removeListeners) listener({ ...removedDevice });
+          for (const listener of this.removeListeners) listener(structuredClone(removedDevice));
         }
         if (changedDevice) {
-          this.stateStore.save(changedDevice);
           this.notify(changedDevice);
         }
-        return result;
+        return structuredClone(result);
       });
     this.writeQueue = next.then(
       () => undefined,
@@ -383,14 +390,9 @@ export class DeviceRegistry {
     return next;
   }
 
-  private async save(): Promise<void> {
+  private async save(devices: Device[] = this.devices): Promise<void> {
     await updateConfiguration(this.filePath, (configuration) => {
-      configuration.devices = Object.fromEntries(
-        this.devices.map((device) => [
-          device.sourceId.toString(16).padStart(8, '0'),
-          serializeDevice(device),
-        ]),
-      );
+      configuration.devices = serializeDevices(devices);
     });
   }
 }

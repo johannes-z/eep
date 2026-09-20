@@ -11,14 +11,32 @@ const targets = [
 
 const serverDirectory = join(import.meta.dir, '..');
 const releaseDirectory = join(serverDirectory, 'release');
+const requestedTargets = process.argv.slice(2);
+for (const target of requestedTargets) {
+  if (!targets.some(([name]) => name === target)) {
+    throw new Error(`Unknown release target: ${target}`);
+  }
+}
+const selectedTargets = requestedTargets.length
+  ? targets.filter(([name]) => requestedTargets.includes(name))
+  : targets;
 
-rmSync(releaseDirectory, { recursive: true, force: true });
+if (!requestedTargets.length) rmSync(releaseDirectory, { recursive: true, force: true });
 mkdirSync(releaseDirectory, { recursive: true });
 
-for (const [name, target, executable] of targets) {
+for (const [name, target, executable] of selectedTargets) {
   const output = join(releaseDirectory, executable);
   const result = Bun.spawnSync(
-    ['bun', 'build', './src/main.ts', '--compile', `--target=${target}`, '--outfile', output],
+    [
+      process.execPath,
+      'build',
+      './src/main.ts',
+      '--compile',
+      `--target=${target}`,
+      ...(name.startsWith('windows-') ? ['--external', 'bun-serialport'] : []),
+      '--outfile',
+      output,
+    ],
     { cwd: serverDirectory, stderr: 'inherit', stdout: 'inherit' },
   );
 

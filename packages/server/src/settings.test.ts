@@ -5,11 +5,7 @@ import { join } from 'node:path';
 import type { HomeAssistantSettings, TransportSettings } from './config';
 import { defaultMqttSettings } from './mqtt';
 import {
-  loadGeneralSettings,
-  loadHomeAssistantSettings,
   loadConfiguration,
-  loadMqttSettings,
-  loadTransportSettings,
   saveGeneralSettings,
   saveHomeAssistantSettings,
   saveMqttSettings,
@@ -40,10 +36,10 @@ test('preserves settings sections across concurrent updates', async () => {
     saveHomeAssistantSettings(filePath, homeAssistant),
   ]);
 
-  expect(await loadMqttSettings(filePath)).toMatchObject({ url: mqtt.url });
-  expect(await loadTransportSettings(filePath)).toMatchObject({ path: transport.path });
-  expect(await loadHomeAssistantSettings(filePath)).toMatchObject({
-    statusTopic: homeAssistant.statusTopic,
+  expect(await loadConfiguration(filePath)).toMatchObject({
+    mqtt: { url: mqtt.url },
+    transport: { path: transport.path },
+    homeassistant: { statusTopic: homeAssistant.statusTopic },
   });
   const configuration = await readFile(filePath, 'utf8');
   expect(configuration).toMatch(/mqtt:\s*\n/);
@@ -62,10 +58,10 @@ test('rejects malformed or unsupported persisted settings', async () => {
   const filePath = join(directory, 'configuration.yaml');
 
   await Bun.write(filePath, 'version: 2\n');
-  expect(loadMqttSettings(filePath)).rejects.toThrow('Unsupported configuration version: 2');
+  expect(loadConfiguration(filePath)).rejects.toThrow('Unsupported configuration version: 2');
 
   await Bun.write(filePath, 'mqtt: []\n');
-  expect(loadMqttSettings(filePath)).rejects.toThrow('Invalid configuration section: mqtt');
+  expect(loadConfiguration(filePath)).rejects.toThrow('Invalid configuration section: mqtt');
 });
 
 test('persists the general start ID as a hexadecimal YAML value', async () => {
@@ -74,7 +70,7 @@ test('persists the general start ID as a hexadecimal YAML value', async () => {
 
   await saveGeneralSettings(filePath, { startId: 0xffe76685 });
 
-  expect(await loadGeneralSettings(filePath)).toEqual({ startId: 0xffe76685 });
+  expect((await loadConfiguration(filePath)).general).toEqual({ startId: 'ffe76685' });
   expect(Bun.YAML.parse(await readFile(filePath, 'utf8'))).toMatchObject({
     version: 1,
     general: { startId: 'ffe76685' },
@@ -91,7 +87,7 @@ test('resolves secrets and keeps passwords out of configuration.yaml', async () 
     'version: 1\nmqtt:\n  url: mqtt://broker.local:1883\n  username: !secret mqtt_username\n  password: !secret mqtt_password\n',
   );
 
-  expect(await loadMqttSettings(filePath)).toMatchObject({
+  expect((await loadConfiguration(filePath)).mqtt).toMatchObject({
     username: 'test-user',
     password: 'test-password',
   });
@@ -135,4 +131,24 @@ test('resolves arbitrary YAML values from secret references', async () => {
 
   const configuration = await loadConfiguration(filePath);
   expect(configuration.mqtt?.username).toBe(false);
+});
+
+test('preserves literal secret-like text and parses quoted secret keys', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-settings-literal-secret-'));
+  const filePath = join(directory, 'configuration.yaml');
+  await Bun.write(join(directory, 'secrets.yaml'), 'broker password: actual-password\n');
+  await Bun.write(
+    filePath,
+    'mqtt:\n  username: "literal !secret username"\n  password: !secret "broker password"\n',
+  );
+
+  expect((await loadConfiguration(filePath)).mqtt).toMatchObject({
+    username: 'literal !secret username',
+    password: 'actual-password',
+  });
+  await saveTransportSettings(filePath, transport);
+  expect((await loadConfiguration(filePath)).mqtt).toMatchObject({
+    username: 'literal !secret username',
+    password: 'actual-password',
+  });
 });

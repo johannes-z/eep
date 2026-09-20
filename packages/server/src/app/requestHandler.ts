@@ -1,20 +1,15 @@
-import { readFile } from 'node:fs/promises';
-import { extname, join, resolve } from 'node:path';
 import { resolveServerConfig } from '../config';
-import type { Device, GeneralSettings, HomeAssistantSettings, TransportSettings } from '../config';
+import type { GeneralSettings, HomeAssistantSettings, TransportSettings } from '../config';
+import type { Device } from '../devices/types';
 import { sendDeviceCommand, type TransmitListener } from '../devices/commands';
-import { initialDevices } from '../devices/registry';
 import type { DeviceRegistry } from '../devices/registry';
 import type { TeachInManager } from '../devices/teachin';
 import { defaultMqttSettings, type MqttSettings } from '../mqtt';
-import {
-  createDefaultProfileRegistry,
-  type ProfileDeviceContext,
-  type ProfileRegistry,
-} from '../profiles';
+import { createDefaultProfileRegistry, type ProfileRegistry } from '../profiles';
 import type { TransportConnection } from '../transport/adapters';
 import type { PacketListener } from '../transport/listener';
 import {
+  createSettingsResource,
   generalSettingsResponse,
   homeAssistantSettingsResponse,
   mqttSettingsResponse,
@@ -28,19 +23,13 @@ import {
 } from './settings';
 import { parseEnOceanId } from '../util';
 
-export interface RequestTransport extends TransportConnection {}
-
-export type { MqttStatus } from './settings';
-
 export interface RequestHandlerOptions {
-  registry?: DeviceRegistry;
-  controllerId?: number;
-  baseId?: number | (() => number | undefined);
+  registry: DeviceRegistry;
+  baseId?: () => number | undefined;
   generalSettings?: GeneralSettings;
   saveGeneralSettings?: (settings: GeneralSettings) => Promise<void>;
   applyGeneralSettings?: (settings: GeneralSettings) => Promise<void>;
-  teachIn?: TeachInManager;
-  webRoot?: string;
+  teachIn: TeachInManager;
   transportSettings?: TransportSettings;
   transportConnected?: () => boolean;
   saveTransportSettings?: (settings: TransportSettings) => Promise<void>;
@@ -52,70 +41,68 @@ export interface RequestHandlerOptions {
   saveMqttSettings?: (settings: MqttSettings) => Promise<void>;
   applyMqttSettings?: (settings: MqttSettings) => Promise<void>;
   mqttStatus?: () => MqttStatus;
-  listener?: PacketListener;
+  listener: PacketListener;
   onTransmit?: TransmitListener;
   profiles?: ProfileRegistry;
   onChange?: () => void;
-}
-
-interface PairingState {
-  active: boolean;
-  candidates: unknown[];
 }
 
 function json(data: unknown, status = 200): Response {
   return Response.json(data, { status });
 }
 
-function profileContext(device: Device): ProfileDeviceContext {
-  return {
-    sourceId: device.sourceId,
-    targetId: device.targetId,
-    capabilities: device.capabilities,
-    reportedState: device.reportedState,
-    desiredState: device.desiredState,
-  };
-}
-
-function contentType(path: string): string {
-  switch (extname(path)) {
-    case '.html':
-      return 'text/html; charset=utf-8';
-    case '.js':
-      return 'text/javascript; charset=utf-8';
-    case '.css':
-      return 'text/css; charset=utf-8';
-    default:
-      return 'application/octet-stream';
-  }
-}
-
 export function createRequestHandler(
-  socket: RequestTransport | (() => RequestTransport),
-  options: RequestHandlerOptions = {},
+  getSocket: () => TransportConnection,
+  options: RequestHandlerOptions,
 ) {
-  const pairing: PairingState = { active: false, candidates: [] };
-  const sourceAppDirectory = import.meta.dir.endsWith('/app') || import.meta.dir.endsWith('\\app');
-  const webRoot = resolve(
-    options.webRoot ?? join(import.meta.dir, sourceAppDirectory ? '../../public' : '../public'),
-  );
   const defaults = resolveServerConfig();
-  let transportSettings = options.transportSettings ?? defaults.transport;
-  let homeAssistantSettings = options.homeAssistantSettings ?? defaults.homeAssistant;
-  let generalSettings: GeneralSettings = options.generalSettings ?? {
-    startId: options.controllerId ?? defaults.startId ?? 1,
-  };
-  let mqttSettings = { ...(options.mqttSettings ?? defaultMqttSettings()) };
-  const getSocket = typeof socket === 'function' ? socket : () => socket;
-  const getBaseId = () =>
-    typeof options.baseId === 'function' ? options.baseId() : options.baseId;
   const profiles = options.profiles ?? createDefaultProfileRegistry();
   const transportConnected = (settings: TransportSettings): boolean =>
     options.transportConnected?.() ?? settings.type !== 'none';
 
+  const devices = () => options.registry.list();
+  const pairing = () => ({
+    active: options.teachIn.isActive(),
+    candidates: options.teachIn.listCandidates(),
+  });
+  const general = createSettingsResource({
+    initial: options.generalSettings ?? { startId: defaults.startId ?? 1 },
+    parse: parseGeneralSettings,
+    describe: (settings) => generalSettingsResponse(settings, options.baseId?.(), devices()),
+    apply: options.applyGeneralSettings,
+    save: options.saveGeneralSettings,
+  });
+  const transport = createSettingsResource({
+    initial: options.transportSettings ?? defaults.transport,
+    parse: parseTransportSettings,
+    describe: (settings) => transportSettingsResponse(settings, transportConnected(settings)),
+    apply: options.applyTransportSettings,
+    save: options.saveTransportSettings,
+  });
+  const homeAssistant = createSettingsResource({
+    initial: options.homeAssistantSettings ?? defaults.homeAssistant,
+    parse: parseHomeAssistantSettings,
+    describe: homeAssistantSettingsResponse,
+    apply: options.applyHomeAssistantSettings,
+    save: options.saveHomeAssistantSettings,
+  });
+  const mqtt = createSettingsResource({
+    initial: options.mqttSettings ?? defaultMqttSettings(),
+    parse: parseMqttSettings,
+    describe: (settings) => mqttSettingsResponse(settings, options.mqttStatus?.()),
+    apply: options.applyMqttSettings,
+    save: options.saveMqttSettings,
+    failureStatus: 500,
+  });
+  const settingsRoutes: Record<string, Pick<typeof general, 'read' | 'update'>> = {
+    general,
+    settings: transport,
+    homeassistant: homeAssistant,
+    mqtt,
+  };
+
   function deviceResponse(device: Device): Record<string, unknown> {
     const profile = profiles.get(device.profileId);
-    const context = profileContext(device);
     const entity = profile?.entity;
     return {
       ...device,
@@ -124,11 +111,11 @@ export function createRequestHandler(
             profile: {
               id: profile.metadata.id,
               description: profile.metadata.description,
-              ...(entity ? { entity: entity.describe(context) } : {}),
+              ...(entity ? { entity: entity.describe(device) } : {}),
             },
           }
         : {}),
-      ...(entity ? { entityState: entity.projectState(context) } : {}),
+      ...(entity ? { entityState: entity.projectState(device) } : {}),
     };
   }
 
@@ -139,37 +126,32 @@ export function createRequestHandler(
       device,
       request,
       profiles,
-      undefined,
       options.onTransmit,
     );
   }
 
   function snapshot() {
     return {
-      devices: (options.registry?.list() ?? initialDevices).map(deviceResponse),
-      general: generalSettingsResponse(
-        generalSettings,
-        getBaseId(),
-        options.registry?.list() ?? initialDevices,
-      ),
-      transport: transportSettingsResponse(
-        transportSettings,
-        transportConnected(transportSettings),
-      ),
-      homeAssistant: homeAssistantSettingsResponse(homeAssistantSettings),
-      mqtt: mqttSettingsResponse(
-        mqttSettings,
-        options.mqttStatus?.(),
-        homeAssistantSettings.discoveryTopic,
-      ),
-      pairing: options.teachIn
-        ? { active: options.teachIn.isActive(), candidates: options.teachIn.listCandidates() }
-        : pairing,
-      listen: options.listener?.snapshot() ?? { active: false, packets: [] },
+      devices: devices().map(deviceResponse),
+      general: general.read(),
+      transport: transport.read(),
+      homeAssistant: homeAssistant.read(),
+      mqtt: mqtt.read(),
+      pairing: pairing(),
+      listen: options.listener.snapshot(),
     };
   }
 
   async function handleRequest(request: Request): Promise<Response> {
+    const origin = request.headers.get('origin');
+    if (
+      request.method !== 'GET' &&
+      request.method !== 'HEAD' &&
+      origin &&
+      origin !== new URL(request.url).origin
+    ) {
+      return json({ error: 'Cross-origin requests are not allowed' }, 403);
+    }
     let parts: string[];
     try {
       parts = new URL(request.url).pathname.split('/').filter(Boolean).map(decodeURIComponent);
@@ -178,145 +160,20 @@ export function createRequestHandler(
     }
 
     if (parts[0] === 'api') {
-      if (parts[1] === 'general' && request.method === 'GET' && parts.length === 2) {
-        return json(
-          generalSettingsResponse(
-            generalSettings,
-            getBaseId(),
-            options.registry?.list() ?? initialDevices,
-          ),
-        );
-      }
-
-      if (parts[1] === 'general' && request.method === 'PUT' && parts.length === 2) {
-        try {
-          const body = (await request.json()) as Record<string, unknown>;
-          const next = parseGeneralSettings(body, generalSettings);
-          await options.applyGeneralSettings?.(next);
-          try {
-            await options.saveGeneralSettings?.(next);
-          } catch (error) {
-            await options.applyGeneralSettings?.(generalSettings).catch(() => undefined);
-            throw error;
-          }
-          generalSettings = next;
-          return json({
-            ...generalSettingsResponse(
-              next,
-              getBaseId(),
-              options.registry?.list() ?? initialDevices,
-            ),
-            restartRequired: !options.applyGeneralSettings,
-          });
-        } catch (error) {
-          return json({ error: (error as Error).message }, 400);
-        }
-      }
-
-      if (parts[1] === 'settings' && request.method === 'GET' && parts.length === 2) {
-        return json(
-          transportSettingsResponse(transportSettings, transportConnected(transportSettings)),
-        );
-      }
-
-      if (parts[1] === 'settings' && request.method === 'PUT' && parts.length === 2) {
-        try {
-          const body = (await request.json()) as Record<string, unknown>;
-          const next = parseTransportSettings(body, transportSettings);
-          await options.applyTransportSettings?.(next);
-          try {
-            await options.saveTransportSettings?.(next);
-          } catch (error) {
-            await options.applyTransportSettings?.(transportSettings).catch(() => undefined);
-            throw error;
-          }
-          transportSettings = next;
-          return json({
-            ...transportSettingsResponse(next, transportConnected(next)),
-            restartRequired: !options.applyTransportSettings,
-          });
-        } catch (error) {
-          return json({ error: (error as Error).message }, 400);
-        }
-      }
-
-      if (parts[1] === 'homeassistant' && request.method === 'GET' && parts.length === 2) {
-        return json(homeAssistantSettingsResponse(homeAssistantSettings));
-      }
-
-      if (parts[1] === 'homeassistant' && request.method === 'PUT' && parts.length === 2) {
-        try {
-          const body = (await request.json()) as Record<string, unknown>;
-          const next = parseHomeAssistantSettings(body, homeAssistantSettings);
-          await options.applyHomeAssistantSettings?.(next);
-          try {
-            await options.saveHomeAssistantSettings?.(next);
-          } catch (error) {
-            await options
-              .applyHomeAssistantSettings?.(homeAssistantSettings)
-              .catch(() => undefined);
-            throw error;
-          }
-          homeAssistantSettings = next;
-          return json({
-            ...homeAssistantSettingsResponse(next),
-            restartRequired: !options.applyHomeAssistantSettings,
-          });
-        } catch (error) {
-          return json({ error: (error as Error).message }, 400);
-        }
-      }
-
-      if (parts[1] === 'mqtt' && request.method === 'GET' && parts.length === 2) {
-        return json(
-          mqttSettingsResponse(
-            mqttSettings,
-            options.mqttStatus?.(),
-            homeAssistantSettings.discoveryTopic,
-          ),
-        );
-      }
-
-      if (parts[1] === 'mqtt' && request.method === 'PUT' && parts.length === 2) {
-        let next: MqttSettings;
-        try {
-          const body = (await request.json()) as Record<string, unknown>;
-          next = parseMqttSettings(body, mqttSettings);
-        } catch (error) {
-          return json({ error: (error as Error).message }, 400);
-        }
-        try {
-          await options.applyMqttSettings?.(next);
-          try {
-            await options.saveMqttSettings?.(next);
-          } catch (error) {
-            await options.applyMqttSettings?.(mqttSettings).catch(() => undefined);
-            throw error;
-          }
-          mqttSettings = next;
-          return json({
-            ...mqttSettingsResponse(
-              next,
-              options.mqttStatus?.(),
-              homeAssistantSettings.discoveryTopic,
-            ),
-            restartRequired: !options.applyMqttSettings,
-          });
-        } catch (error) {
-          return json({ error: (error as Error).message }, 500);
-        }
+      const resource = Object.hasOwn(settingsRoutes, parts[1])
+        ? settingsRoutes[parts[1]]
+        : undefined;
+      if (resource && parts.length === 2) {
+        if (request.method === 'GET') return json(resource.read());
+        if (request.method === 'PUT') return resource.update(request);
       }
 
       if (parts[1] === 'devices' && request.method === 'GET' && parts.length === 2) {
-        return json(
-          (options.registry?.list() ?? initialDevices.map((device) => ({ ...device }))).map(
-            deviceResponse,
-          ),
-        );
+        return json(devices().map(deviceResponse));
       }
 
       if (parts[1] === 'listen' && request.method === 'GET' && parts.length === 2) {
-        return json(options.listener?.snapshot() ?? { active: false, packets: [] });
+        return json(options.listener.snapshot());
       }
 
       if (
@@ -325,7 +182,6 @@ export function createRequestHandler(
         parts.length === 3 &&
         (parts[2] === 'start' || parts[2] === 'stop')
       ) {
-        if (!options.listener) return json({ error: 'Packet listener is unavailable' }, 503);
         if (parts[2] === 'start') options.listener.start();
         else options.listener.stop();
         return json(options.listener.snapshot());
@@ -334,7 +190,7 @@ export function createRequestHandler(
       if (parts[1] === 'devices' && request.method === 'PUT' && parts.length === 3) {
         const sourceId = parseRouteId(parts[2]);
         const registry = options.registry;
-        if (!registry || !Number.isInteger(sourceId)) return json({ error: 'Unknown device' }, 404);
+        if (!Number.isInteger(sourceId)) return json({ error: 'Unknown device' }, 404);
         try {
           const body = (await request.json()) as Record<string, unknown>;
           if (typeof body.name !== 'string' || !body.name.trim()) {
@@ -349,41 +205,26 @@ export function createRequestHandler(
       if (parts[1] === 'devices' && request.method === 'DELETE' && parts.length === 3) {
         const sourceId = parseRouteId(parts[2]);
         const registry = options.registry;
-        if (!registry || !Number.isInteger(sourceId)) return json({ error: 'Unknown device' }, 404);
+        if (!Number.isInteger(sourceId)) return json({ error: 'Unknown device' }, 404);
         if (!(await registry.remove(sourceId))) return json({ error: 'Unknown device' }, 404);
         return json({ ok: true });
       }
 
       if (parts[1] === 'pairing' && request.method === 'GET' && parts.length === 2) {
-        return json(
-          options.teachIn
-            ? { active: options.teachIn.isActive(), candidates: options.teachIn.listCandidates() }
-            : pairing,
-        );
+        return json(pairing());
       }
 
       if (parts[1] === 'pairing' && request.method === 'POST' && parts[2] === 'start') {
-        options.teachIn?.start();
-        pairing.active = true;
-        return json(
-          options.teachIn
-            ? { active: options.teachIn.isActive(), candidates: options.teachIn.listCandidates() }
-            : pairing,
-        );
+        options.teachIn.start();
+        return json(pairing());
       }
 
       if (parts[1] === 'pairing' && request.method === 'POST' && parts[2] === 'stop') {
-        options.teachIn?.stop();
-        pairing.active = false;
-        return json(
-          options.teachIn
-            ? { active: options.teachIn.isActive(), candidates: options.teachIn.listCandidates() }
-            : pairing,
-        );
+        options.teachIn.stop();
+        return json(pairing());
       }
 
       if (parts[1] === 'pairing' && request.method === 'POST' && parts[2] === 'transmit') {
-        if (!options.teachIn) return json({ error: 'Teach-in is unavailable' }, 503);
         try {
           const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
           const rawSourceId = body.sourceId;
@@ -393,18 +234,13 @@ export function createRequestHandler(
           }
           if (sourceId !== undefined) options.teachIn.start();
           await options.teachIn.transmit(sourceId);
-          pairing.active = true;
-          return json({
-            active: options.teachIn.isActive(),
-            candidates: options.teachIn.listCandidates(),
-          });
+          return json(pairing());
         } catch (error) {
           return json({ error: (error as Error).message }, 400);
         }
       }
 
       if (parts[1] === 'pairing' && parts[2] === 'accept' && request.method === 'POST') {
-        if (!options.teachIn) return json({ error: 'Teach-in is unavailable' }, 503);
         try {
           const body = (await request.json()) as {
             targetId: number;
@@ -418,7 +254,6 @@ export function createRequestHandler(
       }
 
       if (parts[1] === 'pairing' && parts[2] === 'reject' && request.method === 'POST') {
-        if (!options.teachIn) return json({ error: 'Teach-in is unavailable' }, 503);
         try {
           const body = (await request.json()) as { targetId: number };
           const targetId = parseEnOceanId(body.targetId);
@@ -437,9 +272,7 @@ export function createRequestHandler(
         request.method === 'POST'
       ) {
         const sourceId = parseRouteId(parts[2]);
-        const device = options.registry
-          ? options.registry.findBySourceId(sourceId)
-          : initialDevices.find((item) => item.sourceId === sourceId);
+        const device = options.registry.findBySourceId(sourceId);
         if (!device || !Number.isInteger(sourceId)) return json({ error: 'Unknown device' }, 404);
         try {
           await sendCommand(device, await request.json());
@@ -450,28 +283,6 @@ export function createRequestHandler(
       }
 
       return json({ error: 'Not found' }, 404);
-    }
-
-    if (request.method === 'GET' && parts.length === 0) parts = ['index.html'];
-    if (
-      request.method === 'GET' &&
-      parts.length > 0 &&
-      parts.length < 3 &&
-      (parts.length === 1 || parts[0] === 'settings') &&
-      !extname(parts.at(-1) ?? '')
-    ) {
-      parts = ['index.html'];
-    }
-
-    if (parts.length === 1 && request.method === 'GET' && parts[0] === 'index.html') {
-      const filePath = join(webRoot, 'index.html');
-      try {
-        return new Response(await readFile(filePath), {
-          headers: { 'content-type': contentType(filePath) },
-        });
-      } catch {
-        return new Response('Web UI is not installed', { status: 404 });
-      }
     }
 
     return new Response(null, { status: 404 });

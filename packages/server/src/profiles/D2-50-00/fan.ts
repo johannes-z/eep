@@ -99,17 +99,6 @@ export function fanSpeedToD2Value(
   return speeds[speed - 1].d2Value as DirectOperationModeControl;
 }
 
-export function fanMqttPercentageToD2Value(
-  value: number,
-  supportedFunctions?: readonly string[],
-): DirectOperationModeControl {
-  const speedCount = speedFunctions(supportedFunctions).length;
-  if (Number.isInteger(value) && value >= 0 && value <= speedCount) {
-    return fanSpeedToD2Value(value, supportedFunctions);
-  }
-  return fanPercentageToD2Value(value, supportedFunctions);
-}
-
 export function fanPowerToD2Value(
   isOn: boolean,
   supportedFunctions?: readonly string[],
@@ -145,7 +134,11 @@ export function fanPresetToD2Value(preset: string): DirectOperationModeControl {
 
 export function parseD2Value(value: string | number): DirectOperationModeControl {
   const parsed = typeof value === 'number' ? value : Number(value);
-  if (!Number.isInteger(parsed) || !isD2ControlValue(parsed)) {
+  if (
+    (typeof value === 'string' && !value.trim()) ||
+    !Number.isInteger(parsed) ||
+    !isD2ControlValue(parsed)
+  ) {
     throw new Error(`Unsupported D2-50-00 value: ${value}`);
   }
   return parsed;

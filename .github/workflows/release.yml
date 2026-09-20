@@ -6,9 +6,12 @@ on:
       - 'v*.*.*'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  checks:
+    uses: ./.github/workflows/check.yml
+
   changelog:
     name: Generate changelog
     runs-on: ubuntu-latest
@@ -33,7 +36,7 @@ jobs:
 
   build:
     name: Build ${{ matrix.target }}
-    needs: changelog
+    needs: [checks, changelog]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -41,23 +44,18 @@ jobs:
         include:
           - os: ubuntu-latest
             target: linux-x64
-            bun_target: bun-linux-x64
             asset: eep-server-linux-x64
           - os: ubuntu-24.04-arm
             target: linux-arm64
-            bun_target: bun-linux-arm64
             asset: eep-server-linux-arm64
-          - os: macos-13
+          - os: macos-15-intel
             target: darwin-x64
-            bun_target: bun-darwin-x64
             asset: eep-server-darwin-x64
           - os: macos-14
             target: darwin-arm64
-            bun_target: bun-darwin-arm64
             asset: eep-server-darwin-arm64
           - os: windows-latest
             target: windows-x64
-            bun_target: bun-windows-x64
             asset: eep-server-windows-x64.exe
 
     steps:
@@ -75,31 +73,19 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build standalone binary
-        shell: bash
-        run: |
-          mkdir -p release
-          if [ "${{ matrix.target }}" = "windows-x64" ]; then
-            bun build packages/server/src/main.ts \
-              --compile \
-              --external bun-serialport \
-              --target=${{ matrix.bun_target }} \
-              --outfile=release/${{ matrix.asset }}
-          else
-            bun build packages/server/src/main.ts \
-              --compile \
-              --target=${{ matrix.bun_target }} \
-              --outfile=release/${{ matrix.asset }}
-          fi
+        run: bun run build:release ${{ matrix.target }}
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
-          path: release/${{ matrix.asset }}
+          path: packages/server/release/${{ matrix.asset }}
 
   release:
     name: Publish GitHub release
     needs: [changelog, build]
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - name: Download binaries

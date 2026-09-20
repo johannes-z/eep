@@ -1,12 +1,17 @@
 import type {
-  Device,
   GeneralSettings,
   HomeAssistantSettings,
   LogLevel,
   TransportSettings,
 } from '../config';
-import { validateMqttConfig } from '../config';
+import {
+  maximumMqttPacketSize,
+  validateHomeAssistantSettings,
+  validateMqttConfig,
+  validateTransportSettings,
+} from '../config';
 import type { MqttSettings } from '../mqtt';
+import type { Device } from '../devices/types';
 import { parseEnOceanId } from '../util';
 
 export interface MqttStatus {
@@ -16,10 +21,61 @@ export interface MqttStatus {
 
 const usb300ChannelCount = 127;
 
+export function createSettingsResource<Settings>(options: {
+  initial: Settings;
+  parse: (body: Record<string, unknown>, current: Settings) => Settings;
+  describe: (settings: Settings) => Record<string, unknown>;
+  apply?: (settings: Settings) => Promise<void>;
+  save?: (settings: Settings) => Promise<void>;
+  failureStatus?: number;
+}) {
+  let current = options.initial;
+  let queue = Promise.resolve();
+  async function applyUpdate(request: Request): Promise<Response> {
+    let next: Settings;
+    try {
+      const body: unknown = await request.json();
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        throw new Error('Settings must be a JSON object');
+      }
+      next = options.parse(body as Record<string, unknown>, current);
+    } catch (error) {
+      return Response.json({ error: (error as Error).message }, { status: 400 });
+    }
+    try {
+      await options.apply?.(next);
+      try {
+        await options.save?.(next);
+      } catch (error) {
+        await options.apply?.(current).catch(() => undefined);
+        throw error;
+      }
+      current = next;
+      return Response.json({ ...options.describe(current), restartRequired: !options.apply });
+    } catch (error) {
+      return Response.json(
+        { error: (error as Error).message },
+        { status: options.failureStatus ?? 400 },
+      );
+    }
+  }
+
+  return {
+    read: () => options.describe(current),
+    update(request: Request): Promise<Response> {
+      const result = queue.then(() => applyUpdate(request));
+      queue = result.then(
+        () => undefined,
+        () => undefined,
+      );
+      return result;
+    },
+  };
+}
+
 export function mqttSettingsResponse(
   settings: MqttSettings,
   status: MqttStatus = { connected: false },
-  discoveryTopic = settings.discoveryPrefix ?? 'homeassistant',
 ): Record<string, unknown> {
   return {
     configured: Boolean(settings.url),
@@ -30,7 +86,6 @@ export function mqttSettingsResponse(
     password: '',
     passwordConfigured: Boolean(settings.password),
     base_topic: settings.baseTopic ?? 'eep',
-    discovery_prefix: discoveryTopic,
     client_id: settings.clientId ?? '',
     keepalive: settings.keepalive ?? 60,
     version: settings.version ?? 4,
@@ -131,6 +186,9 @@ function readInteger(
 ): number | undefined {
   if (!(key in body)) return fallback;
   const value = body[key];
+  if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim())) {
+    throw new Error(`${key} must be an integer between ${minimum} and ${maximum}`);
+  }
   const number = typeof value === 'number' ? value : Number(value);
   if (!Number.isInteger(number) || number < minimum || number > maximum) {
     throw new Error(`${key} must be an integer between ${minimum} and ${maximum}`);
@@ -158,7 +216,6 @@ export function parseMqttSettings(
   }
   next.username = readString(body, 'user', current.username);
   next.baseTopic = readString(body, 'base_topic', current.baseTopic);
-  next.discoveryPrefix = readString(body, 'discovery_prefix', current.discoveryPrefix);
   next.clientId = readString(body, 'client_id', current.clientId);
   next.ca = readString(body, 'ca', current.ca);
   next.cert = readString(body, 'cert', current.cert);
@@ -177,7 +234,7 @@ export function parseMqttSettings(
     'maximum_packet_size',
     current.maximumPacketSize,
     1,
-    268435460,
+    maximumMqttPacketSize,
   );
   next.version = readInteger(body, 'version', current.version, 3, 5) as 3 | 4 | 5 | undefined;
   next.tls = readBoolean(body, 'tls', current.tls);
@@ -206,12 +263,7 @@ export function parseTransportSettings(
     baudRate: readInteger(body, 'baudrate', current.baudRate, 1, 4_000_000) ?? current.baudRate,
     rtscts: readBoolean(body, 'rtscts', current.rtscts) ?? current.rtscts,
   };
-  if (next.type !== 'none' && !next.path) {
-    throw new Error('port is required when a transport is configured');
-  }
-  if (next.type === 'tcp' && !next.path.startsWith('tcp://')) {
-    throw new Error('port must start with tcp:// for a TCP transport');
-  }
+  validateTransportSettings(next);
   return next;
 }
 
@@ -225,8 +277,7 @@ export function parseHomeAssistantSettings(
     statusTopic: readText(body, 'status_topic', current.statusTopic),
     logLevel: readLogLevel(body, 'log_level', current.logLevel ?? 'info'),
   };
-  if (!next.discoveryTopic) throw new Error('discovery_topic must not be empty');
-  if (!next.statusTopic) throw new Error('status_topic must not be empty');
+  validateHomeAssistantSettings(next);
   return next;
 }
 

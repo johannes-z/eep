@@ -1,8 +1,8 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
-## Unreleased
 
+## Unreleased
 
 ### Bug Fixes
 
@@ -14,8 +14,6 @@ All notable changes to this project will be documented in this file.
 
 - Fixes (dc60924)
 
-
 ### Features
 
 - Add fan profile tests and implement fan state mappings (ffefd25)
-

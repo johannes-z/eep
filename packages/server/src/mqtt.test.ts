@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { d2ValueToFanState } from './profiles/D2-50-00/fan';
 import { DeviceRegistry } from './devices/registry';
 import { TeachInManager } from './devices/teachin';
-import { MqttEntityBridge, type MqttClientLike } from './mqtt';
+import type { MqttClientLike } from './mqtt';
+import { MqttEntityBridge } from './integrations/homeassistant/bridge';
 
 class FakeMqttClient implements MqttClientLike {
   published: Array<{ topic: string; payload: string }> = [];
@@ -76,7 +77,7 @@ test('publishes Home Assistant fan discovery for seeded devices', async () => {
     speed_range_min: 1,
     speed_range_max: 4,
     availability: [{ topic: 'eep/status' }, { topic: 'eep/fan/ffe76681/availability' }],
-    availability_mode: 'any',
+    availability_mode: 'all',
     preset_modes: ['Automatic', 'Supply', 'Exhaust'],
   });
   expect(configuration.name).toBeNull();
@@ -89,7 +90,7 @@ test('publishes Home Assistant fan discovery for seeded devices', async () => {
     unique_id: 'eep_ffe76681_eep',
     state_topic: 'eep/device/ffe76681/eep/state',
     entity_category: 'diagnostic',
-    availability_mode: 'any',
+    availability_mode: 'all',
   });
   expect(
     client.published.find((message) => message.topic === 'eep/device/ffe76681/eep/state')?.payload,
@@ -103,6 +104,46 @@ test('publishes Home Assistant fan discovery for seeded devices', async () => {
       (message) => message.topic === 'homeassistant/button/eep_bridge_restart/config',
     )?.payload,
   ).toBeUndefined();
+});
+
+test('shutdown waits for in-flight discovery before publishing final offline state', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-mqtt-stop-inflight-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  const client = new FakeMqttClient();
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const publish = client.publish.bind(client);
+  client.publish = (topic, payload, options, callback) => {
+    if (topic === 'eep/status' && payload === 'online') {
+      started.resolve();
+      void release.promise.then(() => publish(topic, payload, options, callback));
+    } else publish(topic, payload, options, callback);
+  };
+  const bridge = new MqttEntityBridge(client, registry, async () => undefined);
+  bridge.start();
+  try {
+    const publication = bridge.publishAll();
+    await started.promise;
+    const shutdown = bridge.stop();
+    release.resolve();
+    await Promise.all([publication, shutdown]);
+    expect(
+      client.published.filter((message) => message.topic === 'eep/status').at(-1)?.payload,
+    ).toBe('offline');
+    for (const topic of new Set(
+      client.published
+        .filter((message) => message.topic.endsWith('/config'))
+        .map((message) => message.topic),
+    )) {
+      expect(client.published.filter((message) => message.topic === topic).at(-1)?.payload).toBe(
+        '',
+      );
+    }
+  } finally {
+    release.resolve();
+    await bridge.stop();
+    await registry.close();
+  }
 });
 
 test('publishes updated state when a device changes', async () => {
@@ -175,13 +216,40 @@ test('clears retained discovery when a device is removed', async () => {
   await bridge.stop();
 });
 
+test('reassigning a sender channel removes old discovery before exposing the new channel', async () => {
+  const { bridge, client, registry } = await createBridge();
+  try {
+    await registry.reassignSourceId(0xffe76681, 0xffe76685);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(
+      client.published
+        .filter((message) => message.topic === 'homeassistant/fan/ffe76681/config')
+        .at(-1)?.payload,
+    ).toBe('');
+    expect(
+      client.published
+        .filter((message) => message.topic === 'homeassistant/sensor/eep_ffe76681_eep/config')
+        .at(-1)?.payload,
+    ).toBe('');
+    expect(
+      JSON.parse(
+        client.published
+          .filter((message) => message.topic === 'homeassistant/fan/ffe76685/config')
+          .at(-1)?.payload ?? '{}',
+      ),
+    ).toMatchObject({ unique_id: 'eep_fan_ffe76685' });
+  } finally {
+    await bridge.stop();
+    await registry.close();
+  }
+});
+
 test('uses configured Home Assistant topics and keeps unknown devices unavailable', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-mqtt-topics-'));
   const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
   const client = new FakeMqttClient();
   const bridge = new MqttEntityBridge(client, registry, async () => undefined, {
     baseTopic: 'custom',
-    discoveryPrefix: 'custom-discovery',
     homeAssistant: {
       enabled: true,
       discoveryTopic: 'ha/config',
@@ -211,7 +279,7 @@ test('maps fan MQTT commands to D2 values', async () => {
   client.send('eep/fan/ffe76681/command', 'OFF');
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  expect(commands).toEqual([3, 3, 3, 1, 0]);
+  expect(commands).toEqual([3, 1, 0]);
 });
 
 test('keeps MQTT state and commands active when Home Assistant is disabled', async () => {
@@ -238,7 +306,7 @@ test('keeps MQTT state and commands active when Home Assistant is disabled', asy
 
   bridge.start();
   await bridge.publishAll();
-  client.send('eep/fan/ffe76681/percentage/set', '75');
+  client.send('eep/fan/ffe76681/percentage/set', '3');
   await new Promise((resolve) => setTimeout(resolve, 0));
 
   expect(
@@ -265,7 +333,7 @@ test('publishes the updated speed after an MQTT command', async () => {
   await registry.update(0xffe76681, {
     reportedState: d2ValueToFanState(4),
   });
-  client.send('eep/fan/ffe76681/percentage/set', '75');
+  client.send('eep/fan/ffe76681/percentage/set', '3');
   await new Promise((resolve) => setTimeout(resolve, 50));
 
   const speedStates = client.published.filter(
@@ -280,7 +348,7 @@ test('clears the Home Assistant preset when an MQTT speed is selected', async ()
     availability: 'online',
     reportedState: d2ValueToFanState(11),
   });
-  client.send('eep/fan/ffe76681/percentage/set', '25');
+  client.send('eep/fan/ffe76681/percentage/set', '1');
   await new Promise((resolve) => setTimeout(resolve, 50));
 
   const presetStates = client.published.filter(
@@ -414,4 +482,14 @@ test('handles the Home Assistant bridge Restart button', async () => {
 
   expect(restartCount).toBe(1);
   await bridge.stop();
+});
+
+test('ignores late commands and reconnects after bridge shutdown', async () => {
+  const { bridge, client, commands } = await createBridge();
+  await bridge.stop();
+  const publications = client.published.length;
+  client.send('eep/fan/ffe76681/command', 'ON');
+  await bridge.publishAll();
+  expect(commands).toEqual([]);
+  expect(client.published).toHaveLength(publications);
 });

@@ -1,43 +1,23 @@
+import type { Device as RegisteredDevice } from '../devices/types';
+import type { ProfileEntityDescriptor, ProfileEntityState } from '../profiles/types';
+export type { ListenPacket, ListenSnapshot as ListenResponse } from '../transport/listener';
+import type { ListenSnapshot } from '../transport/listener';
+
 export type AppView =
-  | 'overview'
+  | 'devices'
   | 'pairing'
   | 'packet-listener'
   | 'settings'
   | 'mqtt'
-  | 'homeassistant'
-  | 'general';
+  | 'homeassistant';
 
-export interface EntityState {
-  isOn: boolean;
-  percentage?: number;
-  preset?: string;
-}
-
-export interface EntityDescriptor {
-  kind: string;
-  protocol: string;
-  power: boolean;
-  commands: string[];
-  percentage?: { min: number; max: number };
-  presets?: string[];
-}
-
-export interface Device {
-  sourceId: number;
-  targetId: number;
-  name: string;
-  profileId: string;
-  capabilities: unknown;
+export interface Device extends RegisteredDevice {
   profile?: {
     id: string;
     description: string;
-    entity?: EntityDescriptor;
+    entity?: ProfileEntityDescriptor;
   };
-  availability: 'online' | 'offline' | 'unknown';
-  lastSeen?: string;
-  reportedState?: unknown;
-  desiredState?: unknown;
-  entityState?: EntityState;
+  entityState?: ProfileEntityState;
 }
 
 export interface TeachInCandidate {
@@ -48,27 +28,6 @@ export interface TeachInCandidate {
 export interface PairingResponse {
   active: boolean;
   candidates: TeachInCandidate[];
-}
-
-export interface ListenPacket {
-  id: number;
-  timestamp: string;
-  direction: 'rx' | 'tx';
-  packetType: number;
-  data: string;
-  optionalData: string;
-  radio?: {
-    rorg: number;
-    payload: string;
-    senderId: string;
-    teachIn: boolean;
-    eep?: string;
-  };
-}
-
-export interface ListenResponse {
-  active: boolean;
-  packets: ListenPacket[];
 }
 
 export interface MqttResponse {
@@ -140,7 +99,7 @@ export interface AppSnapshot {
   homeAssistant: HomeAssistantResponse;
   mqtt: MqttResponse;
   pairing: PairingResponse;
-  listen: ListenResponse;
+  listen: ListenSnapshot;
 }
 
 export type CommandBody = Record<string, unknown>;

@@ -1,57 +1,26 @@
-import type { Device } from '../config';
+import type { Device } from './types';
 import { createDefaultProfileRegistry, type ProfileRegistry } from '../profiles';
 import type { DeviceRegistry } from './registry';
 import type { TransportConnection } from '../transport/adapters';
 
 export type TransmitListener = (payload: Uint8Array) => void | Promise<void>;
 
-async function writePayload(socket: TransportConnection, payload: Uint8Array): Promise<void> {
-  await socket.write(payload);
-}
-
 export async function sendDeviceCommand(
   socket: TransportConnection,
-  registry: DeviceRegistry | undefined,
+  registry: DeviceRegistry,
   device: Device,
   request: unknown,
   profiles: ProfileRegistry = createDefaultProfileRegistry(),
-  senderId?: number,
   onTransmit?: TransmitListener,
 ): Promise<void> {
   const profile = profiles.require(device.profileId);
-  const context = {
-    sourceId: device.sourceId,
-    ...(senderId === undefined ? {} : { senderId }),
-    targetId: device.targetId,
-    capabilities: device.capabilities,
-    reportedState: device.reportedState,
-    desiredState: device.desiredState,
-  };
-  const command = profile.parseCommand(context, request);
-  const payload = profile.encodeCommand(context, command);
-  await writePayload(socket, payload);
+  const command = profile.parseCommand(device, request);
+  const payload = profile.encodeCommand(device, command);
+  await socket.write(payload);
   await onTransmit?.(payload);
-  if (registry && command.desiredState !== undefined) {
+  if (command.desiredState !== undefined) {
     await registry.update(device.sourceId, {
-      desiredState: command.desiredState as Device['desiredState'],
+      desiredState: command.desiredState,
     });
   }
-}
-
-export function assertSupportedDeviceValue(
-  device: Device,
-  value: number,
-  profiles: ProfileRegistry = createDefaultProfileRegistry(),
-): void {
-  const profile = profiles.require(device.profileId);
-  profile.parseCommand(
-    {
-      sourceId: device.sourceId,
-      targetId: device.targetId,
-      capabilities: device.capabilities,
-      reportedState: device.reportedState,
-      desiredState: device.desiredState,
-    },
-    { value },
-  );
 }

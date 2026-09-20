@@ -14,6 +14,7 @@
     "build": "bun run --cwd packages/addon build",
     "build:release": "bun run --cwd packages/server build:release",
     "changelog": "git-cliff --output CHANGELOG.md",
+    "check": "bun run format:check && bun run lint && bun run typecheck && bun run test && bun run build",
     "dev": "bun run --cwd packages/server dev",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",

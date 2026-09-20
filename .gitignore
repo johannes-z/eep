@@ -4,3 +4,4 @@ dist
 packages/server/release
 *.db
 secrets.yaml
+.tanstack

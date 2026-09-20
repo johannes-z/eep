@@ -1,37 +1,24 @@
-import { type FormEvent } from 'react';
-import type { HomeAssistantResponse, SettingsFormMessage } from '../ui/types';
-import { SettingsActions, SettingsLayout } from './SettingsLayout';
+import type { HomeAssistantResponse } from '../ui/types';
+import { useSettingsForm } from '../ui/useSettingsForm';
+import { SettingsActions, SettingsForm, SettingsLayout } from './SettingsLayout';
 
-export function HomeAssistantSettings({
-  settings,
-  message,
-  saving,
-  onChange,
-  onSave,
-}: {
-  settings: HomeAssistantResponse;
-  message: SettingsFormMessage;
-  saving: boolean;
-  onChange: (settings: HomeAssistantResponse) => void;
-  onSave: (settings: HomeAssistantResponse) => void;
-}) {
+export function HomeAssistantSettings({ settings: live }: { settings: HomeAssistantResponse }) {
+  const { settings, message, saving, onChange, onSave } = useSettingsForm(
+    live,
+    '/api/homeassistant',
+  );
   const update = <K extends keyof HomeAssistantResponse>(key: K, value: HomeAssistantResponse[K]) =>
     onChange({ ...settings, [key]: value });
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    onSave(settings);
-  };
 
   return (
     <SettingsLayout
-      description="Discovery and availability topics for Home Assistant."
-      status={settings.enabled ? 'Enabled' : 'Disabled'}
-      statusTone={settings.enabled ? 'online' : 'neutral'}
+      status={live.enabled ? 'Enabled' : 'Disabled'}
+      statusTone={live.enabled ? 'online' : 'neutral'}
       title="Home Assistant"
     >
-      <form
-        className="settings-panel settings-form"
-        onSubmit={submit}
+      <SettingsForm
+        saving={saving}
+        onSubmit={() => onSave(settings)}
       >
         <div className="form-section">
           <h3>Integration</h3>
@@ -80,7 +67,7 @@ export function HomeAssistantSettings({
           message={message}
           saving={saving}
         />
-      </form>
+      </SettingsForm>
     </SettingsLayout>
   );
 }

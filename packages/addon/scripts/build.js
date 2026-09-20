@@ -5,7 +5,7 @@ const packageDirectory = join(import.meta.dir, '..');
 const serverDirectory = join(packageDirectory, '..', 'server');
 const distDirectory = join(packageDirectory, 'dist');
 
-const serverBuild = Bun.spawn(['bun', 'run', 'build'], {
+const serverBuild = Bun.spawn([process.execPath, 'run', 'build'], {
   cwd: serverDirectory,
   stderr: 'inherit',
   stdout: 'inherit',
@@ -26,7 +26,11 @@ cpSync(join(serverDirectory, 'public', 'index.html'), join(distDirectory, 'index
 });
 const packageJson = JSON.parse(await Bun.file(join(packageDirectory, 'package.json')).text());
 packageJson.scripts = { start: 'bun index.js' };
+packageJson.main = 'index.js';
 await Bun.write(join(distDirectory, 'package.json'), `${JSON.stringify(packageJson, null, 2)}\n`);
+const addonConfig = Bun.YAML.parse(await Bun.file(join(distDirectory, 'config.yaml')).text());
+addonConfig.version = packageJson.version;
+await Bun.write(join(distDirectory, 'config.yaml'), Bun.YAML.stringify(addonConfig));
 
 const rootLock = Bun.JSON5.parse(
   await Bun.file(join(packageDirectory, '..', '..', 'bun.lock')).text(),

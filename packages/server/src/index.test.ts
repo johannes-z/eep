@@ -1,5 +1,5 @@
-import { expect, mock, test } from 'bun:test';
-import { mkdtemp } from 'node:fs/promises';
+import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { defaultMqttSettings } from './mqtt';
@@ -9,19 +9,41 @@ import { TeachInManager } from './devices/teachin';
 import { PacketListener } from './transport/listener';
 import { buildCommonCommand } from './transport/esp3';
 
-void mock.module('bun-serialport', () => ({
-  SerialPort: class {
-    on() {
-      return this;
-    }
+import {
+  createRequestHandler as createHandler,
+  type RequestHandlerOptions,
+} from './app/requestHandler';
+import type { TransportConnection } from './transport/adapters';
 
-    async open() {}
+let fixtureDirectory: string;
+let fixtureRegistry: DeviceRegistry;
+const pairingSessions: TeachInManager[] = [];
 
-    async write() {}
-  },
-}));
+beforeEach(async () => {
+  fixtureDirectory = await mkdtemp(join(tmpdir(), 'eep-http-'));
+  fixtureRegistry = await DeviceRegistry.load(join(fixtureDirectory, 'configuration.yaml'));
+});
 
-const { createRequestHandler } = await import('./index');
+afterEach(async () => {
+  for (const teachIn of pairingSessions.splice(0)) teachIn.stop();
+  await fixtureRegistry.close();
+  await rm(fixtureDirectory, { recursive: true, force: true });
+});
+
+function createRequestHandler(
+  socket: TransportConnection,
+  options: Partial<RequestHandlerOptions> = {},
+) {
+  const registry = options.registry ?? fixtureRegistry;
+  const teachIn = options.teachIn ?? new TeachInManager(registry, 0xffe76685);
+  pairingSessions.push(teachIn);
+  return createHandler(() => socket, {
+    registry,
+    teachIn,
+    listener: new PacketListener(),
+    ...options,
+  });
+}
 
 class FakeTransport {
   writes: Uint8Array[] = [];
@@ -30,6 +52,35 @@ class FakeTransport {
     this.writes.push(payload);
   }
 }
+
+test('rejects cross-origin commands before transmitting', async () => {
+  const transport = new FakeTransport();
+  const handler = createRequestHandler(transport);
+  const response = await handler(
+    new Request('http://localhost/api/devices/ffe76681/command', {
+      method: 'POST',
+      headers: { origin: 'https://untrusted.example', 'content-type': 'application/json' },
+      body: JSON.stringify({ value: 1 }),
+    }),
+  );
+  expect(response.status).toBe(403);
+  expect(transport.writes).toHaveLength(0);
+});
+
+test.each([{ keepalive: null }, { keepalive: false }, { keepalive: [] }, { keepalive: '' }])(
+  'rejects unsafe numeric settings input %j',
+  async (body) => {
+    const handler = createRequestHandler(new FakeTransport());
+    const response = await handler(
+      new Request('http://localhost/api/mqtt', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
+    expect(response.status).toBe(400);
+  },
+);
 
 test('general settings reflect a reconnected transceiver base ID', async () => {
   let baseId: number | undefined;
@@ -65,7 +116,6 @@ test('uses each device source ID when sending a command', async () => {
   const transport = new FakeTransport();
   const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
   const handler = createRequestHandler(transport, {
-    controllerId: 0xffe76681,
     registry,
   });
 
@@ -265,21 +315,14 @@ test('deletes and persists removal of a device', async () => {
   expect(missing.status).toBe(404);
 });
 
-test('serves the browser console', async () => {
-  const handler = createRequestHandler(new FakeTransport());
-  const response = await handler(new Request('http://localhost/'));
-
-  expect(response.status).toBe(200);
-  expect(await response.text()).toContain('EnOcean2MQTT');
-});
-
-test('serves the browser console for application deep links', async () => {
-  const handler = createRequestHandler(new FakeTransport());
-  const response = await handler(new Request('http://localhost/settings/mqtt'));
-
-  expect(response.status).toBe(200);
-  expect(await response.text()).toContain('EnOcean2MQTT');
-});
+test.each(['/settings/general', '/index.html', '/unknown', '/settings/unknown'])(
+  'does not serve a compatibility app shell for %s',
+  async (path) => {
+    const handler = createRequestHandler(new FakeTransport());
+    const response = await handler(new Request(`http://localhost${path}`));
+    expect(response.status).toBe(404);
+  },
+);
 
 test('reads and updates MQTT settings without exposing the password', async () => {
   let savedSettings = defaultMqttSettings();
@@ -322,6 +365,33 @@ test('reads and updates MQTT settings without exposing the password', async () =
     version: 5,
   });
   expect(appliedSettings).toMatchObject(savedSettings);
+});
+
+test('serializes settings changes and rolls back failed persistence', async () => {
+  const applied: number[] = [];
+  const handler = createRequestHandler(
+    { write: async () => undefined },
+    {
+      generalSettings: { startId: 1 },
+      applyGeneralSettings: async ({ startId }) => {
+        applied.push(startId);
+      },
+      saveGeneralSettings: async ({ startId }) => {
+        if (startId === 2) throw new Error('Cannot save');
+      },
+    },
+  );
+  const update = (start_id: number) =>
+    handler(
+      new Request('http://localhost/api/general', {
+        method: 'PUT',
+        body: JSON.stringify({ start_id }),
+      }),
+    );
+  const responses = await Promise.all([update(2), update(3)]);
+  expect(responses.map((response) => response.status)).toEqual([400, 200]);
+  expect(applied).toEqual([2, 1, 3]);
+  expect(handler.snapshot().general.start_id).toBe('00000003');
 });
 
 test('reads and updates the general start ID', async () => {
@@ -383,7 +453,7 @@ test('rejects non-API command routes', async () => {
 
 test('returns the USB 300 base ID as read-only general data', async () => {
   const handler = createRequestHandler(new FakeTransport(), {
-    baseId: 0xffe76680,
+    baseId: () => 0xffe76680,
     generalSettings: { startId: 0xffe76681 },
   });
 

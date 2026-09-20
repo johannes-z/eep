@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test';
-import { resolveServerConfig } from './config';
+import { getMqttSettings, resolveServerConfig } from './config';
 
 const originalEnvironment = { ...process.env };
 
@@ -10,7 +10,7 @@ afterEach(() => {
 test('resolves standalone defaults without add-on configuration', () => {
   delete process.env.TRANSPORT_PATH;
   delete process.env.TRANSPORT_TYPE;
-  delete process.env.CONTROLLER_ID;
+  delete process.env.START_ID;
 
   expect(resolveServerConfig()).toMatchObject({
     host: '127.0.0.1',
@@ -49,9 +49,9 @@ test('resolves a configured start ID', () => {
   expect(resolveServerConfig({ startId: 0xffe76685 }).startId).toBe(0xffe76685);
 });
 
-test('rejects a zero controller ID', () => {
-  expect(() => resolveServerConfig({ controllerId: 0 })).toThrow(
-    'controllerId must be an integer between 1 and 4294967295',
+test('rejects a zero start ID', () => {
+  expect(() => resolveServerConfig({ startId: 0 })).toThrow(
+    'startId must be an integer between 1 and 4294967295',
   );
 });
 
@@ -66,4 +66,21 @@ test('rejects malformed persisted transport and Home Assistant values', () => {
       homeAssistant: { enabled: 'yes' as never },
     }),
   ).toThrow('homeAssistant.enabled must be a boolean');
+});
+
+test('rejects malformed MQTT environment values instead of silently changing their meaning', () => {
+  process.env.MQTT_VERSION = 'invalid';
+  expect(() => getMqttSettings({ mqtt: { url: 'mqtt://localhost' } })).toThrow('MQTT_VERSION');
+  process.env.MQTT_VERSION = '4';
+  process.env.MQTT_TLS = 'yes';
+  expect(() => getMqttSettings({ mqtt: { url: 'mqtt://localhost' } })).toThrow('MQTT_TLS');
+});
+
+test('validates complete transport endpoints and publication topics at startup', () => {
+  expect(() => resolveServerConfig({ transport: { type: 'tcp', path: 'tcp://host:0' } })).toThrow(
+    'Invalid TCP',
+  );
+  expect(() =>
+    resolveServerConfig({ homeAssistant: { discoveryTopic: 'homeassistant/#' } }),
+  ).toThrow('without wildcards');
 });

@@ -7,6 +7,20 @@ const context = {
   capabilities: d2Profile.defaultCapabilities(),
 };
 
+test.each(['toString', 'constructor', '__proto__'])(
+  'rejects inherited capability name %s',
+  (capability) => {
+    expect(() => d2Profile.validateCapabilities([capability])).toThrow(
+      'Invalid D2-50-00 capabilities',
+    );
+  },
+);
+
+test.each(['', ' ', '\n'])('rejects blank commands %j', (value) => {
+  expect(() => d2Profile.parseCommand(context, { value })).toThrow();
+  expect(() => d2Profile.entity?.parseCommand(context, 'percentage', value)).toThrow();
+});
+
 test('decodes D2-50-00 basic status modes through the profile contract', () => {
   expect(
     d2Profile.decodeIngress(context, {
@@ -43,15 +57,14 @@ test('parses a command and encodes the D2 ERP1 frame through the profile contrac
   expect(Array.from(frame.slice(6, 13))).toEqual([0xd2, 3, 0, 0, 0, 0, 0]);
 });
 
-test('uses the controller sender ID when addressing a device command', () => {
+test('uses the assigned device source ID when addressing a command', () => {
   const commandContext = {
     ...context,
     sourceId: 0xffe76682,
-    senderId: 0xffe76681,
   };
   const command = d2Profile.parseCommand(commandContext, { percentage: 75 });
   const frame = d2Profile.encodeCommand(commandContext, command);
 
-  expect(Array.from(frame.slice(13, 17))).toEqual([0xff, 0xe7, 0x66, 0x81]);
+  expect(Array.from(frame.slice(13, 17))).toEqual([0xff, 0xe7, 0x66, 0x82]);
   expect(Array.from(frame.slice(19, 23))).toEqual([0x05, 0x12, 0x67, 0x87]);
 });

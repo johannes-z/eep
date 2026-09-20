@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DeviceRegistry } from './registry';
@@ -112,7 +112,10 @@ test('collects and accepts a supported D2-50-00 candidate', async () => {
 test('allocates the next free sender ID when the controller ID is already paired', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-'));
   const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
-  const manager = new TeachInManager(registry, 0xffe76681);
+  let responseSourceId: number | undefined;
+  const manager = new TeachInManager(registry, 0xffe76681, async (candidate) => {
+    responseSourceId = candidate.sourceId;
+  });
   manager.start();
   manager.observe({
     RORG: 0xd4,
@@ -134,8 +137,49 @@ test('allocates the next free sender ID when the controller ID is already paired
   const device = await manager.accept(0x05010207);
 
   expect(device.sourceId).toBe(0xffe76685);
+  expect(responseSourceId).toBe(device.sourceId);
   expect(registry.findBySourceId(0xffe76681)?.name).toBe('Living Room vent');
   expect(registry.findByTargetId(0x05010207)?.sourceId).toBe(0xffe76685);
+});
+
+test('reserves distinct sender IDs before acknowledging concurrent candidates', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-reservations-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  const responses = new Map<number, number>();
+  const manager = new TeachInManager(registry, 0xffe76681, async (candidate) => {
+    responses.set(candidate.targetId, candidate.sourceId);
+  });
+  try {
+    manager.start();
+    for (const senderId of ['05010207', '05010208', '05010207']) {
+      manager.observe({
+        RORG: 0xd4,
+        senderId,
+        payload: [0x80, 0xff, 0x0b, 0, 0xd2, 0x50, 0],
+        teachIn: true,
+        teachInInfo: {
+          control: 0x80,
+          channel: 0xff,
+          manufacturer: 0x000b,
+          eep: 'd2-50-00',
+          direction: 'bidirectional',
+          responseExpected: true,
+          requestType: 'teachIn',
+          command: 'query',
+        },
+      });
+    }
+    const devices = await Promise.all([manager.accept(0x05010207), manager.accept(0x05010208)]);
+    expect(devices.map((device) => device.sourceId)).toEqual([0xffe76685, 0xffe76686]);
+    for (const device of devices) {
+      expect(responses.get(device.targetId)).toBe(device.sourceId);
+      expect(registry.findByTargetId(device.targetId)?.sourceId).toBe(device.sourceId);
+    }
+  } finally {
+    manager.stop();
+    await registry.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test('uses an explicitly selected sender ID for the UTE signal', async () => {
@@ -264,16 +308,9 @@ test('re-pairing an existing target preserves its assigned sender channel', asyn
   const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-repair-'));
   const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
   let responseSource = 0;
-  const manager = new TeachInManager(
-    registry,
-    0xffe76681,
-    async (candidate) => {
-      responseSource = candidate.sourceId;
-    },
-    undefined,
-    undefined,
-    0xffe76685,
-  );
+  const manager = new TeachInManager(registry, 0xffe76685, async (candidate) => {
+    responseSource = candidate.sourceId;
+  });
   manager.start();
   manager.observe({
     RORG: 0xd4,

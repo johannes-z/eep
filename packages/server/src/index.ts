@@ -1,24 +1,22 @@
 import { join } from 'node:path';
 import homepage from '../public/index.html';
 
-import { resolveServerConfig, validateMqttConfig, type AddonConfig } from './config';
-import { createRequestHandler, type MqttStatus, type RequestTransport } from './app/requestHandler';
+import { getMqttSettings, resolveServerConfig, type AddonConfig } from './config';
+import { createRequestHandler } from './app/requestHandler';
+import type { MqttStatus } from './app/settings';
 import { sendDeviceCommand } from './devices/commands';
 import { DeviceRegistry } from './devices/registry';
 import { TeachInManager, type TeachInCandidate } from './devices/teachin';
 import { defaultMqttSettings, type MqttSettings } from './mqtt';
 import { MqttRuntime } from './integrations/mqtt/client';
 import {
-  loadHomeAssistantSettings,
-  loadGeneralSettings,
-  loadMqttSettings,
-  loadTransportSettings,
+  loadConfiguration,
   saveHomeAssistantSettings,
   saveGeneralSettings,
   saveMqttSettings,
   saveTransportSettings,
 } from './settings';
-import { closeTransport, openTransport } from './transport/adapters';
+import { closeTransport, openTransport, type TransportConnection } from './transport/adapters';
 import {
   buildUteTeachInQuery,
   buildUteTeachInResponse,
@@ -30,72 +28,15 @@ import { PacketListener } from './transport/listener';
 import { createDefaultProfileRegistry } from './profiles';
 import { appRoutes } from './ui/routes';
 import { createStateUpdates } from './app/stateUpdates';
+import { requireEnOceanId } from './util/enoceanId';
 
 const homepageRoutes = Object.fromEntries([
-  ['/index.html', homepage as never],
+  ['/', homepage as never],
   ...appRoutes.map(({ path }) => [path, homepage as never]),
 ]);
 
-export { createRequestHandler, sendDeviceCommand };
-export type { RequestTransport };
-
-export function getMqttSettings(
-  addonConfig: AddonConfig,
-  stored: Partial<MqttSettings> = {},
-): MqttSettings | undefined {
-  const configured = addonConfig.mqtt ?? {};
-  const url =
-    stored.url ??
-    configured.url ??
-    process.env.MQTT_URL ??
-    (process.env.MQTT_HOST
-      ? `${process.env.MQTT_TLS === 'true' ? 'mqtts' : 'mqtt'}://${process.env.MQTT_HOST}:${process.env.MQTT_PORT ?? '1883'}`
-      : undefined);
-  if (!url) return undefined;
-  const versionValue = Number(process.env.MQTT_VERSION ?? 4);
-  const version: 3 | 4 | 5 =
-    versionValue === 3 || versionValue === 4 || versionValue === 5 ? versionValue : 4;
-  const settings: MqttSettings = {
-    url,
-    username:
-      stored.username ?? configured.username ?? process.env.MQTT_USERNAME ?? process.env.MQTT_USER,
-    password: stored.password ?? configured.password ?? process.env.MQTT_PASSWORD,
-    tls: stored.tls ?? configured.tls ?? process.env.MQTT_TLS === 'true',
-    discoveryPrefix:
-      stored.discoveryPrefix ??
-      configured.discoveryPrefix ??
-      process.env.MQTT_DISCOVERY_PREFIX ??
-      'homeassistant',
-    baseTopic: stored.baseTopic ?? configured.baseTopic ?? process.env.MQTT_BASE_TOPIC ?? 'eep',
-    clientId: stored.clientId ?? configured.clientId ?? process.env.MQTT_CLIENT_ID,
-    keepalive: stored.keepalive ?? configured.keepalive ?? Number(process.env.MQTT_KEEPALIVE ?? 60),
-    ca: stored.ca ?? configured.ca ?? process.env.MQTT_CA,
-    cert: stored.cert ?? configured.cert ?? process.env.MQTT_CERT,
-    key: stored.key ?? configured.key ?? process.env.MQTT_KEY,
-    rejectUnauthorized:
-      stored.rejectUnauthorized ??
-      configured.rejectUnauthorized ??
-      process.env.MQTT_REJECT_UNAUTHORIZED !== 'false',
-    forceDisableRetain:
-      stored.forceDisableRetain ??
-      configured.forceDisableRetain ??
-      process.env.MQTT_FORCE_DISABLE_RETAIN === 'true',
-    includeDeviceInformation:
-      stored.includeDeviceInformation ??
-      configured.includeDeviceInformation ??
-      process.env.MQTT_INCLUDE_DEVICE_INFORMATION !== 'false',
-    maximumPacketSize:
-      stored.maximumPacketSize ??
-      configured.maximumPacketSize ??
-      Number(process.env.MQTT_MAXIMUM_PACKET_SIZE ?? 1048576),
-    version: stored.version ?? configured.version ?? version,
-  };
-  validateMqttConfig(settings);
-  return settings;
-}
-
 function createTeachInResponder(
-  getSocket: () => RequestTransport,
+  getSocket: () => TransportConnection,
   onTransmit: (payload: Uint8Array) => void,
 ): (candidate: TeachInCandidate, response: UteResponse) => Promise<void> {
   return async (candidate, response): Promise<void> => {
@@ -111,7 +52,7 @@ function createTeachInResponder(
 }
 
 function createTeachInSignalSender(
-  getSocket: () => RequestTransport,
+  getSocket: () => TransportConnection,
   onTransmit: (payload: Uint8Array) => void,
 ): (sourceId: number, targetId?: number) => Promise<void> {
   return async (sourceId, targetId): Promise<void> => {
@@ -123,7 +64,7 @@ function createTeachInSignalSender(
 
 export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
   let registry: DeviceRegistry | undefined;
-  let initialTransport: RequestTransport | undefined;
+  let initialTransport: TransportConnection | undefined;
   let transportRuntime: TransportRuntime | undefined;
   let mqttRuntime: MqttRuntime | undefined;
   let server: ReturnType<typeof Bun.serve> | undefined;
@@ -162,19 +103,19 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
     const configurationPath = join(dataDir, 'configuration.yaml');
     const loadedRegistry = await DeviceRegistry.load(configurationPath, profiles);
     registry = loadedRegistry;
-    const storedMqttSettings = await loadMqttSettings(configurationPath);
-    const storedTransportSettings = await loadTransportSettings(configurationPath);
-    const storedHomeAssistantSettings = await loadHomeAssistantSettings(configurationPath);
-    const storedGeneralSettings = await loadGeneralSettings(configurationPath);
+    const stored = await loadConfiguration(configurationPath);
     const serverConfig = resolveServerConfig({
       ...addonConfig,
-      startId: storedGeneralSettings?.startId ?? addonConfig.startId,
-      transport: { ...storedTransportSettings, ...addonConfig.transport },
-      homeAssistant: { ...storedHomeAssistantSettings, ...addonConfig.homeAssistant },
+      startId:
+        stored.general?.startId === undefined
+          ? addonConfig.startId
+          : requireEnOceanId(stored.general.startId, 'startId', 1),
+      transport: { ...stored.transport, ...addonConfig.transport },
+      homeAssistant: { ...stored.homeassistant, ...addonConfig.homeAssistant },
     });
     let activeMqttSettings = getMqttSettings(
       { ...addonConfig, mqtt: serverConfig.mqtt },
-      storedMqttSettings,
+      stored.mqtt,
     );
     let homeAssistantSettings = serverConfig.homeAssistant;
     const mqttStatus: MqttStatus = { connected: false };
@@ -192,28 +133,16 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
       return undefined;
     });
     const defaultSourceId = baseId !== undefined && baseId < 0xffffffff ? baseId + 1 : 1;
-    const configuredControllerId = loadedRegistry.list()[0]?.sourceId;
-    const startId =
-      serverConfig.startId ??
-      serverConfig.controllerId ??
-      configuredControllerId ??
-      defaultSourceId;
-    if (!Number.isInteger(startId) || startId < 1 || startId > 0xffffffff) {
-      throw new Error(
-        'A non-zero START_ID, CONTROLLER_ID, or persisted device sourceId is required for UTE teach-in',
-      );
-    }
-    const controllerId = serverConfig.controllerId ?? configuredControllerId ?? defaultSourceId;
+    const startId = serverConfig.startId ?? defaultSourceId;
     let activeTransportRuntime: TransportRuntime;
     const packetListener = new PacketListener();
     const captureTransmit = (payload: Uint8Array): void => packetListener.captureOutgoing(payload);
     const teachIn = new TeachInManager(
       loadedRegistry,
-      controllerId,
+      startId,
       createTeachInResponder(() => activeTransportRuntime.current, captureTransmit),
       profiles,
       createTeachInSignalSender(() => activeTransportRuntime.current, captureTransmit),
-      startId,
     );
     activeTransportRuntime = new TransportRuntime(
       openedTransport,
@@ -238,7 +167,6 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
           device,
           value,
           profiles,
-          undefined,
           captureTransmit,
         ),
       mqttStatus,
@@ -273,11 +201,9 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
 
     const handleRequest = createRequestHandler(() => activeTransportRuntime.current, {
       registry: loadedRegistry,
-      controllerId,
       baseId: () => baseId,
       generalSettings,
       teachIn,
-      webRoot: serverConfig.webRoot,
       transportSettings: serverConfig.transport,
       transportConnected: () => activeTransportRuntime.isConnected,
       saveTransportSettings: (settings) => saveTransportSettings(configurationPath, settings),

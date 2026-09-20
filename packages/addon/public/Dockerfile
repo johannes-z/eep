@@ -1,6 +1,6 @@
 ARG BUILD_FROM
-ARG BUN_VERSION=1.4.2
 FROM $BUILD_FROM
+ARG BUN_VERSION=1.4.2
 
 ENV LANG C.UTF-8
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]

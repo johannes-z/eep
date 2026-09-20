@@ -1,4 +1,6 @@
 import { expect, test } from 'bun:test';
+import { EventEmitter } from 'node:events';
+import { getChecksum } from '../util/getChecksum';
 import { changeState } from '../profiles/D2-50-00/changeState';
 import { toHex } from '../util/toHex';
 import {
@@ -69,6 +71,33 @@ test('reads the USB 300 base ID with CO_RD_IDBASE', async () => {
 
   const baseId = await readBaseId(connection);
   expect(baseId).toBe(0xffe76680);
+});
+
+test('cleans up base ID listeners when a transport write throws synchronously', async () => {
+  const events = new EventEmitter();
+  const connection = Object.assign(events, {
+    write: () => {
+      throw new Error('Disconnected');
+    },
+  });
+  expect(readBaseId(connection)).rejects.toThrow('Disconnected');
+  expect(events.listenerCount('data')).toBe(0);
+});
+
+test('rejects a one-byte ESP3 error response without waiting for the timeout', async () => {
+  const events = new EventEmitter();
+  const connection = Object.assign(events, {
+    write: () => {
+      const header = [0, 1, 0, 2];
+      const body = [1];
+      events.emit(
+        'data',
+        Uint8Array.from([0x55, ...header, getChecksum(header), ...body, getChecksum(body)]),
+      );
+    },
+  });
+  expect(readBaseId(connection)).rejects.toThrow('rejected base ID request with status 1');
+  expect(events.listenerCount('data')).toBe(0);
 });
 
 test('parses a UTE query in wire order', () => {

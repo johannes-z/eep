@@ -11,6 +11,8 @@
     "noEmit": true,
     "skipLibCheck": true,
     "noImplicitAny": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "forceConsistentCasingInFileNames": true
   },
   "include": ["src/"]

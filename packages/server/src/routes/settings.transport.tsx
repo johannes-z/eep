@@ -1,25 +1,15 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { TransportSettings } from '../components/TransportSettings';
-import { useAppContext } from '../App';
+import { useAppContext } from '../ui/App';
 import { routeMetadata } from '../ui/routes';
 
-function LoadingPage() {
-  return <div className="loading-state">Loading...</div>;
-}
-
 function TransportRoute() {
-  const { onSaveTransport, onTransportChange, savingTransport, transport, transportMessage } =
-    useAppContext();
-  return transport ? (
+  const { transport, general } = useAppContext();
+  return (
     <TransportSettings
-      message={transportMessage}
-      onChange={onTransportChange}
-      onSave={onSaveTransport}
-      saving={savingTransport}
       settings={transport}
+      general={general}
     />
-  ) : (
-    <LoadingPage />
   );
 }
 

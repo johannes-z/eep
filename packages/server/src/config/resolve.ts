@@ -1,4 +1,11 @@
 import { join } from 'node:path';
+import type { MqttSettings } from '../mqtt';
+import {
+  validateHomeAssistantSettings,
+  validateMqttConfig,
+  validateTransportSettings,
+  maximumMqttPacketSize,
+} from './validation';
 import type {
   AddonConfig,
   HomeAssistantSettings,
@@ -74,21 +81,6 @@ function defaultDataDirectory(): string {
   return join(import.meta.dir, isSourceConfigDirectory ? '../../data' : '../data');
 }
 
-function validateTransport(transport: TransportSettings): void {
-  if (!['none', 'serial', 'tcp'].includes(transport.type)) {
-    throw new Error('TRANSPORT_TYPE must be one of none, serial, or tcp');
-  }
-  if (transport.type !== 'none' && !transport.path) {
-    throw new Error('A transport path is required when a transport is configured');
-  }
-  if (transport.type === 'tcp' && !transport.path.startsWith('tcp://')) {
-    throw new Error('A TCP transport requires a tcp:// path');
-  }
-  if (transport.type === 'serial' && transport.path.startsWith('tcp://')) {
-    throw new Error('A serial transport cannot use a tcp:// path');
-  }
-}
-
 function resolveHomeAssistant(input: AddonConfig): HomeAssistantSettings {
   const configuredHomeAssistant = input.homeAssistant ?? {};
   const homeAssistant: HomeAssistantSettings = {
@@ -113,8 +105,7 @@ function resolveHomeAssistant(input: AddonConfig): HomeAssistantSettings {
       (process.env.HA_LOG_LEVEL as LogLevel | undefined) ?? 'info',
     ),
   };
-  if (!homeAssistant.discoveryTopic.trim()) throw new Error('HA_DISCOVERY_TOPIC must not be empty');
-  if (!homeAssistant.statusTopic.trim()) throw new Error('HA_STATUS_TOPIC must not be empty');
+  validateHomeAssistantSettings(homeAssistant);
   return homeAssistant;
 }
 
@@ -141,7 +132,7 @@ export function resolveServerConfig(input: AddonConfig = {}): ServerConfig {
       environmentBoolean('RTSCTS', false),
     ),
   };
-  validateTransport(transport);
+  validateTransportSettings(transport);
 
   return {
     host: input.host ?? process.env.HOST ?? '127.0.0.1',
@@ -150,13 +141,6 @@ export function resolveServerConfig(input: AddonConfig = {}): ServerConfig {
         ? environmentInteger('PORT', 3000, 1, 65_535)
         : parseInteger(input.port, 'port', 1, 65_535),
     dataDir: input.dataDir ?? process.env.DATA_DIR ?? defaultDataDirectory(),
-    webRoot: process.env.WEB_ROOT,
-    controllerId:
-      input.controllerId === undefined
-        ? process.env.CONTROLLER_ID === undefined
-          ? undefined
-          : parseInteger(process.env.CONTROLLER_ID, 'CONTROLLER_ID', 1, 0xffffffff)
-        : parseInteger(input.controllerId, 'controllerId', 1, 0xffffffff),
     startId:
       input.startId === undefined
         ? process.env.START_ID === undefined
@@ -167,4 +151,57 @@ export function resolveServerConfig(input: AddonConfig = {}): ServerConfig {
     homeAssistant: resolveHomeAssistant(input),
     mqtt: input.mqtt,
   };
+}
+
+export function getMqttSettings(
+  addonConfig: AddonConfig,
+  stored: Partial<MqttSettings> = {},
+): MqttSettings | undefined {
+  const configured = addonConfig.mqtt ?? {};
+  const url =
+    stored.url ??
+    configured.url ??
+    process.env.MQTT_URL ??
+    (process.env.MQTT_HOST
+      ? `${process.env.MQTT_TLS === 'true' ? 'mqtts' : 'mqtt'}://${process.env.MQTT_HOST}:${environmentInteger('MQTT_PORT', 1883, 1, 65535)}`
+      : undefined);
+  if (url === undefined || url === '') return undefined;
+  const settings: MqttSettings = {
+    url,
+    username:
+      stored.username ?? configured.username ?? process.env.MQTT_USERNAME ?? process.env.MQTT_USER,
+    password: stored.password ?? configured.password ?? process.env.MQTT_PASSWORD,
+    tls: stored.tls ?? configured.tls ?? environmentBoolean('MQTT_TLS', false),
+    baseTopic: stored.baseTopic ?? configured.baseTopic ?? process.env.MQTT_BASE_TOPIC ?? 'eep',
+    clientId: stored.clientId ?? configured.clientId ?? process.env.MQTT_CLIENT_ID,
+    keepalive:
+      stored.keepalive ??
+      configured.keepalive ??
+      environmentInteger('MQTT_KEEPALIVE', 60, 0, 65535),
+    ca: stored.ca ?? configured.ca ?? process.env.MQTT_CA,
+    cert: stored.cert ?? configured.cert ?? process.env.MQTT_CERT,
+    key: stored.key ?? configured.key ?? process.env.MQTT_KEY,
+    rejectUnauthorized:
+      stored.rejectUnauthorized ??
+      configured.rejectUnauthorized ??
+      environmentBoolean('MQTT_REJECT_UNAUTHORIZED', true),
+    forceDisableRetain:
+      stored.forceDisableRetain ??
+      configured.forceDisableRetain ??
+      environmentBoolean('MQTT_FORCE_DISABLE_RETAIN', false),
+    includeDeviceInformation:
+      stored.includeDeviceInformation ??
+      configured.includeDeviceInformation ??
+      environmentBoolean('MQTT_INCLUDE_DEVICE_INFORMATION', true),
+    maximumPacketSize:
+      stored.maximumPacketSize ??
+      configured.maximumPacketSize ??
+      environmentInteger('MQTT_MAXIMUM_PACKET_SIZE', 1048576, 1, maximumMqttPacketSize),
+    version:
+      stored.version ??
+      configured.version ??
+      (environmentInteger('MQTT_VERSION', 4, 3, 5) as 3 | 4 | 5),
+  };
+  validateMqttConfig(settings);
+  return settings;
 }

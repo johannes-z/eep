@@ -2,7 +2,7 @@ import { changeState } from './changeState';
 import {
   d2ValueToFanState,
   fanPercentageToD2Value,
-  fanMqttPercentageToD2Value,
+  fanSpeedToD2Value,
   fanPowerToD2Value,
   fanPresetToD2Value,
   fanD2ValueToSpeed,
@@ -59,7 +59,10 @@ function supportedFunctions(value: unknown): string[] {
   if (!Array.isArray(value) || value.some((id) => typeof id !== 'string')) {
     throw new Error('Invalid D2-50-00 capabilities');
   }
-  if (new Set(value).size !== value.length || value.some((id) => !protocolFunctions[id])) {
+  if (
+    new Set(value).size !== value.length ||
+    value.some((id) => !Object.hasOwn(protocolFunctions, id))
+  ) {
     throw new Error('Invalid D2-50-00 capabilities');
   }
   return [...value];
@@ -189,9 +192,8 @@ const entity = {
       throw new Error(`Invalid fan power command: ${value}`);
     }
     if (field === 'percentage') {
-      const percentage = Number(value);
-      if (!Number.isFinite(percentage)) throw new Error(`Invalid fan percentage: ${value}`);
-      return fanMqttPercentageToD2Value(percentage, functions);
+      if (!value.trim()) throw new Error('Fan speed is required');
+      return fanSpeedToD2Value(Number(value), functions);
     }
     if (field === 'preset') return commandValue(fanPresetToD2Value(value), functions);
     throw new Error(`Unsupported D2-50-00 entity command: ${field}`);
@@ -254,6 +256,6 @@ export const d2Profile: EepProfile = {
 
   encodeCommand(context: ProfileDeviceContext, command: ProfileCommand): Uint8Array {
     const value = commandValue(command.value, context.capabilities);
-    return changeState(toHex(context.senderId ?? context.sourceId), toHex(context.targetId), value);
+    return changeState(toHex(context.sourceId), toHex(context.targetId), value);
   },
 };

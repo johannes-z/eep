@@ -66,15 +66,6 @@ function json(data: unknown, status = 200): Response {
   return Response.json(data, { status });
 }
 
-function findLegacyDevice(source: string, target: string): Device | undefined {
-  const sourceId = parseRouteId(source);
-  const targetId = parseRouteId(target);
-  const device = initialDevices.find(
-    (item) => item.sourceId === sourceId && item.targetId === targetId,
-  );
-  return device ? { ...device } : undefined;
-}
-
 function profileContext(device: Device): ProfileDeviceContext {
   return {
     sourceId: device.sourceId,
@@ -418,7 +409,9 @@ export function createRequestHandler(
         request.method === 'POST'
       ) {
         const sourceId = parseRouteId(parts[2]);
-        const device = options.registry?.findBySourceId(sourceId);
+        const device = options.registry
+          ? options.registry.findBySourceId(sourceId)
+          : initialDevices.find((item) => item.sourceId === sourceId);
         if (!device || !Number.isInteger(sourceId)) return json({ error: 'Unknown device' }, 404);
         try {
           await sendCommand(device, await request.json());
@@ -453,33 +446,6 @@ export function createRequestHandler(
       }
     }
 
-    if (parts.length !== 3) return new Response(null, { status: 404 });
-    if (request.method !== 'GET') return new Response(null, { status: 405 });
-
-    const [source, target, value] = parts;
-    console.log('Received request with params:', { source, target, value });
-
-    const sourceId = parseRouteId(source);
-    const targetId = parseRouteId(target);
-    const deviceConfig = options.registry
-      ? options.registry.findBySourceId(sourceId)
-      : findLegacyDevice(source, target);
-
-    if (
-      !deviceConfig ||
-      !Number.isInteger(sourceId) ||
-      !Number.isInteger(targetId) ||
-      deviceConfig.sourceId !== sourceId ||
-      deviceConfig.targetId !== targetId
-    ) {
-      return new Response(null, { status: 400 });
-    }
-
-    try {
-      await sendCommand(deviceConfig, { value });
-      return new Response(null, { status: 200 });
-    } catch {
-      return new Response(null, { status: 400 });
-    }
+    return new Response(null, { status: 404 });
   };
 }

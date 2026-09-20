@@ -1,12 +1,7 @@
 import { join } from 'node:path';
 import homepage from '../public/index.html';
 
-import {
-  resolveServerConfig,
-  validateMqttConfig,
-  type AddonConfig,
-  type TransportSettings,
-} from './config';
+import { resolveServerConfig, validateMqttConfig, type AddonConfig } from './config';
 import { createRequestHandler, type MqttStatus, type RequestTransport } from './app/requestHandler';
 import { sendDeviceCommand } from './devices/commands';
 import { DeviceRegistry } from './devices/registry';
@@ -42,18 +37,6 @@ const homepageRoutes = Object.fromEntries([
 
 export { createRequestHandler, sendDeviceCommand };
 export type { RequestTransport };
-
-export async function getSocketConnection(path: string): Promise<RequestTransport> {
-  const settings: TransportSettings = {
-    type: path.startsWith('tcp://') ? 'tcp' : 'serial',
-    adapter: '',
-    path,
-    baudRate: 57600,
-    disableLed: false,
-    rtscts: false,
-  };
-  return openTransport(settings);
-}
 
 export function getMqttSettings(
   addonConfig: AddonConfig,

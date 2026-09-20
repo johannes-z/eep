@@ -22,23 +22,20 @@ Download the binary for the server platform, make it executable on Unix-like sys
 DATA_DIR=/var/lib/eep ./eep-server-linux-x64
 ```
 
-The Windows binary supports TCP adapters and `ADAPTER_TYPE=none`. The bundled serial adapter uses POSIX APIs and is supported on Linux and macOS; use a TCP serial bridge on Windows.
+The Windows binary supports TCP transports and `TRANSPORT_TYPE=none`. The bundled serial transport uses POSIX APIs and is supported on Linux and macOS; use a TCP serial bridge on Windows.
 
 ## Runtime settings
 
 - `HOST`, `PORT`: HTTP bind address and port.
 - `DATA_DIR`: writable directory containing `configuration.yaml` and the SQLite `state.db` runtime store.
-- `ADAPTER`, `ADAPTER_PATH`: legacy or explicit serial/TCP adapter path.
-- `ADAPTER_TYPE`: `none`, `serial`, or `tcp`.
-- `BAUD_RATE`, `RTSCTS`: serial adapter settings.
-- `ADAPTER_NAME`, `DISABLE_LED`: accepted only for legacy configuration compatibility; they are not used by `bun-serialport`.
+- `TRANSPORT_PATH`: serial device path or `tcp://host:port` endpoint.
+- `TRANSPORT_TYPE`: `none`, `serial`, or `tcp`.
+- `BAUD_RATE`, `RTSCTS`: serial transport settings.
 - `CONTROLLER_ID`: optional EnOcean controller ID.
 - `START_ID`: optional first sender ID for automatic UTE allocation. The web UI also stores this as `general.startId` in `configuration.yaml`.
 - `MQTT_URL` or `MQTT_HOST`/`MQTT_PORT`: broker connection.
 - `MQTT_USERNAME`, `MQTT_PASSWORD`: broker credentials.
 - `HA_ENABLED`, `HA_DISCOVERY_TOPIC`, `HA_STATUS_TOPIC`, `HA_LOG_LEVEL`: Home Assistant discovery settings.
-- `HA_EXPERIMENTAL_EVENT_ENTITIES` and `HA_LEGACY_ACTION_SENSOR` remain recognized for compatibility,
-  but must stay `false` because those entity types are not implemented.
 
 Keep the MQTT credentials in the ignored `DATA_DIR/secrets.yaml` file and reference them from
 `configuration.yaml` with `!secret` tags:
@@ -78,7 +75,7 @@ devices:
 			- exhaustOnly
 ```
 
-Omit `level4` or `automaticOnDemand` when the device does not support them. Home Assistant discovery, web controls, command validation, and percentage-to-speed mapping all use this list. Existing `states.json`, `devices.json`, and `settings.json` files are read when no `configuration.yaml` exists; configuration is migrated to YAML and legacy runtime state is migrated to SQLite.
+Omit `level4` or `automaticOnDemand` when the device does not support them. Home Assistant discovery, web controls, command validation, and percentage-to-speed mapping all use this list. Runtime state is stored in SQLite and is independent of the user-editable YAML configuration.
 
 ## Permit join and UTE
 
@@ -97,7 +94,7 @@ local learn mode first. Then open Permit join and use `Send controller signal` i
 or turn the Home Assistant switch `ON`, while the receiver's 30-second learning window is open.
 The server broadcasts a D4 UTE query using the first free sender ID at or above `startId`; an
 accepted response identifies the vent and creates the pending candidate. The USB 300 base ID is
-read from the adapter and shown read-only in General settings. It is not used as the last-used
+read from the transport and shown read-only in General settings. It is not used as the last-used
 allocation cursor and is not persisted in `configuration.yaml`.
 
 UTE responses require a non-zero controller ID. Set `CONTROLLER_ID`, or keep at least one device

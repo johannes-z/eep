@@ -17,14 +17,14 @@
     },
     "packages/addon": {
       "name": "@eep/addon",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "dependencies": {
         "bun-serialport": "0.2.0",
       },
     },
     "packages/server": {
       "name": "@eep/server",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "dependencies": {
         "@tanstack/react-router": "^1.170.38",
         "bun-serialport": "0.2.0",

@@ -124,8 +124,6 @@ export interface HomeAssistantResponse {
   discovery_topic: string;
   status_topic: string;
   log_level: 'debug' | 'info' | 'warn' | 'error';
-  experimental_event_entities: boolean;
-  legacy_action_sensor: boolean;
   restartRequired?: boolean;
 }
 

@@ -14,8 +14,6 @@ export interface EntityTopics {
   availability: string;
 }
 
-export type FanTopics = EntityTopics;
-
 export interface PermitJoinTopics {
   discovery: string;
   command: string;
@@ -29,7 +27,7 @@ export interface RestartTopics {
   bridgeAvailability: string;
 }
 
-export type DeviceDiagnosticField = 'eep' | 'channel' | 'manufacturer_id' | 'last_seen';
+export type DeviceDiagnosticField = 'sender_id' | 'target_id' | 'eep';
 
 export interface DeviceDiagnosticTopics {
   discovery: string;
@@ -78,19 +76,6 @@ export function entityTopics(
     presetState: `${base}/preset/state`,
     availability: `${base}/availability`,
   };
-}
-
-export function fanObjectId(device: Device): string {
-  return entityObjectId(device);
-}
-
-export function fanTopics(
-  device: Device,
-  discoveryPrefix: string,
-  baseTopic: string,
-  bridgeAvailability: string,
-): FanTopics {
-  return entityTopics(device, 'fan', discoveryPrefix, baseTopic, bridgeAvailability);
 }
 
 export function permitJoinTopics(

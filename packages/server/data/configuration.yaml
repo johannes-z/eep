@@ -14,18 +14,14 @@ mqtt:
   forceDisableRetain: false
 transport:
   type: tcp
-  adapter: ""
   path: tcp://192.168.1.49:20109
   baudRate: 57600
-  disableLed: false
   rtscts: false
 homeassistant:
   enabled: true
   discoveryTopic: homeassistant
   statusTopic: eep/status
   logLevel: info
-  experimentalEventEntities: false
-  legacyActionSensor: false
 devices:
   ffe76682:
     name: E05 Vent

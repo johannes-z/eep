@@ -34,15 +34,6 @@ import type {
 
 const profileId = 'D2-50-00';
 const protocolFunctions = getProtocolFunctions();
-const commandAliases: Record<string, number> = {
-  auto: 11,
-  automatic: 11,
-  'automatic-on-demand': 12,
-  intake: 13,
-  supply: 13,
-  exhaust: 14,
-  'no-action': 15,
-};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -110,10 +101,7 @@ function commandValue(value: unknown, capabilities: unknown): number {
   if (typeof value !== 'string' && typeof value !== 'number') {
     throw new Error('D2-50-00 command value must be a string or number');
   }
-  const parsed =
-    typeof value === 'string' && commandAliases[value.toLowerCase()] !== undefined
-      ? commandAliases[value.toLowerCase()]
-      : parseD2Value(value);
+  const parsed = parseD2Value(value);
   const definition = getProtocolFunctionByValue(parsed);
   if (parsed !== 15 && (!definition || !supportedFunctions(capabilities).includes(definition.id))) {
     throw new Error(`Device does not support function for value: ${parsed}`);

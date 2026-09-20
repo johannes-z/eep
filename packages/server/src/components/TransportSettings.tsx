@@ -25,7 +25,7 @@ export function TransportSettings({
 
   return (
     <SettingsLayout
-      description="Connection settings for the EnOcean adapter."
+      description="Connection settings for the EnOcean transport."
       status={status}
       statusTone={settings.type === 'none' ? 'neutral' : 'online'}
       title="Transport"

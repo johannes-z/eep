@@ -19,14 +19,12 @@ ports_description:
   3000/tcp: 'Webservice API'
 
 options:
-  adapter: ''
-  adapter_type: 'none'
+  transport_type: 'none'
+  transport_path: ''
   baud_rate: 57600
-  disable_led: false
   rtscts: false
 schema:
-  adapter: 'str'
-  adapter_type: 'list(none|serial|tcp)'
+  transport_type: 'list(none|serial|tcp)'
+  transport_path: 'str'
   baud_rate: 'int'
-  disable_led: 'bool'
   rtscts: 'bool'

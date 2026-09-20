@@ -24,21 +24,17 @@ export function diagnosticValues(
   device: Device,
 ): Array<{ field: DeviceDiagnosticField; name: string; value: string }> {
   return [
+    {
+      field: 'sender_id',
+      name: 'Sender ID',
+      value: device.targetId.toString(16).padStart(8, '0'),
+    },
+    {
+      field: 'target_id',
+      name: 'Target ID',
+      value: device.sourceId.toString(16).padStart(8, '0'),
+    },
     { field: 'eep', name: 'EEP', value: device.teachIn?.eep ?? device.profileId },
-    {
-      field: 'channel',
-      name: 'Channel',
-      value: device.teachIn?.channel === undefined ? 'Unavailable' : String(device.teachIn.channel),
-    },
-    {
-      field: 'manufacturer_id',
-      name: 'Manufacturer ID',
-      value:
-        device.teachIn?.manufacturerId === undefined
-          ? 'Unavailable'
-          : String(device.teachIn.manufacturerId),
-    },
-    { field: 'last_seen', name: 'Last seen', value: device.lastSeen ?? 'Unavailable' },
   ];
 }
 

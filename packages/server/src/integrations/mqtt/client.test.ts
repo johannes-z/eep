@@ -51,8 +51,6 @@ const homeAssistant: HomeAssistantSettings = {
   enabled: true,
   discoveryTopic: 'homeassistant',
   statusTopic: 'eep/status',
-  experimentalEventEntities: false,
-  legacyActionSensor: false,
 };
 
 const registry = {

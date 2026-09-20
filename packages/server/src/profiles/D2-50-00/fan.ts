@@ -19,11 +19,6 @@ const presetToValue: Record<D2FanPreset, DirectOperationModeControl> = {
   Exhaust: DirectOperationModeControl.ExhaustOnly,
 };
 
-const legacyPresetAliases: Record<string, D2FanPreset> = {
-  'Supply air only': 'Supply',
-  'Exhaust air only': 'Exhaust',
-};
-
 const valueToPreset: Partial<Record<number, D2FanPreset>> = {
   [DirectOperationModeControl.Automatic]: 'Automatic',
   [DirectOperationModeControl.AutomaticOnDemand]: 'Automatic on demand',
@@ -140,14 +135,10 @@ export function fanSupportedPresets(supportedFunctions?: readonly string[]): D2F
     .map((item) => item.preset as D2FanPreset);
 }
 
-export function normalizeD2FanPreset(value: unknown): D2FanPreset | undefined {
-  if (typeof value !== 'string') return undefined;
-  if (D2_FAN_PRESETS.includes(value as D2FanPreset)) return value as D2FanPreset;
-  return legacyPresetAliases[value];
-}
-
 export function fanPresetToD2Value(preset: string): DirectOperationModeControl {
-  const value = presetToValue[normalizeD2FanPreset(preset) as D2FanPreset];
+  const value = D2_FAN_PRESETS.includes(preset as D2FanPreset)
+    ? presetToValue[preset as D2FanPreset]
+    : undefined;
   if (value === undefined) throw new Error(`Unsupported D2-50-00 fan preset: ${preset}`);
   return value;
 }

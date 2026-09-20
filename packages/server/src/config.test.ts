@@ -8,9 +8,8 @@ afterEach(() => {
 });
 
 test('resolves standalone defaults without add-on configuration', () => {
-  delete process.env.ADAPTER;
-  delete process.env.ADAPTER_PATH;
-  delete process.env.ADAPTER_TYPE;
+  delete process.env.TRANSPORT_PATH;
+  delete process.env.TRANSPORT_TYPE;
   delete process.env.CONTROLLER_ID;
 
   expect(resolveServerConfig()).toMatchObject({
@@ -20,7 +19,6 @@ test('resolves standalone defaults without add-on configuration', () => {
       type: 'none',
       path: '',
       baudRate: 57600,
-      disableLed: false,
       rtscts: false,
     },
     homeAssistant: {
@@ -31,8 +29,12 @@ test('resolves standalone defaults without add-on configuration', () => {
   });
 });
 
-test('maps the legacy adapter input to a TCP transport', () => {
-  expect(resolveServerConfig({ adapter: 'tcp://127.0.0.1:20108' }).transport).toMatchObject({
+test('resolves a configured TCP transport', () => {
+  expect(
+    resolveServerConfig({
+      transport: { type: 'tcp', path: 'tcp://127.0.0.1:20108' },
+    }).transport,
+  ).toMatchObject({
     type: 'tcp',
     path: 'tcp://127.0.0.1:20108',
   });
@@ -41,10 +43,6 @@ test('maps the legacy adapter input to a TCP transport', () => {
 test('rejects invalid environment values', () => {
   process.env.PORT = 'not-a-port';
   expect(() => resolveServerConfig()).toThrow('PORT must be an integer');
-
-  process.env.PORT = '3000';
-  process.env.DISABLE_LED = 'sometimes';
-  expect(() => resolveServerConfig()).toThrow('DISABLE_LED must be true or false');
 });
 
 test('resolves a configured start ID', () => {

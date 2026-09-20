@@ -76,7 +76,7 @@ function defaultDataDirectory(): string {
 
 function validateTransport(transport: TransportSettings): void {
   if (!['none', 'serial', 'tcp'].includes(transport.type)) {
-    throw new Error('ADAPTER_TYPE must be one of none, serial, or tcp');
+    throw new Error('TRANSPORT_TYPE must be one of none, serial, or tcp');
   }
   if (transport.type !== 'none' && !transport.path) {
     throw new Error('A transport path is required when a transport is configured');
@@ -112,55 +112,29 @@ function resolveHomeAssistant(input: AddonConfig): HomeAssistantSettings {
       'homeAssistant.logLevel',
       (process.env.HA_LOG_LEVEL as LogLevel | undefined) ?? 'info',
     ),
-    experimentalEventEntities: configuredBoolean(
-      configuredHomeAssistant.experimentalEventEntities,
-      'homeAssistant.experimentalEventEntities',
-      environmentBoolean('HA_EXPERIMENTAL_EVENT_ENTITIES', false),
-    ),
-    legacyActionSensor: configuredBoolean(
-      configuredHomeAssistant.legacyActionSensor,
-      'homeAssistant.legacyActionSensor',
-      environmentBoolean('HA_LEGACY_ACTION_SENSOR', false),
-    ),
   };
-  if (homeAssistant.experimentalEventEntities || homeAssistant.legacyActionSensor) {
-    throw new Error(
-      'Home Assistant event entities and legacy action sensors are not supported yet',
-    );
-  }
   if (!homeAssistant.discoveryTopic.trim()) throw new Error('HA_DISCOVERY_TOPIC must not be empty');
   if (!homeAssistant.statusTopic.trim()) throw new Error('HA_STATUS_TOPIC must not be empty');
   return homeAssistant;
 }
 
 export function resolveServerConfig(input: AddonConfig = {}): ServerConfig {
-  const legacyPath = input.adapter ?? process.env.ADAPTER ?? '';
   const configuredTransport = input.transport ?? {};
   const path = configuredString(
     configuredTransport.path,
     'transport.path',
-    process.env.ADAPTER_PATH ?? legacyPath,
+    process.env.TRANSPORT_PATH ?? '',
   );
   const transport: TransportSettings = {
     type:
       configuredTransport.type ??
-      (process.env.ADAPTER_TYPE as TransportType | undefined) ??
+      (process.env.TRANSPORT_TYPE as TransportType | undefined) ??
       inferTransportType(path),
-    adapter: configuredString(
-      configuredTransport.adapter,
-      'transport.adapter',
-      process.env.ADAPTER_NAME ?? '',
-    ),
     path,
     baudRate:
       configuredTransport.baudRate === undefined
         ? environmentInteger('BAUD_RATE', 57600, 1, 4_000_000)
         : parseInteger(configuredTransport.baudRate, 'baudRate', 1, 4_000_000),
-    disableLed: configuredBoolean(
-      configuredTransport.disableLed,
-      'transport.disableLed',
-      environmentBoolean('DISABLE_LED', false),
-    ),
     rtscts: configuredBoolean(
       configuredTransport.rtscts,
       'transport.rtscts',

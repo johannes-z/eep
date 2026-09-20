@@ -1,4 +1,4 @@
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { Device, DeviceTeachInInfo } from '../config';
 import {
@@ -15,11 +15,8 @@ import { parseEnOceanId } from '../util';
 interface PersistedDevice {
   targetId: string | number;
   name: string;
-  profileId?: string;
-  protocol?: string;
+  profileId: string;
   capabilities?: JsonValue;
-  supportedFunctions?: unknown;
-  paired?: boolean;
   teachIn?: unknown;
 }
 
@@ -100,28 +97,16 @@ function deserializeDevice(
   if (!isRecord(value)) throw new Error('Invalid device record');
   const sourceId = parseIdentifier(sourceIdValue ?? value.sourceId, 'sourceId');
   const name =
-    value.name === undefined && value.friendlyName === undefined
+    value.name === undefined
       ? `EnOcean ${sourceId.toString(16).padStart(8, '0')}`
-      : readText(value.name ?? value.friendlyName, 'name');
-  const profileId = normalizeProfileId(readText(value.profileId ?? value.protocol, 'profileId'));
-  const paired = value.paired ?? true;
-  if (typeof paired !== 'boolean') throw new Error('Invalid paired');
-  if (!paired) throw new Error('Unpaired devices must not be persisted');
+      : readText(value.name, 'name');
+  const profileId = normalizeProfileId(readText(value.profileId, 'profileId'));
   const profile = profiles.get(profileId);
-  const legacyCapabilities = value.supportedFunctions;
-  if (
-    legacyCapabilities !== undefined &&
-    (!Array.isArray(legacyCapabilities) ||
-      legacyCapabilities.some((item) => typeof item !== 'string') ||
-      new Set(legacyCapabilities).size !== legacyCapabilities.length)
-  ) {
-    throw new Error('Invalid supportedFunctions');
-  }
   const fallbackCapabilities = profile?.defaultCapabilities() ?? [];
   const capabilities = profile
-    ? profile.validateCapabilities(value.capabilities ?? legacyCapabilities ?? fallbackCapabilities)
+    ? profile.validateCapabilities(value.capabilities ?? fallbackCapabilities)
     : (() => {
-        const opaque = value.capabilities ?? legacyCapabilities ?? {};
+        const opaque = value.capabilities ?? {};
         if (!isJsonValue(opaque)) throw new Error('Invalid capabilities');
         return opaque;
       })();
@@ -134,7 +119,6 @@ function deserializeDevice(
     name,
     profileId,
     capabilities,
-    paired,
     ...(value.teachIn === undefined ? {} : { teachIn: validateTeachInInfo(value.teachIn) }),
     ...runtimeState,
   };
@@ -188,19 +172,6 @@ function deserializeConfiguredDevices(values: unknown, profiles: ProfileRegistry
   );
 }
 
-function deserializeLegacyDevices(
-  values: unknown,
-  profiles: ProfileRegistry,
-  includeRuntimeState: boolean,
-): Device[] {
-  if (!Array.isArray(values))
-    throw new Error('Invalid device state file: devices must be an array');
-  const devices = values.map((value) =>
-    deserializeDevice(value, undefined, profiles, includeRuntimeState),
-  );
-  return includeRuntimeState ? devices : validateDevices(devices);
-}
-
 function serializeDevice(device: Device): PersistedDevice {
   return {
     name: device.name,
@@ -218,23 +189,6 @@ export const initialDevices = deserializeConfiguredDevices(
   defaultProfiles,
 );
 
-async function readLegacyDevices(
-  filePath: string,
-  profiles: ProfileRegistry,
-  includeRuntimeState: boolean,
-): Promise<Device[] | undefined> {
-  try {
-    const data: unknown = JSON.parse(await readFile(filePath, 'utf8'));
-    if (!isRecord(data) || !Array.isArray(data.devices)) {
-      throw new Error(`Invalid device state file: ${filePath}`);
-    }
-    return deserializeLegacyDevices(data.devices, profiles, includeRuntimeState);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    return undefined;
-  }
-}
-
 function runtimeStateOf(device: Device): DeviceRuntimeState {
   return {
     availability: device.availability,
@@ -242,19 +196,6 @@ function runtimeStateOf(device: Device): DeviceRuntimeState {
     ...(device.reportedState === undefined ? {} : { reportedState: device.reportedState }),
     ...(device.desiredState === undefined ? {} : { desiredState: device.desiredState }),
   };
-}
-
-function mergeLegacyDevices(configured: Device[], runtime: Device[]): Device[] {
-  const runtimeBySource = new Map(runtime.map((device) => [device.sourceId, device]));
-  const configuredSources = new Set(configured.map((device) => device.sourceId));
-  const devices = configured.map((device) => {
-    const state = runtimeBySource.get(device.sourceId);
-    return state ? { ...device, ...runtimeStateOf(state) } : device;
-  });
-  for (const device of runtimeBySource.values()) {
-    if (!configuredSources.has(device.sourceId)) devices.push(device);
-  }
-  return validateDevices(devices);
 }
 
 export class DeviceRegistry {
@@ -284,22 +225,6 @@ export class DeviceRegistry {
         configuration.devices === undefined
           ? undefined
           : deserializeConfiguredDevices(configuration.devices, profiles);
-      let legacyRuntimeDevices: Device[] | undefined;
-      if (devices === undefined) {
-        const legacyConfiguration = await readLegacyDevices(
-          join(dirname(filePath), 'devices.json'),
-          profiles,
-          false,
-        );
-        legacyRuntimeDevices = await readLegacyDevices(
-          join(dirname(filePath), 'states.json'),
-          profiles,
-          true,
-        );
-        if (legacyConfiguration || legacyRuntimeDevices) {
-          devices = mergeLegacyDevices(legacyConfiguration ?? [], legacyRuntimeDevices ?? []);
-        }
-      }
       if (devices === undefined) devices = initialDevices.map((device) => ({ ...device }));
 
       const runtimeStates = stateStore.load();
@@ -314,11 +239,6 @@ export class DeviceRegistry {
         return { ...device, ...validatedState };
       });
       const registry = new DeviceRegistry(filePath, stateStore, hydratedDevices, profiles);
-      if (legacyRuntimeDevices) {
-        for (const device of legacyRuntimeDevices) {
-          if (!runtimeStates.has(device.sourceId)) stateStore.save(device);
-        }
-      }
       await registry.save();
       return registry;
     } catch (error) {
@@ -418,7 +338,6 @@ export class DeviceRegistry {
   private validateDevice(device: Device): void {
     parseIdentifier(device.sourceId, 'sourceId');
     parseIdentifier(device.targetId, 'targetId');
-    if (device.paired !== true) throw new Error('Invalid paired');
     if (device.teachIn !== undefined) validateTeachInInfo(device.teachIn);
     const profile = this.profiles.get(device.profileId);
     if (!profile) {
@@ -480,12 +399,10 @@ export class DeviceRegistry {
   private async save(): Promise<void> {
     await updateConfiguration(this.filePath, (configuration) => {
       configuration.devices = Object.fromEntries(
-        this.devices
-          .filter((device) => device.paired)
-          .map((device) => [
-            device.sourceId.toString(16).padStart(8, '0'),
-            serializeDevice(device),
-          ]),
+        this.devices.map((device) => [
+          device.sourceId.toString(16).padStart(8, '0'),
+          serializeDevice(device),
+        ]),
       );
     });
   }

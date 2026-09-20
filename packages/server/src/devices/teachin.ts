@@ -203,7 +203,6 @@ export class TeachInManager {
       name: `EnOcean ${sourceId.toString(16).padStart(8, '0')}`,
       profileId,
       capabilities,
-      paired: true,
       teachIn: {
         eep: candidate.eep,
         channel: candidate.channel,

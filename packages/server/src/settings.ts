@@ -43,9 +43,7 @@ function stringifyYaml(value: unknown): string {
 }
 
 function parseDocument(text: string, filePath: string): PersistedConfiguration {
-  const data: unknown = filePath.endsWith('.json')
-    ? JSON.parse(text)
-    : Bun.YAML.parse(normalizeYamlTags(text));
+  const data: unknown = Bun.YAML.parse(normalizeYamlTags(text));
   if (!isRecord(data)) throw new Error(`Invalid configuration file: ${filePath}`);
   if (data.version !== undefined && data.version !== 1) {
     throw new Error(['Unsupported configuration version:', JSON.stringify(data.version)].join(' '));
@@ -54,14 +52,10 @@ function parseDocument(text: string, filePath: string): PersistedConfiguration {
   validateSection(data, 'transport');
   validateSection(data, 'homeassistant');
   validateSection(data, 'general');
-  validateSection(data, 'homeAssistant');
   if (data.devices !== undefined && !isRecord(data.devices)) {
     throw new Error('Invalid configuration section: devices');
   }
-  return {
-    ...data,
-    homeassistant: data.homeassistant ?? data.homeAssistant,
-  } as PersistedConfiguration;
+  return data as PersistedConfiguration;
 }
 
 async function readSecretFile(filePath: string): Promise<Record<string, unknown>> {
@@ -118,18 +112,8 @@ async function readConfiguration(filePath: string): Promise<PersistedConfigurati
   try {
     return resolveSecrets(parseDocument(await readFile(filePath, 'utf8'), filePath), filePath);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || filePath.endsWith('.json'))
-      throw error;
-    try {
-      const legacyPath = join(dirname(filePath), 'settings.json');
-      return resolveSecrets(
-        parseDocument(await readFile(legacyPath, 'utf8'), legacyPath),
-        legacyPath,
-      );
-    } catch (legacyError) {
-      if ((legacyError as NodeJS.ErrnoException).code !== 'ENOENT') throw legacyError;
-      return {};
-    }
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    return {};
   }
 }
 
@@ -161,10 +145,7 @@ async function writeConfiguration(
   await mkdir(dirname(filePath), { recursive: true });
   const temporaryPath = join(dirname(filePath), `.${randomUUID()}.configuration.yaml`);
   try {
-    const data = { ...configuration, version: 1 } as PersistedConfiguration & {
-      homeAssistant?: unknown;
-    };
-    delete data.homeAssistant;
+    const data = { ...configuration, version: 1 } as PersistedConfiguration;
     const secretFilePath = join(dirname(filePath), 'secrets.yaml');
     for (const [field, key] of [
       ['username', 'mqtt_username'],

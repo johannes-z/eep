@@ -16,7 +16,6 @@ export interface Device {
   name: string;
   profileId: string;
   capabilities: JsonValue;
-  paired: boolean;
   teachIn?: DeviceTeachInInfo;
   lastSeen?: string;
   availability: 'online' | 'offline' | 'unknown';
@@ -29,7 +28,6 @@ export interface GeneralSettings {
 }
 
 export interface AddonConfig {
-  adapter?: string;
   host?: string;
   port?: number;
   dataDir?: string;
@@ -44,10 +42,8 @@ export type TransportType = 'none' | 'serial' | 'tcp';
 
 export interface TransportSettings {
   type: TransportType;
-  adapter: string;
   path: string;
   baudRate: number;
-  disableLed: boolean;
   rtscts: boolean;
 }
 
@@ -56,8 +52,6 @@ export interface HomeAssistantSettings {
   discoveryTopic: string;
   statusTopic: string;
   logLevel?: LogLevel;
-  experimentalEventEntities: boolean;
-  legacyActionSensor: boolean;
 }
 
 export interface ServerConfig {

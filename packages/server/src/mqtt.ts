@@ -30,4 +30,4 @@ export function defaultMqttSettings(): MqttSettings {
   };
 }
 
-export { MqttFanBridge } from './integrations/homeassistant/bridge';
+export { MqttEntityBridge } from './integrations/homeassistant/bridge';

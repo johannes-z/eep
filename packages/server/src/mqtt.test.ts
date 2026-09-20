@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { d2ValueToFanState } from './profiles/D2-50-00/fan';
 import { DeviceRegistry } from './devices/registry';
 import { TeachInManager } from './devices/teachin';
-import { MqttFanBridge, type MqttClientLike } from './mqtt';
+import { MqttEntityBridge, type MqttClientLike } from './mqtt';
 
 class FakeMqttClient implements MqttClientLike {
   published: Array<{ topic: string; payload: string }> = [];
@@ -46,8 +46,8 @@ async function createBridge() {
   const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
   const client = new FakeMqttClient();
   const commands: number[] = [];
-  const bridge = new MqttFanBridge(client, registry, async (device, value) => {
-    const d2Value = value as number;
+  const bridge = new MqttEntityBridge(client, registry, async (device, value) => {
+    const d2Value = typeof value === 'number' ? value : (value as { value: number }).value;
     commands.push(d2Value);
     await registry.update(device.sourceId, {
       desiredState: d2ValueToFanState(d2Value),
@@ -97,12 +97,12 @@ test('publishes Home Assistant fan discovery for seeded devices', async () => {
   expect(
     client.published.find((message) => message.topic === 'homeassistant/fan/0513cefe/config')
       ?.payload,
-  ).toBe('');
+  ).toBeUndefined();
   expect(
     client.published.find(
       (message) => message.topic === 'homeassistant/button/eep_bridge_restart/config',
     )?.payload,
-  ).toBe('');
+  ).toBeUndefined();
 });
 
 test('publishes updated state when a device changes', async () => {
@@ -200,15 +200,13 @@ test('uses configured Home Assistant topics and keeps unknown devices unavailabl
   const directory = await mkdtemp(join(tmpdir(), 'eep-mqtt-topics-'));
   const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
   const client = new FakeMqttClient();
-  const bridge = new MqttFanBridge(client, registry, async () => undefined, {
+  const bridge = new MqttEntityBridge(client, registry, async () => undefined, {
     baseTopic: 'custom',
-    discoveryPrefix: 'legacy',
+    discoveryPrefix: 'custom-discovery',
     homeAssistant: {
       enabled: true,
       discoveryTopic: 'ha/config',
       statusTopic: 'ha/status',
-      experimentalEventEntities: false,
-      legacyActionSensor: false,
     },
   });
 
@@ -243,11 +241,11 @@ test('keeps MQTT state and commands active when Home Assistant is disabled', asy
   await registry.update(0xffe76681, { availability: 'online' });
   const client = new FakeMqttClient();
   const commands: number[] = [];
-  const bridge = new MqttFanBridge(
+  const bridge = new MqttEntityBridge(
     client,
     registry,
     async (_device, value) => {
-      commands.push(value as number);
+      commands.push(typeof value === 'number' ? value : (value as { value: number }).value);
     },
     {
       baseTopic: 'eep',
@@ -255,8 +253,6 @@ test('keeps MQTT state and commands active when Home Assistant is disabled', asy
         enabled: false,
         discoveryTopic: 'homeassistant',
         statusTopic: 'eep/status',
-        experimentalEventEntities: false,
-        legacyActionSensor: false,
       },
     },
   );
@@ -329,7 +325,14 @@ test('publishes and controls the Home Assistant Permit join switch', async () =>
   const teachIn = new TeachInManager(registry, 0xffe76685, undefined, undefined, async () => {
     signalCount += 1;
   });
-  const bridge = new MqttFanBridge(client, registry, async () => undefined, {}, undefined, teachIn);
+  const bridge = new MqttEntityBridge(
+    client,
+    registry,
+    async () => undefined,
+    {},
+    undefined,
+    teachIn,
+  );
   bridge.start();
   await bridge.publishAll();
 
@@ -413,7 +416,7 @@ test('handles the Home Assistant bridge Restart button', async () => {
   const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
   const client = new FakeMqttClient();
   let restartCount = 0;
-  const bridge = new MqttFanBridge(
+  const bridge = new MqttEntityBridge(
     client,
     registry,
     async () => undefined,

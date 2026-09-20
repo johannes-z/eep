@@ -18,10 +18,8 @@ import {
 
 const transport: TransportSettings = {
   type: 'serial',
-  adapter: 'zstack',
   path: '/dev/ttyUSB0',
   baudRate: 115200,
-  disableLed: false,
   rtscts: true,
 };
 
@@ -29,8 +27,6 @@ const homeAssistant: HomeAssistantSettings = {
   enabled: true,
   discoveryTopic: 'homeassistant',
   statusTopic: 'eep/status',
-  experimentalEventEntities: false,
-  legacyActionSensor: false,
 };
 
 test('preserves settings sections across concurrent updates', async () => {

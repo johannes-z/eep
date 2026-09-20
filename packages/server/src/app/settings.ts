@@ -52,10 +52,8 @@ export function transportSettingsResponse(
   return {
     connected,
     type: settings.type,
-    adapter: settings.adapter,
     port: settings.path,
     baudrate: settings.baudRate,
-    disable_led: settings.disableLed,
     rtscts: settings.rtscts,
   };
 }
@@ -68,8 +66,6 @@ export function homeAssistantSettingsResponse(
     discovery_topic: settings.discoveryTopic,
     status_topic: settings.statusTopic,
     log_level: settings.logLevel ?? 'info',
-    experimental_event_entities: settings.experimentalEventEntities,
-    legacy_action_sensor: settings.legacyActionSensor,
   };
 }
 
@@ -155,7 +151,7 @@ export function parseMqttSettings(
   current: MqttSettings,
 ): MqttSettings {
   const next: MqttSettings = { ...current };
-  const server = body.server ?? body.url;
+  const server = body.server;
   if (server !== undefined) {
     if (typeof server !== 'string') throw new Error('server must be a string');
     next.url = server.trim();
@@ -206,10 +202,8 @@ export function parseTransportSettings(
   }
   const next: TransportSettings = {
     type,
-    adapter: readText(body, 'adapter', current.adapter),
     path: readText(body, 'port', current.path),
     baudRate: readInteger(body, 'baudrate', current.baudRate, 1, 4_000_000) ?? current.baudRate,
-    disableLed: readBoolean(body, 'disable_led', current.disableLed) ?? current.disableLed,
     rtscts: readBoolean(body, 'rtscts', current.rtscts) ?? current.rtscts,
   };
   if (next.type !== 'none' && !next.path) {
@@ -230,18 +224,9 @@ export function parseHomeAssistantSettings(
     discoveryTopic: readText(body, 'discovery_topic', current.discoveryTopic),
     statusTopic: readText(body, 'status_topic', current.statusTopic),
     logLevel: readLogLevel(body, 'log_level', current.logLevel ?? 'info'),
-    experimentalEventEntities:
-      readBoolean(body, 'experimental_event_entities', current.experimentalEventEntities) ??
-      current.experimentalEventEntities,
-    legacyActionSensor:
-      readBoolean(body, 'legacy_action_sensor', current.legacyActionSensor) ??
-      current.legacyActionSensor,
   };
   if (!next.discoveryTopic) throw new Error('discovery_topic must not be empty');
   if (!next.statusTopic) throw new Error('status_topic must not be empty');
-  if (next.experimentalEventEntities || next.legacyActionSensor) {
-    throw new Error('event entities and legacy action sensors are not supported yet');
-  }
   return next;
 }
 

@@ -1,6 +1,6 @@
 ---
 configuration:
-  adapter:
-    name: Adapter
+  transport_path:
+    name: Transport path
     description: >-
-      The path to the serial device, can either a local device /dev/serial/by-id/..., or tcp://address:port
+      The serial device path or TCP endpoint, for example tcp://address:port

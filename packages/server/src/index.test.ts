@@ -35,7 +35,13 @@ test('returns 200 and writes a payload for a configured device', async () => {
   const transport = new FakeTransport();
   const handler = createRequestHandler(transport);
 
-  const response = await handler(new Request('http://localhost/ffe76681/0513cefe/Intake'));
+  const response = await handler(
+    new Request('http://localhost/api/devices/ffe76681/command', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ preset: 'Supply' }),
+    }),
+  );
 
   expect(response.status).toBe(200);
   expect(transport.writes).toHaveLength(1);
@@ -53,7 +59,13 @@ test('uses each device source ID when sending a command', async () => {
     registry,
   });
 
-  const response = await handler(new Request('http://localhost/ffe76682/05126787/3'));
+  const response = await handler(
+    new Request('http://localhost/api/devices/ffe76682/command', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ value: 3 }),
+    }),
+  );
 
   expect(response.status).toBe(200);
   expect(Array.from(transport.writes[0].slice(13, 17))).toEqual([0xff, 0xe7, 0x66, 0x82]);
@@ -105,20 +117,35 @@ test('does not control a device removed from the persisted registry', async () =
   const transport = new FakeTransport();
   const handler = createRequestHandler(transport, { registry });
 
-  const response = await handler(new Request('http://localhost/ffe76681/0513cefe/Intake'));
+  const response = await handler(
+    new Request('http://localhost/api/devices/ffe76681/command', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ preset: 'Supply' }),
+    }),
+  );
 
-  expect(response.status).toBe(400);
+  expect(response.status).toBe(404);
   expect(transport.writes).toHaveLength(0);
 });
 
 test('rejects unknown devices and unsupported requests', async () => {
   const handler = createRequestHandler(new FakeTransport());
 
-  expect((await handler(new Request('http://localhost/ffe76681/unknown/Auto'))).status).toBe(400);
   expect(
-    (await handler(new Request('http://localhost/ffe76681/0513cefe/Auto', { method: 'POST' })))
-      .status,
-  ).toBe(405);
+    (
+      await handler(
+        new Request('http://localhost/api/devices/unknown/command', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ value: 3 }),
+        }),
+      )
+    ).status,
+  ).toBe(404);
+  expect((await handler(new Request('http://localhost/api/devices/ffe76681/command'))).status).toBe(
+    404,
+  );
   expect((await handler(new Request('http://localhost/api/unsupported'))).status).toBe(404);
 });
 
@@ -233,7 +260,7 @@ test('serves the browser console', async () => {
   const response = await handler(new Request('http://localhost/'));
 
   expect(response.status).toBe(200);
-  expect(await response.text()).toContain('eep / EnOcean bridge');
+  expect(await response.text()).toContain('EnOcean2MQTT');
 });
 
 test('serves the browser console for application deep links', async () => {
@@ -241,7 +268,7 @@ test('serves the browser console for application deep links', async () => {
   const response = await handler(new Request('http://localhost/settings/mqtt'));
 
   expect(response.status).toBe(200);
-  expect(await response.text()).toContain('eep / EnOcean bridge');
+  expect(await response.text()).toContain('EnOcean2MQTT');
 });
 
 test('reads and updates MQTT settings without exposing the password', async () => {
@@ -334,13 +361,13 @@ test('parses digit-only general IDs as hexadecimal', async () => {
   expect(await response.json()).toMatchObject({ start_id: '00000010' });
 });
 
-test('rejects legacy routes with trailing garbage in an identifier', async () => {
+test('rejects non-API command routes', async () => {
   const transport = new FakeTransport();
   const handler = createRequestHandler(transport);
 
   const response = await handler(new Request('http://localhost/ffe76681/0513cefe-garbage/Intake'));
 
-  expect(response.status).toBe(400);
+  expect(response.status).toBe(404);
   expect(transport.writes).toHaveLength(0);
 });
 
@@ -408,10 +435,8 @@ test('starts targeted pairing from the selected USB 300 channel', async () => {
 test('reads and updates general transport settings', async () => {
   let savedSettings: TransportSettings = {
     type: 'serial',
-    adapter: 'zstack',
     path: '/dev/ttyUSB0',
     baudRate: 115200,
-    disableLed: false,
     rtscts: false,
   };
   const handler = createRequestHandler(new FakeTransport(), {
@@ -423,10 +448,8 @@ test('reads and updates general transport settings', async () => {
 
   const initial = await handler(new Request('http://localhost/api/settings'));
   expect(await initial.json()).toMatchObject({
-    adapter: 'zstack',
     port: '/dev/ttyUSB0',
     baudrate: 115200,
-    disable_led: false,
     rtscts: false,
     connected: true,
   });
@@ -437,10 +460,8 @@ test('reads and updates general transport settings', async () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         type: 'serial',
-        adapter: 'zstack',
         port: '/dev/ttyUSB1',
         baudrate: 57600,
-        disable_led: true,
         rtscts: true,
       }),
     }),
@@ -455,10 +476,8 @@ test('reports the live transport connection state', async () => {
   const handler = createRequestHandler(new FakeTransport(), {
     transportSettings: {
       type: 'tcp',
-      adapter: '',
       path: 'tcp://localhost:20108',
       baudRate: 57600,
-      disableLed: false,
       rtscts: false,
     },
     transportConnected: () => false,
@@ -469,22 +488,6 @@ test('reports the live transport connection state', async () => {
   expect(await response.json()).toMatchObject({
     type: 'tcp',
     connected: false,
-  });
-});
-
-test('rejects unsupported Home Assistant event settings', async () => {
-  const handler = createRequestHandler(new FakeTransport());
-  const response = await handler(
-    new Request('http://localhost/api/homeassistant', {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ experimental_event_entities: true }),
-    }),
-  );
-
-  expect(response.status).toBe(400);
-  expect(await response.json()).toMatchObject({
-    error: 'event entities and legacy action sensors are not supported yet',
   });
 });
 

@@ -408,8 +408,6 @@ export function App() {
         body: JSON.stringify({
           discovery_topic: settings.discovery_topic,
           enabled: settings.enabled,
-          experimental_event_entities: settings.experimental_event_entities,
-          legacy_action_sensor: settings.legacy_action_sensor,
           log_level: settings.log_level,
           status_topic: settings.status_topic,
         }),

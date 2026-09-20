@@ -78,10 +78,18 @@ jobs:
         shell: bash
         run: |
           mkdir -p release
-          bun build packages/server/src/main.ts \
-            --compile \
-            --target=${{ matrix.bun_target }} \
-            --outfile=release/${{ matrix.asset }}
+          if [ "${{ matrix.target }}" = "windows-x64" ]; then
+            bun build packages/server/src/main.ts \
+              --compile \
+              --external bun-serialport \
+              --target=${{ matrix.bun_target }} \
+              --outfile=release/${{ matrix.asset }}
+          else
+            bun build packages/server/src/main.ts \
+              --compile \
+              --target=${{ matrix.bun_target }} \
+              --outfile=release/${{ matrix.asset }}
+          fi
 
       - name: Upload binary
         uses: actions/upload-artifact@v4

@@ -157,7 +157,6 @@ export class MqttEntityBridge {
     }
     await this.subscribeDiscoveryCleanup();
     await publish(this.client, this.bridgeAvailability, 'online', this.bridgePublishOptions);
-    await this.clearLegacyDiscovery();
     await this.publishRestartDiscovery();
     await this.publishPermitJoinDiscovery();
     await this.publishPermitJoinState();
@@ -264,7 +263,6 @@ export class MqttEntityBridge {
     }
     const restart = restartTopics(this.discoveryPrefix, this.baseTopic, this.bridgeAvailability);
     await publish(this.client, restart.discovery, '', clearOptions);
-    await this.clearLegacyDiscovery(clearOptions);
     for (const device of this.registry.list()) {
       await this.clearEntityDiscovery(device, clearOptions);
       for (const diagnostic of diagnosticValues(device)) {
@@ -300,16 +298,6 @@ export class MqttEntityBridge {
           this.baseTopic,
           this.bridgeAvailability,
         ).discovery,
-        '',
-        options,
-      );
-    }
-    const legacyId = device.targetId.toString(16).padStart(8, '0');
-    await publish(this.client, `${this.discoveryPrefix}/fan/${legacyId}/config`, '', options);
-    for (const field of ['eep', 'channel', 'manufacturer_id', 'last_seen']) {
-      await publish(
-        this.client,
-        `${this.discoveryPrefix}/sensor/eep_${legacyId}_${field}/config`,
         '',
         options,
       );
@@ -367,34 +355,11 @@ export class MqttEntityBridge {
           availability: [{ topic: topics.bridgeAvailability }, { topic: topics.availability }],
           availability_mode: 'any',
           entity_category: 'diagnostic',
-          ...(diagnostic.field === 'last_seen' ? { device_class: 'timestamp' } : {}),
           ...(this.includeDeviceInformation ? { device: deviceInfo(device, model) } : {}),
         }),
         this.bridgePublishOptions,
       );
     }
-  }
-
-  private async clearLegacyDiscovery(options = { ...publishOptions, retain: true }): Promise<void> {
-    const discoveryTopics = new Set([
-      `${this.discoveryPrefix}/button/eep_bridge_restart/config`,
-      `${this.discoveryPrefix}/binary_sensor/eep_bridge_connection/config`,
-      `${this.discoveryPrefix}/sensor/eep_bridge_connection/config`,
-      `${this.discoveryPrefix}/sensor/eep_bridge_version/config`,
-      `${this.discoveryPrefix}/select/eep_bridge_log_level/config`,
-      `${this.discoveryPrefix}/sensor/eep_bridge_device_count/config`,
-      `${this.discoveryPrefix}/sensor/eep_bridge_controller_id/config`,
-      `${this.discoveryPrefix}/sensor/eep_bridge_transport/config`,
-      `${this.discoveryPrefix}/sensor/eep_bridge_activity/config`,
-    ]);
-    for (const device of this.registry.list()) {
-      const legacyId = device.targetId.toString(16).padStart(8, '0');
-      discoveryTopics.add(`${this.discoveryPrefix}/fan/${legacyId}/config`);
-      for (const field of ['eep', 'channel', 'manufacturer_id', 'last_seen']) {
-        discoveryTopics.add(`${this.discoveryPrefix}/sensor/eep_${legacyId}_${field}/config`);
-      }
-    }
-    for (const topic of discoveryTopics) await publish(this.client, topic, '', options);
   }
 
   private async publishPermitJoinDiscovery(): Promise<void> {
@@ -537,7 +502,8 @@ export class MqttEntityBridge {
               ? 'preset'
               : undefined;
       if (!field) return;
-      await this.sendCommand(device, entity.parseCommand(profileContext(device), field, message));
+      const request = entity.parseCommand(profileContext(device), field, message);
+      await this.sendCommand(device, typeof request === 'number' ? { value: request } : request);
       const updatedDevice = this.registry.findBySourceId(device.sourceId) ?? device;
       await this.statePublisher.publishState(updatedDevice, deviceAvailability(updatedDevice));
     } catch (error) {
@@ -545,5 +511,3 @@ export class MqttEntityBridge {
     }
   }
 }
-
-export { MqttEntityBridge as MqttFanBridge };

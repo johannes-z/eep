@@ -27,7 +27,7 @@ export async function sendDeviceCommand(
     reportedState: device.reportedState,
     desiredState: device.desiredState,
   };
-  const command = profile.parseCommand(context, normalizeCommandRequest(request));
+  const command = profile.parseCommand(context, request);
   const payload = profile.encodeCommand(context, command);
   await writePayload(socket, payload);
   await onTransmit?.(payload);
@@ -36,10 +36,6 @@ export async function sendDeviceCommand(
       desiredState: command.desiredState as Device['desiredState'],
     });
   }
-}
-
-function normalizeCommandRequest(request: unknown): unknown {
-  return typeof request === 'number' || typeof request === 'string' ? { value: request } : request;
 }
 
 export function assertSupportedDeviceValue(

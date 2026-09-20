@@ -1,6 +1,7 @@
 node_modules
 dist
 .bun-cache
+packages/server/data
 packages/server/release
 *.db
 secrets.yaml

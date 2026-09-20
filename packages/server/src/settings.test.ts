@@ -5,10 +5,12 @@ import { join } from 'node:path';
 import type { HomeAssistantSettings, TransportSettings } from './config';
 import { defaultMqttSettings } from './mqtt';
 import {
+  loadGeneralSettings,
   loadHomeAssistantSettings,
   loadConfiguration,
   loadMqttSettings,
   loadTransportSettings,
+  saveGeneralSettings,
   saveHomeAssistantSettings,
   saveMqttSettings,
   saveTransportSettings,
@@ -70,6 +72,19 @@ test('rejects malformed or unsupported persisted settings', async () => {
   expect(loadMqttSettings(filePath)).rejects.toThrow('Invalid configuration section: mqtt');
 });
 
+test('persists the general start ID as a hexadecimal YAML value', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-general-settings-'));
+  const filePath = join(directory, 'configuration.yaml');
+
+  await saveGeneralSettings(filePath, { startId: 0xffe76685 });
+
+  expect(await loadGeneralSettings(filePath)).toEqual({ startId: 0xffe76685 });
+  expect(Bun.YAML.parse(await readFile(filePath, 'utf8'))).toMatchObject({
+    version: 1,
+    general: { startId: 'ffe76685' },
+  });
+});
+
 test('resolves secrets and keeps passwords out of configuration.yaml', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-settings-secrets-'));
   const filePath = join(directory, 'configuration.yaml');
@@ -98,6 +113,22 @@ test('resolves secrets and keeps passwords out of configuration.yaml', async () 
   expect(configuration).not.toContain('__EEP_SECRET__');
   expect(configuration).not.toContain('test-user');
   expect(await readFile(secretsPath, 'utf8')).toContain('updated-password');
+});
+
+test('does not rewrite unchanged secrets when saving another setting', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-settings-readonly-secrets-'));
+  const filePath = join(directory, 'configuration.yaml');
+  const secretsPath = join(directory, 'secrets.yaml');
+  const secrets = '# managed externally\nmqtt_username: test-user\nmqtt_password: test-password\n';
+  await Bun.write(secretsPath, secrets);
+  await Bun.write(
+    filePath,
+    'version: 1\nmqtt:\n  username: !secret mqtt_username\n  password: !secret mqtt_password\n',
+  );
+
+  await saveTransportSettings(filePath, transport);
+
+  expect(await readFile(secretsPath, 'utf8')).toBe(secrets);
 });
 
 test('resolves arbitrary YAML values from secret references', async () => {

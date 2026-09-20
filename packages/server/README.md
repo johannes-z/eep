@@ -22,9 +22,12 @@ The HTTP API has no built-in authentication; keep it on a trusted network or pla
 - `BAUD_RATE`, `RTSCTS`: serial adapter settings.
 - `ADAPTER_NAME`, `DISABLE_LED`: accepted only for legacy configuration compatibility; they are not used by `bun-serialport`.
 - `CONTROLLER_ID`: optional EnOcean controller ID.
+- `START_ID`: optional first sender ID for automatic UTE allocation. The web UI also stores this as `general.startId` in `configuration.yaml`.
 - `MQTT_URL` or `MQTT_HOST`/`MQTT_PORT`: broker connection.
 - `MQTT_USERNAME`, `MQTT_PASSWORD`: broker credentials.
-- `HA_ENABLED`, `HA_DISCOVERY_TOPIC`, `HA_STATUS_TOPIC`: Home Assistant discovery settings.
+- `HA_ENABLED`, `HA_DISCOVERY_TOPIC`, `HA_STATUS_TOPIC`, `HA_LOG_LEVEL`: Home Assistant discovery settings.
+- `HA_EXPERIMENTAL_EVENT_ENTITIES` and `HA_LEGACY_ACTION_SENSOR` remain recognized for compatibility,
+  but must stay `false` because those entity types are not implemented.
 
 Keep the MQTT credentials in the ignored `DATA_DIR/secrets.yaml` file and reference them from
 `configuration.yaml` with `!secret` tags:
@@ -81,18 +84,20 @@ candidate in the web console stores its metadata and enables normal profile-base
 For receiver-driven devices such as the AEROline vent, select a receiver channel and activate its
 local learn mode first. Then open Permit join and use `Send controller signal` in the web console,
 or turn the Home Assistant switch `ON`, while the receiver's 30-second learning window is open.
-The server broadcasts a D4 UTE query using the configured controller ID; an accepted response
-identifies the vent and creates the pending candidate.
+The server broadcasts a D4 UTE query using the first free sender ID at or above `startId`; an
+accepted response identifies the vent and creates the pending candidate. The USB 300 base ID is
+read from the adapter and shown read-only in General settings. It is not used as the last-used
+allocation cursor and is not persisted in `configuration.yaml`.
 
 UTE responses require a non-zero controller ID. Set `CONTROLLER_ID`, or keep at least one device
 with a valid persisted `sourceId`, before using Permit join.
 
 ## Docker
 
-Build with `packages/server` as the Docker context:
+Build from the repository root so the image uses the workspace lockfile:
 
 ```sh
-docker build -t eep-server packages/server
+docker build -f packages/server/Dockerfile -t eep-server .
 docker run --rm -p 3000:3000 -v eep-data:/data eep-server
 ```
 

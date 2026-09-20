@@ -35,6 +35,14 @@ export const appRoutes = [
     section: 'settings',
   },
   {
+    path: '/settings/general',
+    view: 'general',
+    title: 'General',
+    label: 'General',
+    icon: '⚙',
+    section: 'settings',
+  },
+  {
     path: '/settings/mqtt',
     view: 'mqtt',
     title: 'MQTT',
@@ -62,6 +70,12 @@ function normalizePathname(pathname: string): string {
 export function findAppRoute(pathname: string): AppRoute | undefined {
   const normalized = normalizePathname(pathname);
   return appRoutes.find((route) => route.path === normalized);
+}
+
+export function routeMetadata(pathname: string): AppRoute {
+  const metadata = findAppRoute(pathname);
+  if (!metadata) throw new Error(`Missing route metadata for ${pathname}`);
+  return metadata;
 }
 
 export function getAppRoute(pathname: string): AppRoute {

@@ -24,7 +24,7 @@ export class TransportRuntime {
     private readonly onFatalError: (reason: string) => void,
     private readonly profiles: ProfileRegistry = createDefaultProfileRegistry(),
   ) {
-    this.connected = Boolean(connection.on);
+    this.connected = typeof connection.on === 'function';
   }
 
   get current(): TransportConnection {
@@ -52,7 +52,7 @@ export class TransportRuntime {
       this.monitor(replacement);
       const previous = this.connection;
       this.connection = replacement;
-      this.connected = Boolean(replacement.on);
+      this.connected = typeof replacement.on === 'function';
       await closeTransport(previous);
     } catch (error) {
       await closeTransport(replacement).catch(() => undefined);

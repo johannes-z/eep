@@ -2,13 +2,17 @@ FROM oven/bun:1.4.2-alpine
 
 WORKDIR /app
 
-COPY package.json ./
-RUN bun install --production
+COPY package.json bun.lock ./
+COPY packages/server/package.json packages/server/package.json
+RUN bun install --frozen-lockfile --production
 
-COPY src ./src
-COPY public ./public
+COPY packages/server/src packages/server/src
+COPY packages/server/public packages/server/public
+COPY packages/server/scripts packages/server/scripts
 
-RUN bun run build
+RUN bun run --cwd packages/server build
+
+WORKDIR /app/packages/server
 
 ENV HOST=0.0.0.0
 ENV PORT=3000

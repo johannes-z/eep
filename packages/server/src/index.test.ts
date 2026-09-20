@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { defaultMqttSettings } from './mqtt';
 import type { TransportSettings } from './config';
 import { DeviceRegistry } from './devices/registry';
+import { TeachInManager } from './devices/teachin';
 import { PacketListener } from './transport/listener';
 
 void mock.module('bun-serialport', () => ({
@@ -42,7 +43,7 @@ test('returns 200 and writes a payload for a configured device', async () => {
   expect(transport.writes[0][7]).toBe(13);
 });
 
-test('uses the controller ID when sending a command to E05', async () => {
+test('uses each device source ID when sending a command', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-e05-command-'));
   const transport = new FakeTransport();
   const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
@@ -54,7 +55,7 @@ test('uses the controller ID when sending a command to E05', async () => {
   const response = await handler(new Request('http://localhost/ffe76682/05126787/3'));
 
   expect(response.status).toBe(200);
-  expect(Array.from(transport.writes[0].slice(13, 17))).toEqual([0xff, 0xe7, 0x66, 0x81]);
+  expect(Array.from(transport.writes[0].slice(13, 17))).toEqual([0xff, 0xe7, 0x66, 0x82]);
   expect(Array.from(transport.writes[0].slice(19, 23))).toEqual([0x05, 0x12, 0x67, 0x87]);
 });
 
@@ -117,7 +118,7 @@ test('rejects unknown devices and unsupported requests', async () => {
     (await handler(new Request('http://localhost/ffe76681/0513cefe/Auto', { method: 'POST' })))
       .status,
   ).toBe(405);
-  expect((await handler(new Request('http://localhost/ffe76681/0513cefe'))).status).toBe(404);
+  expect((await handler(new Request('http://localhost/api/unsupported'))).status).toBe(404);
 });
 
 test('lists the devices from the initial configuration', async () => {
@@ -156,7 +157,7 @@ test('starts, reads, and stops the packet listener', async () => {
   expect(await stop.json()).toMatchObject({ active: false });
 });
 
-test('rejects device metadata updates', async () => {
+test('renames and persists a device through the API', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-device-name-'));
   const statePath = join(directory, 'configuration.yaml');
   const registry = await DeviceRegistry.load(statePath);
@@ -170,7 +171,27 @@ test('rejects device metadata updates', async () => {
     }),
   );
 
-  expect(response.status).toBe(405);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ name: 'Living Room Vent' });
+  expect(registry.findBySourceId(0xffe76681)?.name).toBe('Living Room Vent');
+  const restored = await DeviceRegistry.load(statePath);
+  expect(restored.findBySourceId(0xffe76681)?.name).toBe('Living Room Vent');
+});
+
+test('rejects empty device names', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-device-empty-name-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  const handler = createRequestHandler(new FakeTransport(), { registry });
+
+  const response = await handler(
+    new Request('http://localhost/api/devices/ffe76681', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: '   ' }),
+    }),
+  );
+
+  expect(response.status).toBe(400);
 });
 
 test('deletes and persists removal of a device', async () => {
@@ -197,6 +218,14 @@ test('deletes and persists removal of a device', async () => {
 test('serves the browser console', async () => {
   const handler = createRequestHandler(new FakeTransport());
   const response = await handler(new Request('http://localhost/'));
+
+  expect(response.status).toBe(200);
+  expect(await response.text()).toContain('eep / EnOcean bridge');
+});
+
+test('serves the browser console for application deep links', async () => {
+  const handler = createRequestHandler(new FakeTransport());
+  const response = await handler(new Request('http://localhost/settings/mqtt'));
 
   expect(response.status).toBe(200);
   expect(await response.text()).toContain('eep / EnOcean bridge');
@@ -243,6 +272,124 @@ test('reads and updates MQTT settings without exposing the password', async () =
     version: 5,
   });
   expect(appliedSettings).toMatchObject(savedSettings);
+});
+
+test('reads and updates the general start ID', async () => {
+  let savedStartId = 0xffe76681;
+  let appliedStartId = 0;
+  const handler = createRequestHandler(new FakeTransport(), {
+    generalSettings: { startId: savedStartId },
+    saveGeneralSettings: async (settings) => {
+      savedStartId = settings.startId;
+    },
+    applyGeneralSettings: async (settings) => {
+      appliedStartId = settings.startId;
+    },
+  });
+
+  const initial = await handler(new Request('http://localhost/api/general'));
+  expect(await initial.json()).toEqual({ start_id: 'ffe76681', base_id: null, channels: [] });
+
+  const response = await handler(
+    new Request('http://localhost/api/general', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ start_id: 'ffe76685' }),
+    }),
+  );
+
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ start_id: 'ffe76685', channels: [] });
+  expect(savedStartId).toBe(0xffe76685);
+  expect(appliedStartId).toBe(0xffe76685);
+});
+
+test('parses digit-only general IDs as hexadecimal', async () => {
+  const handler = createRequestHandler(new FakeTransport(), {
+    generalSettings: { startId: 0x10 },
+  });
+
+  const response = await handler(
+    new Request('http://localhost/api/general', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ start_id: '00000010' }),
+    }),
+  );
+
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ start_id: '00000010' });
+});
+
+test('rejects legacy routes with trailing garbage in an identifier', async () => {
+  const transport = new FakeTransport();
+  const handler = createRequestHandler(transport);
+
+  const response = await handler(new Request('http://localhost/ffe76681/0513cefe-garbage/Intake'));
+
+  expect(response.status).toBe(400);
+  expect(transport.writes).toHaveLength(0);
+});
+
+test('returns the USB 300 base ID as read-only general data', async () => {
+  const handler = createRequestHandler(new FakeTransport(), {
+    baseId: 0xffe76680,
+    generalSettings: { startId: 0xffe76681 },
+  });
+
+  const response = await handler(new Request('http://localhost/api/general'));
+
+  const payload = (await response.json()) as {
+    start_id: string;
+    base_id: string;
+    channels: Array<{ channel: number; id: string; used: boolean; device?: string }>;
+  };
+  expect(payload.start_id).toBe('ffe76681');
+  expect(payload.base_id).toBe('ffe76680');
+  expect(payload.channels).toHaveLength(127);
+  expect(payload.channels[0]).toMatchObject({
+    channel: 1,
+    id: 'ffe76681',
+    used: true,
+  });
+  expect(payload.channels[1]).toMatchObject({
+    channel: 2,
+    id: 'ffe76682',
+    used: true,
+  });
+  expect(payload.channels[4]).toMatchObject({
+    channel: 5,
+    id: 'ffe76685',
+    used: false,
+  });
+});
+
+test('starts targeted pairing from the selected USB 300 channel', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-targeted-pairing-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  let signalSourceId = 0;
+  const teachIn = new TeachInManager(
+    registry,
+    0xffe76681,
+    undefined,
+    undefined,
+    async (sourceId) => {
+      signalSourceId = sourceId;
+    },
+  );
+  const handler = createRequestHandler(new FakeTransport(), { registry, teachIn });
+
+  const response = await handler(
+    new Request('http://localhost/api/pairing/transmit', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sourceId: 'ffe76685' }),
+    }),
+  );
+
+  expect(response.status).toBe(200);
+  expect(signalSourceId).toBe(0xffe76685);
+  expect(teachIn.isActive()).toBe(true);
 });
 
 test('reads and updates general transport settings', async () => {

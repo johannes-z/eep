@@ -5,6 +5,7 @@ import { isTcpPath, parseTcpPath } from '../util';
 export interface TransportConnection {
   write(payload: Uint8Array): boolean | void | Promise<void>;
   on?(event: string, listener: (data: unknown) => void): void;
+  off?(event: string, listener: (data: unknown) => void): void;
   close?(): Promise<void> | void;
 }
 

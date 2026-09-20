@@ -1,4 +1,10 @@
-export type AppView = 'overview' | 'packet-listener' | 'settings' | 'mqtt' | 'homeassistant';
+export type AppView =
+  | 'overview'
+  | 'packet-listener'
+  | 'settings'
+  | 'mqtt'
+  | 'homeassistant'
+  | 'general';
 
 export interface EntityState {
   isOn: boolean;
@@ -96,6 +102,20 @@ export interface TransportResponse {
   baudrate: number;
   rtscts: boolean;
   restartRequired?: boolean;
+}
+
+export interface GeneralResponse {
+  start_id: string;
+  base_id: string | null;
+  channels: GeneralChannel[];
+  restartRequired?: boolean;
+}
+
+export interface GeneralChannel {
+  channel: number;
+  id: string;
+  used: boolean;
+  device?: string;
 }
 
 export interface HomeAssistantResponse {

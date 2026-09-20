@@ -11,6 +11,8 @@ export interface MqttRuntimeStatus {
   error?: string;
 }
 
+type MqttClientFactory = typeof connect;
+
 function connectionUrl(settings: MqttSettings): string {
   if (!settings.tls || settings.url.startsWith('mqtts://')) return settings.url;
   if (!settings.url.startsWith('mqtt://')) return settings.url;
@@ -20,6 +22,7 @@ function connectionUrl(settings: MqttSettings): string {
 export class MqttRuntime {
   private client: MqttClient | undefined;
   private bridge: MqttEntityBridge | undefined;
+  private generation = 0;
 
   constructor(
     private readonly registry: DeviceRegistry,
@@ -28,6 +31,7 @@ export class MqttRuntime {
     private readonly profiles: ProfileRegistry = createDefaultProfileRegistry(),
     private readonly teachIn?: TeachInManager,
     private readonly restart?: () => Promise<void>,
+    private readonly connectClient: MqttClientFactory = connect,
   ) {}
 
   async apply(settings: MqttSettings, homeAssistant: HomeAssistantSettings): Promise<void> {
@@ -35,7 +39,8 @@ export class MqttRuntime {
     this.runtimeStatus.error = undefined;
     if (!settings.url) return;
 
-    const client = connect(connectionUrl(settings), {
+    const generation = this.generation;
+    const client = this.connectClient(connectionUrl(settings), {
       username: settings.username,
       password: settings.password,
       clientId: settings.clientId,
@@ -54,15 +59,19 @@ export class MqttRuntime {
       },
     });
     this.client = client;
+    const isCurrent = (): boolean => this.client === client && this.generation === generation;
     client.on('connect', () => {
+      if (!isCurrent()) return;
       this.runtimeStatus.connected = true;
       this.runtimeStatus.error = undefined;
       console.log(`MQTT connected to ${connectionUrl(settings)}`);
     });
     client.on('close', () => {
+      if (!isCurrent()) return;
       this.runtimeStatus.connected = false;
     });
     client.on('error', (error) => {
+      if (!isCurrent()) return;
       this.runtimeStatus.connected = false;
       this.runtimeStatus.error = error.message;
       console.error('MQTT connection error:', error.message);
@@ -83,11 +92,20 @@ export class MqttRuntime {
   }
 
   async stop(): Promise<void> {
-    await this.bridge?.stop();
+    this.generation += 1;
+    const bridge = this.bridge;
+    const client = this.client;
     this.bridge = undefined;
-    if (this.client) {
-      this.client.end(true);
-      this.client = undefined;
+    this.client = undefined;
+    await bridge?.stop();
+    if (client) {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          client.end(true, (error) => (error ? reject(error) : resolve()));
+        });
+      } catch (error) {
+        console.error('MQTT shutdown error:', (error as Error).message);
+      }
     }
     this.runtimeStatus.connected = false;
   }

@@ -7,11 +7,12 @@
   "author": "",
   "main": "dist/index.js",
   "scripts": {
-    "build": "bun scripts/build.js && bun build ./src/index.ts --outdir ./dist --target bun --external bun-serialport && bun build ./src/main.ts --outdir ./dist --target bun --external bun-serialport",
-    "dev": "bun --watch ./scripts/dev.js",
+    "build": "bun run generate-routes && bun scripts/build.js && bun build ./src/index.ts --outdir ./dist --target bun --external bun-serialport && bun build ./src/main.ts --outdir ./dist --target bun --external bun-serialport",
+    "dev": "bun run generate-routes && bun --watch ./scripts/dev.js",
+    "generate-routes": "tsr generate --project tsconfig.json --write",
     "start": "bun dist/main.js",
     "test": "bun test ./src",
-    "typecheck": "bunx tsc --noEmit -p tsconfig.json"
+    "typecheck": "bun run generate-routes && bunx tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@tanstack/react-router": "^1.170.38",
@@ -22,6 +23,7 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@tanstack/router-cli": "1.167.38",
     "@types/bun": "1.4.2",
     "@types/node": "26.6.2",
     "@types/react": "^19.0.0",

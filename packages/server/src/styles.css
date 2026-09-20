@@ -450,6 +450,23 @@ select:focus-visible {
   gap: 9px;
 }
 
+.device-name-edit {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.device-name-edit input {
+  width: 160px;
+  min-height: 27px;
+  padding: 4px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 11px;
+}
+
 .device-name > div {
   min-width: 0;
 }
@@ -813,6 +830,65 @@ select:focus-visible {
   color: var(--subtle);
 }
 
+.channel-section {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 10px;
+}
+
+.channel-section .form-section {
+  justify-content: space-between;
+}
+
+.channel-summary {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.channel-feedback {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.channel-feedback.error {
+  color: var(--danger);
+}
+
+.channel-table {
+  min-width: 540px;
+}
+
+.channel-table-wrap {
+  max-height: 560px;
+  overflow: auto;
+}
+
+.channel-table thead th {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+}
+
+.channel-table td {
+  height: 43px;
+}
+
+.channel-table td:last-child {
+  width: 1%;
+  text-align: right;
+}
+
+.channel-table tbody tr.used-row td {
+  background: var(--surface-muted);
+  color: var(--subtle);
+}
+
+.channel-table tbody tr.used-row:hover td {
+  background: var(--surface-muted);
+}
+
 .switch-grid {
   display: grid;
   grid-column: 1 / -1;
@@ -1027,5 +1103,75 @@ select:focus-visible {
   .settings-actions {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .channel-table-wrap {
+    max-height: none;
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+
+  .channel-table {
+    display: block;
+    min-width: 0;
+  }
+
+  .channel-table thead {
+    display: none;
+  }
+
+  .channel-table tbody {
+    display: grid;
+    gap: 7px;
+  }
+
+  .channel-table tbody tr {
+    display: grid;
+    grid-template-columns: 1fr 1.4fr;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  .channel-table tbody tr.used-row {
+    background: var(--surface-muted);
+  }
+
+  .channel-table tbody tr td,
+  .channel-table tbody tr.used-row td {
+    display: flex;
+    min-width: 0;
+    height: auto;
+    min-height: 36px;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border-bottom: 1px solid var(--line);
+    background: transparent;
+    white-space: normal;
+  }
+
+  .channel-table tbody tr td::before {
+    flex: 0 0 auto;
+    color: var(--muted);
+    content: attr(data-label);
+    font-size: 9px;
+    font-weight: 650;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .channel-table tbody tr td:nth-child(3),
+  .channel-table tbody tr td:nth-child(4) {
+    grid-column: 1 / -1;
+  }
+
+  .channel-table tbody tr td:last-child {
+    border-bottom: 0;
+  }
+
+  .channel-table tbody tr td code {
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 }

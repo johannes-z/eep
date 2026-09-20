@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { extname, join, resolve } from 'node:path';
-import { resolveServerConfig, validateMqttConfig } from '../config';
-import type { Device, HomeAssistantSettings, LogLevel, TransportSettings } from '../config';
+import { resolveServerConfig } from '../config';
+import type { Device, GeneralSettings, HomeAssistantSettings, TransportSettings } from '../config';
 import { sendDeviceCommand } from '../devices/commands';
 import { initialDevices } from '../devices/registry';
 import type { DeviceRegistry } from '../devices/registry';
@@ -14,17 +14,31 @@ import {
 } from '../profiles';
 import type { TransportConnection } from '../transport/adapters';
 import type { PacketListener } from '../transport/listener';
+import {
+  generalSettingsResponse,
+  homeAssistantSettingsResponse,
+  mqttSettingsResponse,
+  parseGeneralSettings,
+  parseHomeAssistantSettings,
+  parseMqttSettings,
+  parseRouteId,
+  parseTransportSettings,
+  transportSettingsResponse,
+  type MqttStatus,
+} from './settings';
+import { parseEnOceanId } from '../util';
 
 export interface RequestTransport extends TransportConnection {}
 
-export interface MqttStatus {
-  connected: boolean;
-  error?: string;
-}
+export type { MqttStatus } from './settings';
 
 export interface RequestHandlerOptions {
   registry?: DeviceRegistry;
   controllerId?: number;
+  baseId?: number;
+  generalSettings?: GeneralSettings;
+  saveGeneralSettings?: (settings: GeneralSettings) => Promise<void>;
+  applyGeneralSettings?: (settings: GeneralSettings) => Promise<void>;
   teachIn?: TeachInManager;
   webRoot?: string;
   transportSettings?: TransportSettings;
@@ -49,212 +63,6 @@ interface PairingState {
 
 function json(data: unknown, status = 200): Response {
   return Response.json(data, { status });
-}
-
-function mqttSettingsResponse(
-  settings: MqttSettings,
-  status: MqttStatus = { connected: false },
-  discoveryTopic = settings.discoveryPrefix ?? 'homeassistant',
-): Record<string, unknown> {
-  return {
-    configured: Boolean(settings.url),
-    connected: status.connected,
-    error: status.error ?? '',
-    server: settings.url,
-    user: settings.username ?? '',
-    password: '',
-    passwordConfigured: Boolean(settings.password),
-    base_topic: settings.baseTopic ?? 'eep',
-    discovery_prefix: discoveryTopic,
-    client_id: settings.clientId ?? '',
-    keepalive: settings.keepalive ?? 60,
-    version: settings.version ?? 4,
-    maximum_packet_size: settings.maximumPacketSize ?? 1048576,
-    tls: settings.tls ?? false,
-    ca: settings.ca ?? '',
-    cert: settings.cert ?? '',
-    key: settings.key ?? '',
-    reject_unauthorized: settings.rejectUnauthorized ?? true,
-    force_disable_retain: settings.forceDisableRetain ?? false,
-    include_device_information: settings.includeDeviceInformation ?? true,
-  };
-}
-
-function transportSettingsResponse(
-  settings: TransportSettings,
-  connected: boolean,
-): Record<string, unknown> {
-  return {
-    connected,
-    type: settings.type,
-    adapter: settings.adapter,
-    port: settings.path,
-    baudrate: settings.baudRate,
-    disable_led: settings.disableLed,
-    rtscts: settings.rtscts,
-  };
-}
-
-function homeAssistantSettingsResponse(settings: HomeAssistantSettings): Record<string, unknown> {
-  return {
-    enabled: settings.enabled,
-    discovery_topic: settings.discoveryTopic,
-    status_topic: settings.statusTopic,
-    log_level: settings.logLevel ?? 'info',
-    experimental_event_entities: settings.experimentalEventEntities,
-    legacy_action_sensor: settings.legacyActionSensor,
-  };
-}
-
-function readString(
-  body: Record<string, unknown>,
-  key: string,
-  fallback: string | undefined,
-): string | undefined {
-  if (!(key in body)) return fallback;
-  if (typeof body[key] !== 'string') throw new Error(`${key} must be a string`);
-  const value = body[key].trim();
-  return value || undefined;
-}
-
-function readText(body: Record<string, unknown>, key: string, fallback: string): string {
-  if (!(key in body)) return fallback;
-  if (typeof body[key] !== 'string') throw new Error(`${key} must be a string`);
-  return body[key].trim();
-}
-
-function readBoolean(
-  body: Record<string, unknown>,
-  key: string,
-  fallback: boolean | undefined,
-): boolean | undefined {
-  if (!(key in body)) return fallback;
-  if (typeof body[key] !== 'boolean') throw new Error(`${key} must be a boolean`);
-  return body[key];
-}
-
-function readInteger(
-  body: Record<string, unknown>,
-  key: string,
-  fallback: number | undefined,
-  minimum: number,
-  maximum: number,
-): number | undefined {
-  if (!(key in body)) return fallback;
-  const value = body[key];
-  const number = typeof value === 'number' ? value : Number(value);
-  if (!Number.isInteger(number) || number < minimum || number > maximum) {
-    throw new Error(`${key} must be an integer between ${minimum} and ${maximum}`);
-  }
-  return number;
-}
-
-function readLogLevel(body: Record<string, unknown>, key: string, fallback: LogLevel): LogLevel {
-  const value = readText(body, key, fallback);
-  if (value !== 'debug' && value !== 'info' && value !== 'warn' && value !== 'error') {
-    throw new Error(`${key} must be debug, info, warn, or error`);
-  }
-  return value;
-}
-
-function parseMqttSettings(body: Record<string, unknown>, current: MqttSettings): MqttSettings {
-  const next: MqttSettings = { ...current };
-  const server = body.server ?? body.url;
-  if (server !== undefined) {
-    if (typeof server !== 'string') throw new Error('server must be a string');
-    next.url = server.trim();
-  }
-  next.username = readString(body, 'user', current.username);
-  next.baseTopic = readString(body, 'base_topic', current.baseTopic);
-  next.discoveryPrefix = readString(body, 'discovery_prefix', current.discoveryPrefix);
-  next.clientId = readString(body, 'client_id', current.clientId);
-  next.ca = readString(body, 'ca', current.ca);
-  next.cert = readString(body, 'cert', current.cert);
-  next.key = readString(body, 'key', current.key);
-  if (body.clear_password !== undefined && typeof body.clear_password !== 'boolean') {
-    throw new Error('clear_password must be a boolean');
-  }
-  if (body.clear_password === true) next.password = undefined;
-  else if (body.password !== undefined) {
-    if (typeof body.password !== 'string') throw new Error('password must be a string');
-    if (body.password) next.password = body.password;
-  }
-  next.keepalive = readInteger(body, 'keepalive', current.keepalive, 0, 65535);
-  next.maximumPacketSize = readInteger(
-    body,
-    'maximum_packet_size',
-    current.maximumPacketSize,
-    1,
-    268435460,
-  );
-  next.version = readInteger(body, 'version', current.version, 3, 5) as 3 | 4 | 5 | undefined;
-  next.tls = readBoolean(body, 'tls', current.tls);
-  next.rejectUnauthorized = readBoolean(body, 'reject_unauthorized', current.rejectUnauthorized);
-  next.forceDisableRetain = readBoolean(body, 'force_disable_retain', current.forceDisableRetain);
-  next.includeDeviceInformation = readBoolean(
-    body,
-    'include_device_information',
-    current.includeDeviceInformation,
-  );
-  validateMqttConfig(next);
-  return next;
-}
-
-function parseTransportSettings(
-  body: Record<string, unknown>,
-  current: TransportSettings,
-): TransportSettings {
-  const type = readText(body, 'type', current.type);
-  if (type !== 'none' && type !== 'serial' && type !== 'tcp') {
-    throw new Error('type must be none, serial, or tcp');
-  }
-  const next: TransportSettings = {
-    type,
-    adapter: readText(body, 'adapter', current.adapter),
-    path: readText(body, 'port', current.path),
-    baudRate: readInteger(body, 'baudrate', current.baudRate, 1, 4_000_000) ?? current.baudRate,
-    disableLed: readBoolean(body, 'disable_led', current.disableLed) ?? current.disableLed,
-    rtscts: readBoolean(body, 'rtscts', current.rtscts) ?? current.rtscts,
-  };
-  if (next.type !== 'none' && !next.path) {
-    throw new Error('port is required when a transport is configured');
-  }
-  if (next.type === 'tcp' && !next.path.startsWith('tcp://')) {
-    throw new Error('port must start with tcp:// for a TCP transport');
-  }
-  return next;
-}
-
-function parseHomeAssistantSettings(
-  body: Record<string, unknown>,
-  current: HomeAssistantSettings,
-): HomeAssistantSettings {
-  const next = {
-    enabled: readBoolean(body, 'enabled', current.enabled) ?? current.enabled,
-    discoveryTopic: readText(body, 'discovery_topic', current.discoveryTopic),
-    statusTopic: readText(body, 'status_topic', current.statusTopic),
-    logLevel: readLogLevel(body, 'log_level', current.logLevel ?? 'info'),
-    experimentalEventEntities:
-      readBoolean(body, 'experimental_event_entities', current.experimentalEventEntities) ??
-      current.experimentalEventEntities,
-    legacyActionSensor:
-      readBoolean(body, 'legacy_action_sensor', current.legacyActionSensor) ??
-      current.legacyActionSensor,
-  };
-  if (!next.discoveryTopic) throw new Error('discovery_topic must not be empty');
-  if (!next.statusTopic) throw new Error('status_topic must not be empty');
-  if (next.experimentalEventEntities || next.legacyActionSensor) {
-    throw new Error('event entities and legacy action sensors are not supported yet');
-  }
-  return next;
-}
-
-function parseRouteId(value: string): number {
-  const normalized = value.trim();
-  if (/^0x/i.test(normalized) || /[a-f]/i.test(normalized)) {
-    return Number.parseInt(normalized.replace(/^0x/i, ''), 16);
-  }
-  return Number(normalized);
 }
 
 function findLegacyDevice(source: string, target: string): Device | undefined {
@@ -301,6 +109,9 @@ export function createRequestHandler(
   const defaults = resolveServerConfig();
   let transportSettings = options.transportSettings ?? defaults.transport;
   let homeAssistantSettings = options.homeAssistantSettings ?? defaults.homeAssistant;
+  let generalSettings: GeneralSettings = options.generalSettings ?? {
+    startId: options.controllerId ?? defaults.startId ?? 1,
+  };
   let mqttSettings = { ...(options.mqttSettings ?? defaultMqttSettings()) };
   const getSocket = typeof socket === 'function' ? socket : () => socket;
   const profiles = options.profiles ?? createDefaultProfileRegistry();
@@ -327,14 +138,7 @@ export function createRequestHandler(
   }
 
   async function sendCommand(device: Device, request: unknown): Promise<void> {
-    await sendDeviceCommand(
-      getSocket(),
-      options.registry,
-      device,
-      request,
-      profiles,
-      options.controllerId,
-    );
+    await sendDeviceCommand(getSocket(), options.registry, device, request, profiles);
   }
 
   return async function handleRequest(request: Request): Promise<Response> {
@@ -346,6 +150,41 @@ export function createRequestHandler(
     }
 
     if (parts[0] === 'api') {
+      if (parts[1] === 'general' && request.method === 'GET' && parts.length === 2) {
+        return json(
+          generalSettingsResponse(
+            generalSettings,
+            options.baseId,
+            options.registry?.list() ?? initialDevices,
+          ),
+        );
+      }
+
+      if (parts[1] === 'general' && request.method === 'PUT' && parts.length === 2) {
+        try {
+          const body = (await request.json()) as Record<string, unknown>;
+          const next = parseGeneralSettings(body, generalSettings);
+          await options.applyGeneralSettings?.(next);
+          try {
+            await options.saveGeneralSettings?.(next);
+          } catch (error) {
+            await options.applyGeneralSettings?.(generalSettings).catch(() => undefined);
+            throw error;
+          }
+          generalSettings = next;
+          return json({
+            ...generalSettingsResponse(
+              next,
+              options.baseId,
+              options.registry?.list() ?? initialDevices,
+            ),
+            restartRequired: !options.applyGeneralSettings,
+          });
+        } catch (error) {
+          return json({ error: (error as Error).message }, 400);
+        }
+      }
+
       if (parts[1] === 'settings' && request.method === 'GET' && parts.length === 2) {
         return json(
           transportSettingsResponse(transportSettings, transportConnected(transportSettings)),
@@ -465,7 +304,18 @@ export function createRequestHandler(
       }
 
       if (parts[1] === 'devices' && request.method === 'PUT' && parts.length === 3) {
-        return json({ error: 'Device metadata is not configurable' }, 405);
+        const sourceId = parseRouteId(parts[2]);
+        const registry = options.registry;
+        if (!registry || !Number.isInteger(sourceId)) return json({ error: 'Unknown device' }, 404);
+        try {
+          const body = (await request.json()) as Record<string, unknown>;
+          if (typeof body.name !== 'string' || !body.name.trim()) {
+            throw new Error('name must be a non-empty string');
+          }
+          return json(await registry.update(sourceId, { name: body.name.trim() }));
+        } catch (error) {
+          return json({ error: (error as Error).message }, 400);
+        }
       }
 
       if (parts[1] === 'devices' && request.method === 'DELETE' && parts.length === 3) {
@@ -507,7 +357,15 @@ export function createRequestHandler(
       if (parts[1] === 'pairing' && request.method === 'POST' && parts[2] === 'transmit') {
         if (!options.teachIn) return json({ error: 'Teach-in is unavailable' }, 503);
         try {
-          await options.teachIn.transmit();
+          const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+          const rawSourceId = body.sourceId;
+          const sourceId = rawSourceId === undefined ? undefined : parseEnOceanId(rawSourceId);
+          if (rawSourceId !== undefined && (sourceId === undefined || sourceId < 1)) {
+            throw new Error('sourceId must be a non-zero EnOcean identifier');
+          }
+          if (sourceId !== undefined) options.teachIn.start();
+          await options.teachIn.transmit(sourceId);
+          pairing.active = true;
           return json({
             active: options.teachIn.isActive(),
             candidates: options.teachIn.listCandidates(),
@@ -523,7 +381,9 @@ export function createRequestHandler(
           const body = (await request.json()) as {
             targetId: number;
           };
-          return json(await options.teachIn.accept(Number(body.targetId)));
+          const targetId = parseEnOceanId(body.targetId);
+          if (targetId === undefined) throw new Error('targetId must be an EnOcean identifier');
+          return json(await options.teachIn.accept(targetId));
         } catch (error) {
           return json({ error: (error as Error).message }, 400);
         }
@@ -533,7 +393,9 @@ export function createRequestHandler(
         if (!options.teachIn) return json({ error: 'Teach-in is unavailable' }, 503);
         try {
           const body = (await request.json()) as { targetId: number };
-          options.teachIn.reject(Number(body.targetId));
+          const targetId = parseEnOceanId(body.targetId);
+          if (targetId === undefined) throw new Error('targetId must be an EnOcean identifier');
+          options.teachIn.reject(targetId);
           return json({ ok: true });
         } catch (error) {
           return json({ error: (error as Error).message }, 400);
@@ -561,6 +423,15 @@ export function createRequestHandler(
     }
 
     if (request.method === 'GET' && parts.length === 0) parts = ['index.html'];
+    if (
+      request.method === 'GET' &&
+      parts.length > 0 &&
+      parts.length < 3 &&
+      (parts.length === 1 || parts[0] === 'settings') &&
+      !extname(parts.at(-1) ?? '')
+    ) {
+      parts = ['index.html'];
+    }
 
     if (parts.length === 1 && request.method === 'GET' && parts[0] === 'index.html') {
       const filePath = join(webRoot, 'index.html');
@@ -579,11 +450,21 @@ export function createRequestHandler(
     const [source, target, value] = parts;
     console.log('Received request with params:', { source, target, value });
 
+    const sourceId = parseRouteId(source);
+    const targetId = parseRouteId(target);
     const deviceConfig = options.registry
-      ? options.registry.findBySourceId(parseRouteId(source))
+      ? options.registry.findBySourceId(sourceId)
       : findLegacyDevice(source, target);
 
-    if (!deviceConfig) return new Response(null, { status: 400 });
+    if (
+      !deviceConfig ||
+      !Number.isInteger(sourceId) ||
+      !Number.isInteger(targetId) ||
+      deviceConfig.sourceId !== sourceId ||
+      deviceConfig.targetId !== targetId
+    ) {
+      return new Response(null, { status: 400 });
+    }
 
     try {
       await sendCommand(deviceConfig, { value });

@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import type { HomeAssistantSettings, TransportSettings } from './config';
+import type { GeneralSettings, HomeAssistantSettings, TransportSettings } from './config';
 import type { MqttSettings } from './mqtt';
+import { requireEnOceanId } from './util';
 
 export interface PersistedConfiguration {
   version?: 1;
+  general?: { startId?: string | number };
   mqtt?: Record<string, unknown>;
   transport?: Partial<TransportSettings>;
   homeassistant?: Partial<HomeAssistantSettings>;
@@ -18,6 +20,10 @@ const includeMarker = '__EEP_INCLUDE__';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function parseIdentifier(value: unknown, field: string): number {
+  return requireEnOceanId(value, field, 1);
 }
 
 function validateSection(data: Record<string, unknown>, key: string): void {
@@ -47,6 +53,7 @@ function parseDocument(text: string, filePath: string): PersistedConfiguration {
   validateSection(data, 'mqtt');
   validateSection(data, 'transport');
   validateSection(data, 'homeassistant');
+  validateSection(data, 'general');
   validateSection(data, 'homeAssistant');
   if (data.devices !== undefined && !isRecord(data.devices)) {
     throw new Error('Invalid configuration section: devices');
@@ -126,6 +133,20 @@ async function readConfiguration(filePath: string): Promise<PersistedConfigurati
   }
 }
 
+async function replaceFile(temporaryPath: string, filePath: string): Promise<void> {
+  try {
+    await rename(temporaryPath, filePath);
+    return;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== 'EACCES' && code !== 'EEXIST' && code !== 'EPERM') throw error;
+  }
+  await unlink(filePath).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw error;
+  });
+  await rename(temporaryPath, filePath);
+}
+
 async function writeSecretFile(filePath: string, key: string, value: string): Promise<void> {
   await mkdir(dirname(filePath), { recursive: true });
   const temporaryPath = join(dirname(filePath), `.${randomUUID()}.secrets.yaml`);
@@ -138,7 +159,7 @@ async function writeSecretFile(filePath: string, key: string, value: string): Pr
     }
     secrets[key] = value;
     await writeFile(temporaryPath, stringifyYaml(secrets), 'utf8');
-    await rename(temporaryPath, filePath);
+    await replaceFile(temporaryPath, filePath);
   } catch (error) {
     await Bun.file(temporaryPath)
       .delete()
@@ -159,21 +180,33 @@ async function writeConfiguration(
     };
     delete data.homeAssistant;
     const secretFilePath = join(dirname(filePath), 'secrets.yaml');
+    let secrets: Record<string, unknown> | undefined;
     for (const [field, key] of [
       ['username', 'mqtt_username'],
       ['password', 'mqtt_password'],
     ] as const) {
-      if (typeof data.mqtt?.[field] === 'string' && data.mqtt[field]) {
-        await writeSecretFile(secretFilePath, key, data.mqtt[field]);
-        data.mqtt = { ...data.mqtt, [field]: `${secretMarker}${key}` };
+      const value = data.mqtt?.[field];
+      if (typeof value !== 'string' || !value) continue;
+      if (!secrets) {
+        try {
+          secrets = await readSecretFile(secretFilePath);
+        } catch (error) {
+          if (!(error as Error).message.startsWith('Missing secrets file:')) throw error;
+          secrets = {};
+        }
       }
+      if (secrets[key] !== value) {
+        await writeSecretFile(secretFilePath, key, value);
+        secrets[key] = value;
+      }
+      data.mqtt = { ...data.mqtt, [field]: `${secretMarker}${key}` };
     }
     let serialized = stringifyYaml(data);
     for (const key of ['mqtt_username', 'mqtt_password']) {
       serialized = serialized.replaceAll(`${secretMarker}${key}`, `!secret ${key}`);
     }
     await writeFile(temporaryPath, serialized, 'utf8');
-    await rename(temporaryPath, filePath);
+    await replaceFile(temporaryPath, filePath);
   } catch (error) {
     await Bun.file(temporaryPath)
       .delete()
@@ -246,6 +279,26 @@ export async function saveHomeAssistantSettings(
 ): Promise<void> {
   await updateSettings(filePath, (stored) => {
     stored.homeassistant = settings;
+  });
+}
+
+export async function loadGeneralSettings(
+  filePath: string,
+): Promise<Partial<GeneralSettings> | undefined> {
+  const data = await readConfiguration(filePath);
+  const startId = data.general?.startId;
+  return startId === undefined ? undefined : { startId: parseIdentifier(startId, 'startId') };
+}
+
+export async function saveGeneralSettings(
+  filePath: string,
+  settings: GeneralSettings,
+): Promise<void> {
+  await updateSettings(filePath, (stored) => {
+    stored.general = {
+      ...stored.general,
+      startId: settings.startId.toString(16).padStart(8, '0'),
+    };
   });
 }
 

@@ -10,6 +10,7 @@ export function Overview({
   busyTarget,
   onCommand,
   onDelete,
+  onRename,
   onAccept,
   onPairing,
   onTransmitPairing,
@@ -20,6 +21,7 @@ export function Overview({
   busyTarget: number | null;
   onCommand: (sourceId: number, command: CommandBody) => void;
   onDelete: (sourceId: number) => Promise<void>;
+  onRename: (sourceId: number, name: string) => Promise<void>;
   onAccept: (candidate: TeachInCandidate) => void;
   onPairing: () => void;
   onTransmitPairing: () => void;
@@ -133,6 +135,7 @@ export function Overview({
         devices={filteredDevices}
         onCommand={onCommand}
         onDelete={onDelete}
+        onRename={onRename}
       />
     </section>
   );

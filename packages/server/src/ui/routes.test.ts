@@ -6,6 +6,7 @@ test('defines canonical routes for every app view', () => {
     '/',
     '/packet-listener',
     '/settings/transport',
+    '/settings/general',
     '/settings/mqtt',
     '/settings/homeassistant',
   ]);
@@ -13,6 +14,7 @@ test('defines canonical routes for every app view', () => {
     'overview',
     'packet-listener',
     'settings',
+    'general',
     'mqtt',
     'homeassistant',
   ]);

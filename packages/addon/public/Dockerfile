@@ -1,4 +1,5 @@
 ARG BUILD_FROM
+ARG BUN_VERSION=1.4.2
 FROM $BUILD_FROM
 
 ENV LANG C.UTF-8
@@ -9,11 +10,11 @@ RUN apk add --no-cache \
     unzip \
     udev
 
-RUN curl -fsSL https://bun.sh/install | bash
+RUN curl -fsSL https://bun.sh/install | bash -s -- bun-v${BUN_VERSION}
 ENV PATH="/root/.bun/bin:${PATH}"
 
 COPY . /
-RUN cd / && bun install --production
+RUN cd / && bun install --production --frozen-lockfile
 
 COPY run.sh /
 RUN chmod a+x /run.sh

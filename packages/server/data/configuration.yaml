@@ -27,19 +27,6 @@ homeassistant:
   experimentalEventEntities: false
   legacyActionSensor: false
 devices:
-  ffe76681:
-    name: E04 Vent
-    profileId: D2-50-00
-    targetId: 0513cefe
-    capabilities:
-      - "off"
-      - level1
-      - level2
-      - level3
-      - level4
-      - automatic
-      - supplyOnly
-      - exhaustOnly
   ffe76682:
     name: E05 Vent
     profileId: D2-50-00
@@ -53,6 +40,31 @@ devices:
       - automatic
       - supplyOnly
       - exhaustOnly
+    teachIn:
+      eep: D2-50-00
+      channel: 255
+      manufacturerId: 97
+      direction: bidirectional
+      responseExpected: true
+  ffe76681:
+    name: E04 Vent
+    profileId: D2-50-00
+    targetId: 0513cefe
+    capabilities:
+      - "off"
+      - level1
+      - level2
+      - level3
+      - level4
+      - automatic
+      - supplyOnly
+      - exhaustOnly
+    teachIn:
+      eep: D2-50-00
+      channel: 255
+      manufacturerId: 97
+      direction: bidirectional
+      responseExpected: true
   ffe76683:
     name: E06 Vent
     profileId: D2-50-00
@@ -66,6 +78,12 @@ devices:
       - automatic
       - supplyOnly
       - exhaustOnly
+    teachIn:
+      eep: D2-50-00
+      channel: 255
+      manufacturerId: 97
+      direction: bidirectional
+      responseExpected: true
   ffe76684:
     name: E07 Vent
     profileId: D2-50-00
@@ -79,3 +97,9 @@ devices:
       - automatic
       - supplyOnly
       - exhaustOnly
+    teachIn:
+      eep: D2-50-00
+      channel: 255
+      manufacturerId: 97
+      direction: bidirectional
+      responseExpected: true

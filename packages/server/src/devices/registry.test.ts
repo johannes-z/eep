@@ -169,6 +169,25 @@ test('rejects malformed persisted device fields and fan state', async () => {
   expect(DeviceRegistry.load(filePath)).rejects.toThrow('Invalid D2-50-00 capabilities');
 });
 
+test('rejects runtime state that violates profile validation', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-registry-runtime-state-'));
+  const filePath = join(directory, 'configuration.yaml');
+  const registry = await DeviceRegistry.load(filePath);
+  await registry.update(0xffe76681, {
+    reportedState: { isOn: true, percentage: 25, d2Value: 1 },
+  });
+  await registry.close();
+
+  const database = new Database(join(directory, 'state.db'));
+  database.run('UPDATE device_runtime_state SET reported_state = ? WHERE source_id = ?', [
+    JSON.stringify({ isOn: true }),
+    0xffe76681,
+  ]);
+  database.close();
+
+  expect(DeviceRegistry.load(filePath)).rejects.toThrow('Invalid reportedState.percentage');
+});
+
 test('rejects duplicate persisted target identifiers', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-registry-duplicates-'));
   const filePath = join(directory, 'configuration.yaml');

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { CommandBody, Device } from '../ui/types';
 import { currentState, formatLastSeen, formatTargetId } from './deviceUtils';
 
@@ -6,11 +7,13 @@ export function DeviceTable({
   busyTarget,
   onCommand,
   onDelete,
+  onRename,
 }: {
   devices: Device[];
   busyTarget: number | null;
   onCommand: (sourceId: number, command: CommandBody) => void;
   onDelete: (sourceId: number) => Promise<void>;
+  onRename: (sourceId: number, name: string) => Promise<void>;
 }) {
   const sortedDevices = [...devices].sort((left, right) => {
     const profileOrder = left.profileId.localeCompare(right.profileId, undefined, {
@@ -43,6 +46,7 @@ export function DeviceTable({
                 key={device.sourceId}
                 onCommand={onCommand}
                 onDelete={onDelete}
+                onRename={onRename}
               />
             ))
           ) : (
@@ -66,12 +70,16 @@ function DeviceRow({
   busy,
   onCommand,
   onDelete,
+  onRename,
 }: {
   device: Device;
   busy: boolean;
   onCommand: (sourceId: number, command: CommandBody) => void;
   onDelete: (sourceId: number) => Promise<void>;
+  onRename: (sourceId: number, name: string) => Promise<void>;
 }) {
+  const [editingName, setEditingName] = useState(false);
+  const [name, setName] = useState(device.name);
   const state = currentState(device);
   const label = device.name;
   const entity = device.profile?.entity;
@@ -100,16 +108,67 @@ function DeviceRow({
     } catch {}
   }
 
+  async function saveName() {
+    const nextName = name.trim();
+    if (!nextName || nextName === device.name) {
+      setName(device.name);
+      setEditingName(false);
+      return;
+    }
+    await onRename(device.sourceId, nextName);
+    setEditingName(false);
+  }
+
   return (
     <tr className={pending ? 'pending-row' : undefined}>
       <td>
-        <div className="device-name">
-          <span className="device-bullet" />
-          <div>
-            <strong>{label}</strong>
-            <span>{device.profileId}</span>
+        {editingName ? (
+          <div className="device-name-edit">
+            <input
+              aria-label={`Friendly name for ${label}`}
+              autoFocus
+              onChange={(event) => setName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void saveName();
+                if (event.key === 'Escape') {
+                  setName(device.name);
+                  setEditingName(false);
+                }
+              }}
+              value={name}
+            />
+            <button
+              aria-label={`Save name for ${label}`}
+              className="icon-button"
+              disabled={busy}
+              onClick={() => void saveName()}
+              title="Save name"
+              type="button"
+            >
+              ✓
+            </button>
+            <button
+              aria-label={`Cancel renaming ${label}`}
+              className="icon-button"
+              onClick={() => {
+                setName(device.name);
+                setEditingName(false);
+              }}
+              title="Cancel"
+              type="button"
+            >
+              ×
+            </button>
           </div>
-        </div>
+        ) : (
+          <div className="device-name">
+            <span className="device-bullet" />
+            <div>
+              <strong>{label}</strong>
+              <span>{device.profileId}</span>
+            </div>
+          </div>
+        )}
       </td>
       <td>
         <code>{formatTargetId(device.targetId)}</code>
@@ -125,6 +184,19 @@ function DeviceRow({
       </td>
       <td>
         <div className="device-actions">
+          <button
+            aria-label={`Rename ${label}`}
+            className="icon-button"
+            disabled={busy}
+            onClick={() => {
+              setName(device.name);
+              setEditingName(true);
+            }}
+            title="Rename"
+            type="button"
+          >
+            ✎
+          </button>
           <button
             aria-label={`Delete ${label}`}
             className="icon-button delete-button"

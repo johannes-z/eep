@@ -52,6 +52,7 @@ function readRuntimeState(row: RuntimeStateRow): DeviceRuntimeState {
 
 export class DeviceStateStore {
   private readonly database: Database;
+  private closed = false;
 
   private constructor(filePath: string) {
     this.database = new Database(filePath);
@@ -103,5 +104,11 @@ export class DeviceStateStore {
 
   remove(sourceId: number): void {
     this.database.run('DELETE FROM device_runtime_state WHERE source_id = ?', [sourceId]);
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.database.close();
+    this.closed = true;
   }
 }

@@ -47,6 +47,16 @@ test('rejects invalid environment values', () => {
   expect(() => resolveServerConfig()).toThrow('DISABLE_LED must be true or false');
 });
 
+test('resolves a configured start ID', () => {
+  expect(resolveServerConfig({ startId: 0xffe76685 }).startId).toBe(0xffe76685);
+});
+
+test('rejects a zero controller ID', () => {
+  expect(() => resolveServerConfig({ controllerId: 0 })).toThrow(
+    'controllerId must be an integer between 1 and 4294967295',
+  );
+});
+
 test('rejects malformed persisted transport and Home Assistant values', () => {
   expect(() =>
     resolveServerConfig({

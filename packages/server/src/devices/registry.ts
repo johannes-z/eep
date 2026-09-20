@@ -10,6 +10,7 @@ import type { JsonValue } from '../profiles/types';
 import initialConfiguration from '../configuration.yaml';
 import { loadConfiguration, updateConfiguration } from '../settings';
 import { DeviceStateStore, type DeviceRuntimeState } from './stateStore';
+import { parseEnOceanId } from '../util';
 
 interface PersistedDevice {
   targetId: string | number;
@@ -23,6 +24,7 @@ interface PersistedDevice {
 }
 
 export type DeviceChangeListener = (device: Device) => void;
+export type DeviceRemoveListener = (device: Device) => void;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -78,13 +80,8 @@ function validateTeachInInfo(value: unknown): DeviceTeachInInfo {
 }
 
 function parseIdentifier(value: unknown, field: string): number {
-  const parsed =
-    typeof value === 'number'
-      ? value
-      : typeof value === 'string' && /^(?:0x)?[0-9a-f]{1,8}$/i.test(value.trim())
-        ? Number.parseInt(value.trim().replace(/^0x/i, ''), 16)
-        : Number.NaN;
-  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 0xffffffff) {
+  const parsed = parseEnOceanId(value);
+  if (parsed === undefined) {
     const displayValue =
       typeof value === 'string' || typeof value === 'number'
         ? String(value)
@@ -263,6 +260,7 @@ function mergeLegacyDevices(configured: Device[], runtime: Device[]): Device[] {
 export class DeviceRegistry {
   private devices: Device[];
   private readonly listeners = new Set<DeviceChangeListener>();
+  private readonly removeListeners = new Set<DeviceRemoveListener>();
   private writeQueue: Promise<void> = Promise.resolve();
 
   private constructor(
@@ -280,42 +278,53 @@ export class DeviceRegistry {
   ): Promise<DeviceRegistry> {
     await mkdir(dirname(filePath), { recursive: true });
     const stateStore = DeviceStateStore.open(join(dirname(filePath), 'state.db'));
-    const configuration = await loadConfiguration(filePath);
-    let devices: Device[] | undefined =
-      configuration.devices === undefined
-        ? undefined
-        : deserializeConfiguredDevices(configuration.devices, profiles);
-    let legacyRuntimeDevices: Device[] | undefined;
-    if (devices === undefined) {
-      const legacyConfiguration = await readLegacyDevices(
-        join(dirname(filePath), 'devices.json'),
-        profiles,
-        false,
-      );
-      legacyRuntimeDevices = await readLegacyDevices(
-        join(dirname(filePath), 'states.json'),
-        profiles,
-        true,
-      );
-      if (legacyConfiguration || legacyRuntimeDevices) {
-        devices = mergeLegacyDevices(legacyConfiguration ?? [], legacyRuntimeDevices ?? []);
+    try {
+      const configuration = await loadConfiguration(filePath);
+      let devices: Device[] | undefined =
+        configuration.devices === undefined
+          ? undefined
+          : deserializeConfiguredDevices(configuration.devices, profiles);
+      let legacyRuntimeDevices: Device[] | undefined;
+      if (devices === undefined) {
+        const legacyConfiguration = await readLegacyDevices(
+          join(dirname(filePath), 'devices.json'),
+          profiles,
+          false,
+        );
+        legacyRuntimeDevices = await readLegacyDevices(
+          join(dirname(filePath), 'states.json'),
+          profiles,
+          true,
+        );
+        if (legacyConfiguration || legacyRuntimeDevices) {
+          devices = mergeLegacyDevices(legacyConfiguration ?? [], legacyRuntimeDevices ?? []);
+        }
       }
-    }
-    if (devices === undefined) devices = initialDevices.map((device) => ({ ...device }));
+      if (devices === undefined) devices = initialDevices.map((device) => ({ ...device }));
 
-    const runtimeStates = stateStore.load();
-    const hydratedDevices = devices.map((device) => ({
-      ...device,
-      ...(runtimeStates.get(device.sourceId) ?? {}),
-    }));
-    const registry = new DeviceRegistry(filePath, stateStore, hydratedDevices, profiles);
-    if (legacyRuntimeDevices) {
-      for (const device of legacyRuntimeDevices) {
-        if (!runtimeStates.has(device.sourceId)) stateStore.save(device);
+      const runtimeStates = stateStore.load();
+      const hydratedDevices = devices.map((device) => {
+        const runtimeState = runtimeStates.get(device.sourceId);
+        if (!runtimeState) return device;
+        const validatedState = deserializeRuntimeState(
+          { ...runtimeState },
+          profiles.get(device.profileId),
+          device.capabilities,
+        );
+        return { ...device, ...validatedState };
+      });
+      const registry = new DeviceRegistry(filePath, stateStore, hydratedDevices, profiles);
+      if (legacyRuntimeDevices) {
+        for (const device of legacyRuntimeDevices) {
+          if (!runtimeStates.has(device.sourceId)) stateStore.save(device);
+        }
       }
+      await registry.save();
+      return registry;
+    } catch (error) {
+      stateStore.close();
+      throw error;
     }
-    await registry.save();
-    return registry;
   }
 
   list(): Device[] {
@@ -335,6 +344,16 @@ export class DeviceRegistry {
   onChange(listener: DeviceChangeListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  onRemove(listener: DeviceRemoveListener): () => void {
+    this.removeListeners.add(listener);
+    return () => this.removeListeners.delete(listener);
+  }
+
+  async close(): Promise<void> {
+    await this.writeQueue;
+    this.stateStore.close();
   }
 
   async upsert(device: Device): Promise<Device> {
@@ -360,12 +379,35 @@ export class DeviceRegistry {
     });
   }
 
+  async reassignSourceId(
+    sourceId: number,
+    newSourceId: number,
+    update: Partial<Device> = {},
+  ): Promise<Device> {
+    return this.enqueueMutation(() => {
+      const index = this.devices.findIndex((item) => item.sourceId === sourceId);
+      if (index === -1) throw new Error(`Unknown device: ${sourceId}`);
+      if (newSourceId !== sourceId && this.devices.some((item) => item.sourceId === newSourceId)) {
+        throw new Error(`Source ID is already assigned: ${newSourceId}`);
+      }
+      const next = { ...this.devices[index], ...update, sourceId: newSourceId };
+      this.validateDevice(next);
+      this.devices[index] = next;
+      return {
+        result: { ...next },
+        changedDevice: { ...next },
+        ...(newSourceId === sourceId ? {} : { removedSourceId: sourceId }),
+      };
+    });
+  }
+
   async remove(sourceId: number): Promise<boolean> {
     return this.enqueueMutation(() => {
       const index = this.devices.findIndex((item) => item.sourceId === sourceId);
       if (index === -1) return { result: false };
+      const removedDevice = { ...this.devices[index] };
       this.devices.splice(index, 1);
-      return { result: true, removedSourceId: sourceId };
+      return { result: true, removedSourceId: sourceId, removedDevice };
     });
   }
 
@@ -406,14 +448,22 @@ export class DeviceRegistry {
   }
 
   private enqueueMutation<T>(
-    mutation: () => { result: T; changedDevice?: Device; removedSourceId?: number },
+    mutation: () => {
+      result: T;
+      changedDevice?: Device;
+      removedSourceId?: number;
+      removedDevice?: Device;
+    },
   ): Promise<T> {
     const next = this.writeQueue
       .catch(() => undefined)
       .then(async () => {
-        const { result, changedDevice, removedSourceId } = mutation();
+        const { result, changedDevice, removedSourceId, removedDevice } = mutation();
         await this.save();
         if (removedSourceId !== undefined) this.stateStore.remove(removedSourceId);
+        if (removedDevice) {
+          for (const listener of this.removeListeners) listener({ ...removedDevice });
+        }
         if (changedDevice) {
           this.stateStore.save(changedDevice);
           this.notify(changedDevice);

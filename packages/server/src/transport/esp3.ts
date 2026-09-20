@@ -7,6 +7,7 @@ import type {
   UteResponseResult,
   UteTeachInInfo,
 } from '../devices/inbound';
+import type { TransportConnection } from './adapters';
 
 export interface Esp3Frame {
   packetType: number;
@@ -56,6 +57,51 @@ export class Esp3Parser {
     }
     return frames;
   }
+}
+
+export function buildCommonCommand(command: number): Buffer {
+  if (!Number.isInteger(command) || command < 0 || command > 0xff) {
+    throw new Error('ESP3 common command must be a byte');
+  }
+  const header = [0, 1, 0, 5];
+  const data = [command];
+  return Buffer.from([0x55, ...header, getChecksum(header), ...data, getChecksum(data)]);
+}
+
+export async function readBaseId(connection: TransportConnection): Promise<number | undefined> {
+  if (!connection.on) return undefined;
+  const parser = new Esp3Parser();
+  return new Promise<number>((resolve, reject) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const finish = (error?: Error, value?: number): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      connection.off?.('data', onData);
+      if (error) reject(error);
+      else resolve(value as number);
+    };
+    const onData = (chunk: unknown): void => {
+      if (!chunk || typeof chunk !== 'object' || !('length' in chunk)) return;
+      for (const frame of parser.push(chunk as ArrayLike<number>)) {
+        if (frame.packetType !== 2 || frame.data.length < 5) continue;
+        if (frame.data[0] !== 0) {
+          finish(new Error(`USB 300 rejected base ID request with status ${frame.data[0]}`));
+          return;
+        }
+        const baseId =
+          (frame.data[1] << 24) | (frame.data[2] << 16) | (frame.data[3] << 8) | frame.data[4];
+        finish(undefined, baseId >>> 0);
+        return;
+      }
+    };
+    timer = setTimeout(() => finish(new Error('Timed out reading USB 300 base ID')), 3000);
+    connection.on?.('data', onData);
+    void Promise.resolve(connection.write(buildCommonCommand(0x08))).catch((error: unknown) =>
+      finish(error instanceof Error ? error : new Error('Failed to read USB 300 base ID')),
+    );
+  });
 }
 
 const uteRequestTypes: UteRequestType[] = ['teachIn', 'teachOut', 'unspecified', 'reserved'];

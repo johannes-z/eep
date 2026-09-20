@@ -24,12 +24,17 @@ export interface Device {
   desiredState?: unknown;
 }
 
+export interface GeneralSettings {
+  startId: number;
+}
+
 export interface AddonConfig {
   adapter?: string;
   host?: string;
   port?: number;
   dataDir?: string;
   controllerId?: number;
+  startId?: number;
   transport?: Partial<TransportSettings>;
   homeAssistant?: Partial<HomeAssistantSettings>;
   mqtt?: MqttConfig;
@@ -61,6 +66,7 @@ export interface ServerConfig {
   dataDir: string;
   webRoot?: string;
   controllerId?: number;
+  startId?: number;
   transport: TransportSettings;
   homeAssistant: HomeAssistantSettings;
   mqtt?: MqttConfig;

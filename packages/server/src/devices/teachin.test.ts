@@ -51,6 +51,127 @@ test('collects and accepts a supported D2-50-00 candidate', async () => {
   expect(manager.listCandidates()).toHaveLength(0);
 });
 
+test('allocates the next free sender ID when the controller ID is already paired', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  const manager = new TeachInManager(registry, 0xffe76681);
+  manager.start();
+  manager.observe({
+    RORG: 0xd4,
+    senderId: '05010207',
+    payload: [0x80, 0xff, 0x0b, 0, 0xd2, 0x50, 0],
+    teachIn: true,
+    teachInInfo: {
+      control: 0x80,
+      channel: 0xff,
+      manufacturer: 0x000b,
+      eep: 'd2-50-00',
+      direction: 'bidirectional',
+      responseExpected: true,
+      requestType: 'teachIn',
+      command: 'query',
+    },
+  });
+
+  const device = await manager.accept(0x05010207);
+
+  expect(device.sourceId).toBe(0xffe76685);
+  expect(registry.findBySourceId(0xffe76681)?.name).toBe('Living Room vent');
+  expect(registry.findByTargetId(0x05010207)?.sourceId).toBe(0xffe76685);
+});
+
+test('uses the allocated sender ID for the UTE signal', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  let signalSourceId = 0;
+  const manager = new TeachInManager(
+    registry,
+    0xffe76681,
+    undefined,
+    undefined,
+    async (sourceId) => {
+      signalSourceId = sourceId;
+    },
+  );
+
+  manager.start();
+  await manager.transmit();
+
+  expect(signalSourceId).toBe(0xffe76685);
+});
+
+test('uses an explicitly selected sender ID for the UTE signal', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-targeted-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  let signalSourceId = 0;
+  const manager = new TeachInManager(
+    registry,
+    0xffe76681,
+    undefined,
+    undefined,
+    async (sourceId) => {
+      signalSourceId = sourceId;
+    },
+  );
+
+  manager.start();
+  await manager.transmit(0xffe76685);
+
+  expect(signalSourceId).toBe(0xffe76685);
+});
+
+test('automatically accepts a response from a targeted pairing session', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-auto-accept-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  const manager = new TeachInManager(registry, 0xffe76681);
+  manager.start();
+  await manager.transmit(0xffe76685);
+  manager.observe({
+    RORG: 0xd4,
+    senderId: '05010208',
+    payload: [0x91, 0xff, 0x0b, 0, 0xd2, 0x50, 0],
+    teachIn: false,
+    teachInInfo: {
+      control: 0x91,
+      channel: 0xff,
+      manufacturer: 0x000b,
+      eep: 'd2-50-00',
+      direction: 'bidirectional',
+      responseExpected: false,
+      requestType: 'teachOut',
+      command: 'response',
+      response: 'teachInAccepted',
+    },
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  expect(registry.findByTargetId(0x05010208)?.sourceId).toBe(0xffe76685);
+  expect(manager.listCandidates()).toHaveLength(0);
+  expect(manager.isActive()).toBe(false);
+});
+
+test('uses a configured start ID for UTE allocation', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  let signalSourceId = 0;
+  const manager = new TeachInManager(
+    registry,
+    0xffe76681,
+    undefined,
+    undefined,
+    async (sourceId) => {
+      signalSourceId = sourceId;
+    },
+    0xffe76690,
+  );
+
+  manager.start();
+  await manager.transmit();
+
+  expect(signalSourceId).toBe(0xffe76690);
+});
+
 test('rejects unsupported teach-in profiles', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-'));
   const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
@@ -85,7 +206,9 @@ test('backfills teach-in metadata for an existing device', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-'));
   const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
   const responses: string[] = [];
-  const manager = new TeachInManager(registry, 0xffe76685, async (_candidate, result) => {
+  const responseSources: number[] = [];
+  const manager = new TeachInManager(registry, 0xffe76685, async (candidate, result) => {
+    responseSources.push(candidate.sourceId);
     responses.push(result);
   });
   manager.start();
@@ -108,7 +231,7 @@ test('backfills teach-in metadata for an existing device', async () => {
       },
     }),
   ).toBeUndefined();
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 25));
 
   expect(registry.findByTargetId(0x0513cefe)?.teachIn).toMatchObject({
     eep: 'D2-50-00',
@@ -116,7 +239,75 @@ test('backfills teach-in metadata for an existing device', async () => {
     manufacturerId: 0x000b,
   });
   expect(responses).toEqual(['teachInAccepted']);
+  expect(responseSources).toEqual([0xffe76681]);
   expect(manager.listCandidates()).toHaveLength(0);
+});
+
+test('re-pairing an existing target preserves its assigned sender channel', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-repair-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  let responseSource = 0;
+  const manager = new TeachInManager(
+    registry,
+    0xffe76681,
+    async (candidate) => {
+      responseSource = candidate.sourceId;
+    },
+    undefined,
+    undefined,
+    0xffe76685,
+  );
+  manager.start();
+  manager.observe({
+    RORG: 0xd4,
+    senderId: '05126787',
+    payload: [0x80, 0xff, 0x61, 0, 0xd2, 0x50, 0],
+    teachIn: true,
+    teachInInfo: {
+      control: 0x80,
+      channel: 0xff,
+      manufacturer: 0x0061,
+      eep: 'd2-50-00',
+      direction: 'bidirectional',
+      responseExpected: true,
+      requestType: 'teachIn',
+      command: 'query',
+    },
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  expect(responseSource).toBe(0xffe76682);
+  expect(registry.findByTargetId(0x05126787)?.sourceId).toBe(0xffe76682);
+});
+
+test('moves an existing target to an explicitly selected sender channel', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-targeted-repair-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  const manager = new TeachInManager(registry, 0xffe76681);
+  manager.start();
+  await manager.transmit(0xffe76685);
+  manager.observe({
+    RORG: 0xd4,
+    senderId: '05126787',
+    payload: [0x80, 0xff, 0x61, 0, 0xd2, 0x50, 0],
+    teachIn: true,
+    teachInInfo: {
+      control: 0x80,
+      channel: 0xff,
+      manufacturer: 0x0061,
+      eep: 'd2-50-00',
+      direction: 'bidirectional',
+      responseExpected: true,
+      requestType: 'teachIn',
+      command: 'query',
+    },
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  expect(registry.findBySourceId(0xffe76682)).toBeUndefined();
+  expect(registry.findByTargetId(0x05126787)?.sourceId).toBe(0xffe76685);
 });
 
 test('does not answer one-way teach-in and rejects teach-out requests', async () => {

@@ -123,6 +123,11 @@ function resolveHomeAssistant(input: AddonConfig): HomeAssistantSettings {
       environmentBoolean('HA_LEGACY_ACTION_SENSOR', false),
     ),
   };
+  if (homeAssistant.experimentalEventEntities || homeAssistant.legacyActionSensor) {
+    throw new Error(
+      'Home Assistant event entities and legacy action sensors are not supported yet',
+    );
+  }
   if (!homeAssistant.discoveryTopic.trim()) throw new Error('HA_DISCOVERY_TOPIC must not be empty');
   if (!homeAssistant.statusTopic.trim()) throw new Error('HA_STATUS_TOPIC must not be empty');
   return homeAssistant;
@@ -176,8 +181,14 @@ export function resolveServerConfig(input: AddonConfig = {}): ServerConfig {
       input.controllerId === undefined
         ? process.env.CONTROLLER_ID === undefined
           ? undefined
-          : parseInteger(process.env.CONTROLLER_ID, 'CONTROLLER_ID', 0, 0xffffffff)
-        : parseInteger(input.controllerId, 'controllerId', 0, 0xffffffff),
+          : parseInteger(process.env.CONTROLLER_ID, 'CONTROLLER_ID', 1, 0xffffffff)
+        : parseInteger(input.controllerId, 'controllerId', 1, 0xffffffff),
+    startId:
+      input.startId === undefined
+        ? process.env.START_ID === undefined
+          ? undefined
+          : parseInteger(process.env.START_ID, 'START_ID', 1, 0xffffffff)
+        : parseInteger(input.startId, 'startId', 1, 0xffffffff),
     transport,
     homeAssistant: resolveHomeAssistant(input),
     mqtt: input.mqtt,

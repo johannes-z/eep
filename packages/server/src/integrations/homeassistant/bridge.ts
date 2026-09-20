@@ -2,78 +2,25 @@ import type { Device, HomeAssistantSettings } from '../../config';
 import type { DeviceRegistry } from '../../devices/registry';
 import type { TeachInManager } from '../../devices/teachin';
 import type { MqttClientLike, MqttSettings } from '../../mqtt';
-import {
-  createDefaultProfileRegistry,
-  type ProfileDeviceContext,
-  type ProfileRegistry,
-} from '../../profiles';
+import { createDefaultProfileRegistry, type ProfileRegistry } from '../../profiles';
 import {
   deviceDiagnosticTopics,
   entityObjectId,
   entityTopics,
   permitJoinTopics,
   restartTopics,
-  type DeviceDiagnosticField,
 } from './topics';
-
-const publishOptions = { qos: 1 as const, retain: true };
-const subscribeOptions = { qos: 1 as const };
-const bridgeDeviceId = 'eep_bridge';
-
-type DeviceAvailability = 'online' | 'offline';
-
-function publish(
-  client: MqttClientLike,
-  topic: string,
-  payload: string,
-  options = publishOptions,
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    client.publish(topic, payload, options, (error) => (error ? reject(error) : resolve()));
-  });
-}
-
-function subscribe(client: MqttClientLike, topic: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    client.subscribe(topic, subscribeOptions, (error) => (error ? reject(error) : resolve()));
-  });
-}
-
-function deviceAvailability(device: Device): DeviceAvailability {
-  return device.availability === 'online' ? 'online' : 'offline';
-}
-
-function profileContext(device: Device): ProfileDeviceContext {
-  return {
-    sourceId: device.sourceId,
-    targetId: device.targetId,
-    capabilities: device.capabilities,
-    reportedState: device.reportedState,
-    desiredState: device.desiredState,
-  };
-}
-
-function diagnosticValues(
-  device: Device,
-): Array<{ field: DeviceDiagnosticField; name: string; value: string }> {
-  return [
-    { field: 'eep', name: 'EEP', value: device.teachIn?.eep ?? device.profileId },
-    {
-      field: 'channel',
-      name: 'Channel',
-      value: device.teachIn?.channel === undefined ? 'Unavailable' : String(device.teachIn.channel),
-    },
-    {
-      field: 'manufacturer_id',
-      name: 'Manufacturer ID',
-      value:
-        device.teachIn?.manufacturerId === undefined
-          ? 'Unavailable'
-          : String(device.teachIn.manufacturerId),
-    },
-    { field: 'last_seen', name: 'Last seen', value: device.lastSeen ?? 'Unavailable' },
-  ];
-}
+import {
+  bridgeDeviceInfo,
+  deviceAvailability,
+  deviceInfo,
+  diagnosticValues,
+  discoverySourceId,
+  isBridgeDiscovery,
+  profileContext,
+} from './device';
+import { publish, publishOptions, subscribe } from './publisher';
+import { HomeAssistantStatePublisher } from './state';
 
 export class MqttEntityBridge {
   private started = false;
@@ -85,9 +32,11 @@ export class MqttEntityBridge {
   private readonly enabled: boolean;
   private readonly bridgeAvailability: string;
   private readonly removeChangeListener: () => void;
+  private readonly removeDeviceListener: () => void;
   private readonly removeTeachInListener: () => void;
-  private readonly statePublishQueues = new Map<number, Promise<void>>();
+  private readonly statePublisher: HomeAssistantStatePublisher;
   private readonly publishedEntityObjectIds = new Map<number, string>();
+  private discoveryCleanupSubscribed = false;
 
   constructor(
     private readonly client: MqttClientLike,
@@ -111,6 +60,18 @@ export class MqttEntityBridge {
       retain: !settings.forceDisableRetain,
     };
     this.includeDeviceInformation = settings.includeDeviceInformation !== false;
+    this.statePublisher = new HomeAssistantStatePublisher(
+      this.client,
+      this.registry,
+      this.profiles,
+      {
+        enabled: this.enabled,
+        discoveryPrefix: this.discoveryPrefix,
+        baseTopic: this.baseTopic,
+        bridgeAvailability: this.bridgeAvailability,
+        bridgePublishOptions: this.bridgePublishOptions,
+      },
+    );
     this.removeTeachInListener =
       this.teachIn?.onStateChange(() => {
         if (this.started && !this.stopped) {
@@ -122,9 +83,18 @@ export class MqttEntityBridge {
     this.removeChangeListener = this.registry.onChange((device) => {
       void Promise.resolve()
         .then(() => (this.enabled ? this.publishDiscovery(device) : undefined))
-        .then(() => this.publishState(device, deviceAvailability(device)))
+        .then(() => this.statePublisher.publishState(device, deviceAvailability(device)))
         .catch((error: unknown) => console.error('MQTT device update failed:', error));
     });
+    this.removeDeviceListener =
+      typeof this.registry.onRemove === 'function'
+        ? this.registry.onRemove((device) => {
+            if (!this.started || this.stopped) return;
+            void this.clearDeviceDiscovery(device).catch((error: unknown) =>
+              console.error('MQTT removed device cleanup failed:', error),
+            );
+          })
+        : () => undefined;
   }
 
   start(): void {
@@ -139,9 +109,9 @@ export class MqttEntityBridge {
     );
     this.client.on('close', () => {
       if (!this.stopped) {
-        void this.publishAvailability('offline').catch((error: unknown) =>
-          console.error('MQTT availability publish failed:', error),
-        );
+        void this.statePublisher
+          .publishAvailability('offline')
+          .catch((error: unknown) => console.error('MQTT availability publish failed:', error));
       }
     });
     this.client.on(
@@ -156,7 +126,7 @@ export class MqttEntityBridge {
   async stop(): Promise<void> {
     if (this.stopped) return;
     try {
-      await this.publishAvailability('offline');
+      await this.statePublisher.publishAvailability('offline');
     } catch (error) {
       console.error('MQTT offline availability cleanup failed:', error);
     }
@@ -168,6 +138,7 @@ export class MqttEntityBridge {
       this.stopped = true;
       this.removeTeachInListener();
       this.removeChangeListener();
+      this.removeDeviceListener();
     }
   }
 
@@ -176,6 +147,7 @@ export class MqttEntityBridge {
       await this.clearDiscovery();
       return;
     }
+    await this.subscribeDiscoveryCleanup();
     await publish(this.client, this.bridgeAvailability, 'online', this.bridgePublishOptions);
     await this.clearLegacyDiscovery();
     await this.publishRestartDiscovery();
@@ -185,7 +157,7 @@ export class MqttEntityBridge {
       await this.clearEntityDiscovery(device);
       this.publishedEntityObjectIds.delete(device.sourceId);
       await this.publishDiscovery(device);
-      await this.publishState(device, deviceAvailability(device));
+      await this.statePublisher.publishState(device, deviceAvailability(device));
     }
   }
 
@@ -236,7 +208,7 @@ export class MqttEntityBridge {
       ...(isFan ? { payload_on: 'ON', payload_off: 'OFF', payload_reset_preset_mode: 'None' } : {}),
       ...(this.includeDeviceInformation
         ? {
-            device: this.deviceInfo(device, descriptor.protocol),
+            device: deviceInfo(device, descriptor.protocol),
           }
         : {}),
     };
@@ -290,6 +262,51 @@ export class MqttEntityBridge {
     this.publishedEntityObjectIds.clear();
   }
 
+  private async clearDeviceDiscovery(
+    device: Device,
+    options = { ...publishOptions, retain: true },
+  ): Promise<void> {
+    await this.clearEntityDiscovery(device, options);
+    for (const diagnostic of diagnosticValues(device)) {
+      await publish(
+        this.client,
+        deviceDiagnosticTopics(
+          device,
+          diagnostic.field,
+          this.discoveryPrefix,
+          this.baseTopic,
+          this.bridgeAvailability,
+        ).discovery,
+        '',
+        options,
+      );
+    }
+    const legacyId = device.targetId.toString(16).padStart(8, '0');
+    await publish(this.client, `${this.discoveryPrefix}/fan/${legacyId}/config`, '', options);
+    for (const field of ['eep', 'channel', 'manufacturer_id', 'last_seen']) {
+      await publish(
+        this.client,
+        `${this.discoveryPrefix}/sensor/eep_${legacyId}_${field}/config`,
+        '',
+        options,
+      );
+    }
+  }
+
+  private async subscribeDiscoveryCleanup(): Promise<void> {
+    if (this.discoveryCleanupSubscribed) return;
+    await subscribe(this.client, `${this.discoveryPrefix}/+/+/config`);
+    this.discoveryCleanupSubscribed = true;
+  }
+
+  private async clearStaleDiscovery(topic: string, payload: Buffer): Promise<boolean> {
+    if (!isBridgeDiscovery(payload)) return false;
+    const sourceId = discoverySourceId(topic, this.discoveryPrefix);
+    if (sourceId === undefined || this.registry.findBySourceId(sourceId)) return false;
+    await publish(this.client, topic, '', { ...publishOptions, retain: true });
+    return true;
+  }
+
   private async clearEntityDiscovery(
     device: Device,
     options = { ...publishOptions, retain: true },
@@ -329,40 +346,11 @@ export class MqttEntityBridge {
           availability_mode: 'any',
           entity_category: 'diagnostic',
           ...(diagnostic.field === 'last_seen' ? { device_class: 'timestamp' } : {}),
-          ...(this.includeDeviceInformation ? { device: this.deviceInfo(device, model) } : {}),
+          ...(this.includeDeviceInformation ? { device: deviceInfo(device, model) } : {}),
         }),
         this.bridgePublishOptions,
       );
     }
-  }
-
-  private async publishDeviceDiagnosticState(
-    device: Device,
-    availability: DeviceAvailability,
-  ): Promise<void> {
-    if (!this.enabled) return;
-    for (const diagnostic of diagnosticValues(device)) {
-      const topics = deviceDiagnosticTopics(
-        device,
-        diagnostic.field,
-        this.discoveryPrefix,
-        this.baseTopic,
-        this.bridgeAvailability,
-      );
-      await publish(this.client, topics.availability, availability, this.bridgePublishOptions);
-      await publish(this.client, topics.state, diagnostic.value, this.bridgePublishOptions);
-    }
-  }
-
-  private deviceInfo(device: Device, model: string): Record<string, unknown> {
-    const id = device.sourceId.toString(16).padStart(8, '0');
-    return {
-      identifiers: [`eep_${id}`],
-      name: device.name,
-      manufacturer: 'EnOcean',
-      model,
-      via_device: bridgeDeviceId,
-    };
   }
 
   private async clearLegacyDiscovery(options = { ...publishOptions, retain: true }): Promise<void> {
@@ -406,12 +394,7 @@ export class MqttEntityBridge {
       availability_mode: 'all',
       ...(this.includeDeviceInformation
         ? {
-            device: {
-              identifiers: [bridgeDeviceId],
-              name: 'Enocean2MQTT Bridge',
-              manufacturer: 'Enocean2MQTT',
-              model: 'Bridge',
-            },
+            device: bridgeDeviceInfo(),
           }
         : {}),
     };
@@ -438,12 +421,7 @@ export class MqttEntityBridge {
       icon: 'mdi:restart',
       ...(this.includeDeviceInformation
         ? {
-            device: {
-              identifiers: [bridgeDeviceId],
-              name: 'Enocean2MQTT Bridge',
-              manufacturer: 'Enocean2MQTT',
-              model: 'Bridge',
-            },
+            device: bridgeDeviceInfo(),
           }
         : {}),
     };
@@ -467,108 +445,8 @@ export class MqttEntityBridge {
     );
   }
 
-  private async publishState(device: Device, availability: DeviceAvailability): Promise<void> {
-    const previous = this.statePublishQueues.get(device.sourceId) ?? Promise.resolve();
-    const next = previous
-      .catch(() => undefined)
-      .then(() => this.publishStateNow(device, availability));
-    this.statePublishQueues.set(device.sourceId, next);
-    void next.then(
-      () => {
-        if (this.statePublishQueues.get(device.sourceId) === next) {
-          this.statePublishQueues.delete(device.sourceId);
-        }
-      },
-      () => {
-        if (this.statePublishQueues.get(device.sourceId) === next) {
-          this.statePublishQueues.delete(device.sourceId);
-        }
-      },
-    );
-    await next;
-  }
-
-  private async publishStateNow(device: Device, availability: DeviceAvailability): Promise<void> {
-    if (!this.enabled) return;
-    const entity = this.profiles.get(device.profileId)?.entity;
-    if (!entity) return;
-    const descriptor = entity.describe(profileContext(device));
-    const topics = entityTopics(
-      device,
-      descriptor.kind,
-      this.discoveryPrefix,
-      this.baseTopic,
-      this.bridgeAvailability,
-    );
-    const state = entity.projectState(profileContext(device));
-    await publish(this.client, topics.availability, availability, this.bridgePublishOptions);
-    if (availability === 'online') {
-      if (descriptor.kind === 'fan') {
-        await publish(
-          this.client,
-          topics.state,
-          state.isOn ? 'ON' : 'OFF',
-          this.bridgePublishOptions,
-        );
-        if (descriptor.percentage) {
-          await publish(
-            this.client,
-            topics.percentageState,
-            String(state.percentage ?? 0),
-            this.bridgePublishOptions,
-          );
-        }
-        if (descriptor.presets?.length) {
-          await publish(
-            this.client,
-            topics.presetState,
-            state.preset ?? 'None',
-            this.bridgePublishOptions,
-          );
-        }
-      } else {
-        await publish(this.client, topics.state, JSON.stringify(state), this.bridgePublishOptions);
-      }
-    }
-    await this.publishDeviceDiagnosticState(device, availability);
-  }
-
-  private async publishAvailability(availability: DeviceAvailability): Promise<void> {
-    await publish(this.client, this.bridgeAvailability, availability, this.bridgePublishOptions);
-    if (!this.enabled) return;
-    for (const device of this.registry.list()) {
-      const entity = this.profiles.get(device.profileId)?.entity;
-      if (!entity) continue;
-      const topics = entityTopics(
-        device,
-        entity.describe(profileContext(device)).kind,
-        this.discoveryPrefix,
-        this.baseTopic,
-        this.bridgeAvailability,
-      );
-      await publish(this.client, topics.availability, availability, this.bridgePublishOptions);
-      await this.publishDeviceDiagnosticAvailability(device, availability);
-    }
-  }
-
-  private async publishDeviceDiagnosticAvailability(
-    device: Device,
-    availability: DeviceAvailability,
-  ): Promise<void> {
-    if (!this.enabled) return;
-    for (const diagnostic of diagnosticValues(device)) {
-      const topics = deviceDiagnosticTopics(
-        device,
-        diagnostic.field,
-        this.discoveryPrefix,
-        this.baseTopic,
-        this.bridgeAvailability,
-      );
-      await publish(this.client, topics.availability, availability, this.bridgePublishOptions);
-    }
-  }
-
   private async handleMessage(topic: string, payload: Buffer): Promise<void> {
+    if (await this.clearStaleDiscovery(topic, payload)) return;
     if (!this.enabled) return;
     const permitTopics = permitJoinTopics(
       this.discoveryPrefix,
@@ -638,7 +516,7 @@ export class MqttEntityBridge {
       if (!field) return;
       await this.sendCommand(device, entity.parseCommand(profileContext(device), field, message));
       const updatedDevice = this.registry.findBySourceId(device.sourceId) ?? device;
-      await this.publishState(updatedDevice, deviceAvailability(updatedDevice));
+      await this.statePublisher.publishState(updatedDevice, deviceAvailability(updatedDevice));
     } catch (error) {
       console.error('MQTT command rejected:', (error as Error).message);
     }

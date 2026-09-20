@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { d2ValueToFanState } from './api/D2-50-00/fan';
+import { d2ValueToFanState } from './profiles/D2-50-00/fan';
 import { DeviceRegistry } from './devices/registry';
 import { TeachInManager } from './devices/teachin';
 import { MqttFanBridge, type MqttClientLike } from './mqtt';
@@ -60,7 +60,7 @@ async function createBridge() {
 }
 
 test('publishes Home Assistant fan discovery for seeded devices', async () => {
-  const { client, registry } = await createBridge();
+  const { client } = await createBridge();
   const discovery = client.published
     .filter((message) => message.topic === 'homeassistant/fan/ffe76681/config')
     .at(-1);
@@ -159,6 +159,41 @@ test('publishes discovery when a device is paired after MQTT starts', async () =
     device: { via_device: 'eep_bridge' },
     state_topic: 'eep/fan/ffe76685/state',
   });
+});
+
+test('clears retained discovery when a device is removed', async () => {
+  const { bridge, client, registry } = await createBridge();
+
+  await registry.remove(0xffe76681);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  expect(
+    client.published
+      .filter((message) => message.topic === 'homeassistant/fan/ffe76681/config')
+      .at(-1)?.payload,
+  ).toBe('');
+  await bridge.stop();
+});
+
+test('clears stale bridge discovery received from MQTT', async () => {
+  const { bridge, client } = await createBridge();
+
+  client.send(
+    'homeassistant/fan/ffe76690/config',
+    JSON.stringify({
+      unique_id: 'eep_fan_ffe76690',
+      object_id: 'old_vent',
+      device: { identifiers: ['eep_ffe76690'], via_device: 'eep_bridge' },
+    }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  expect(
+    client.published
+      .filter((message) => message.topic === 'homeassistant/fan/ffe76690/config')
+      .at(-1)?.payload,
+  ).toBe('');
+  await bridge.stop();
 });
 
 test('uses configured Home Assistant topics and keeps unknown devices unavailable', async () => {

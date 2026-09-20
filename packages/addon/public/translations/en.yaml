@@ -4,3 +4,15 @@ configuration:
     name: Adapter
     description: >-
       The path to the serial device, can either a local device /dev/serial/by-id/..., or tcp://address:port
+  adapter_type:
+    name: Adapter type
+    description: The transport type used for the configured adapter.
+  baud_rate:
+    name: Baud rate
+    description: Serial adapter baud rate.
+  disable_led:
+    name: Disable LED
+    description: Disable the adapter status LED.
+  rtscts:
+    name: RTS/CTS
+    description: Enable hardware flow control for serial adapters.

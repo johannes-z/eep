@@ -1,13 +1,15 @@
 import { expect, test } from 'bun:test';
-import { changeState } from '../api/D2-50-00/changeState';
+import { changeState } from '../profiles/D2-50-00/changeState';
 import { toHex } from '../util/toHex';
 import {
   buildUteTeachInQuery,
   buildUteTeachInResponse,
+  readBaseId,
   Esp3Parser,
   parseRadioERP1,
   type Esp3Frame,
 } from './esp3';
+import type { TransportConnection } from './adapters';
 
 function uteFrame(payload: number[], senderId = 0x05010203): Esp3Frame {
   const data = [0xd4, ...payload, ...toHex(senderId), 0];
@@ -50,6 +52,23 @@ test('builds a broadcast UTE teach-in query', () => {
     teachIn: true,
   });
   expect(parsed[0].optionalData.slice(0, 5)).toEqual([3, 0xff, 0xff, 0xff, 0xff]);
+});
+
+test('reads the USB 300 base ID with CO_RD_IDBASE', async () => {
+  let onData: ((data: unknown) => void) | undefined;
+  const connection: TransportConnection = {
+    on: (_event, listener) => {
+      onData = listener;
+    },
+    off: () => undefined,
+    write: (payload) => {
+      expect(Array.from(payload)).toEqual([0x55, 0, 1, 0, 5, 0x70, 0x08, 0x38]);
+      onData?.(Uint8Array.from([0x55, 0, 5, 1, 2, 0xdb, 0, 0xff, 0xe7, 0x66, 0x80, 0x0a, 0x07]));
+    },
+  };
+
+  const baseId = await readBaseId(connection);
+  expect(baseId).toBe(0xffe76680);
 });
 
 test('parses a UTE query in wire order', () => {

@@ -1,6 +1,7 @@
 import { connect, type MqttClient } from 'mqtt';
 import type { Device, HomeAssistantSettings } from '../../config';
 import type { DeviceRegistry } from '../../devices/registry';
+import type { TeachInManager } from '../../devices/teachin';
 import type { MqttSettings } from '../../mqtt';
 import { MqttEntityBridge } from '../homeassistant/bridge';
 import { createDefaultProfileRegistry, type ProfileRegistry } from '../../profiles';
@@ -22,12 +23,23 @@ export class MqttRuntime {
   private client: MqttClient | undefined;
   private bridge: MqttEntityBridge | undefined;
   private generation = 0;
+  private readonly statusListeners = new Set<() => void>();
+
+  onStatusChange(listener: () => void): () => void {
+    this.statusListeners.add(listener);
+    return () => this.statusListeners.delete(listener);
+  }
+
+  private notifyStatus(): void {
+    for (const listener of this.statusListeners) listener();
+  }
 
   constructor(
     private readonly registry: DeviceRegistry,
     private readonly sendCommand: (device: Device, request: unknown) => Promise<void>,
     private readonly runtimeStatus: MqttRuntimeStatus,
     private readonly profiles: ProfileRegistry = createDefaultProfileRegistry(),
+    private readonly teachIn?: TeachInManager,
     private readonly restart?: () => Promise<void>,
     private readonly connectClient: MqttClientFactory = connect,
   ) {}
@@ -35,6 +47,7 @@ export class MqttRuntime {
   async apply(settings: MqttSettings, homeAssistant: HomeAssistantSettings): Promise<void> {
     await this.stop();
     this.runtimeStatus.error = undefined;
+    this.notifyStatus();
     if (!settings.url) return;
 
     const generation = this.generation;
@@ -62,16 +75,19 @@ export class MqttRuntime {
       if (!isCurrent()) return;
       this.runtimeStatus.connected = true;
       this.runtimeStatus.error = undefined;
+      this.notifyStatus();
       console.log(`MQTT connected to ${connectionUrl(settings)}`);
     });
     client.on('close', () => {
       if (!isCurrent()) return;
       this.runtimeStatus.connected = false;
+      this.notifyStatus();
     });
     client.on('error', (error) => {
       if (!isCurrent()) return;
       this.runtimeStatus.connected = false;
       this.runtimeStatus.error = error.message;
+      this.notifyStatus();
       console.error('MQTT connection error:', error.message);
     });
     this.bridge = new MqttEntityBridge(
@@ -83,6 +99,7 @@ export class MqttRuntime {
         homeAssistant,
       },
       this.profiles,
+      this.teachIn,
       this.restart,
     );
     this.bridge.start();
@@ -105,5 +122,6 @@ export class MqttRuntime {
       }
     }
     this.runtimeStatus.connected = false;
+    this.notifyStatus();
   }
 }

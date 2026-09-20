@@ -29,6 +29,7 @@ import { TransportRuntime } from './transport/runtime';
 import { PacketListener } from './transport/listener';
 import { createDefaultProfileRegistry } from './profiles';
 import { appRoutes } from './ui/routes';
+import { createStateUpdates } from './app/stateUpdates';
 
 const homepageRoutes = Object.fromEntries([
   ['/index.html', homepage as never],
@@ -126,7 +127,11 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
   let transportRuntime: TransportRuntime | undefined;
   let mqttRuntime: MqttRuntime | undefined;
   let server: ReturnType<typeof Bun.serve> | undefined;
+  let stateUpdates: ReturnType<typeof createStateUpdates> | undefined;
+  const subscriptions: Array<() => void> = [];
   const cleanup = async (): Promise<void> => {
+    for (const unsubscribe of subscriptions) unsubscribe();
+    stateUpdates?.dispose();
     try {
       await server?.stop();
     } catch (error) {
@@ -264,12 +269,7 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
       await activeTransportRuntime.replace(settings);
     };
 
-    const runningServer = Bun.serve({
-      routes: homepageRoutes,
-      development: process.env.NODE_ENV !== 'production',
-      hostname: serverConfig.host,
-      port: serverConfig.port,
-      fetch: createRequestHandler(() => activeTransportRuntime.current, {
+    const handleRequest = createRequestHandler(() => activeTransportRuntime.current, {
         registry: loadedRegistry,
         controllerId,
         baseId,
@@ -293,7 +293,33 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
         listener: packetListener,
         onTransmit: captureTransmit,
         profiles,
-      }),
+        onChange: () => stateUpdates?.notify(),
+    });
+    const updates = createStateUpdates(handleRequest.snapshot);
+    stateUpdates = updates;
+    subscriptions.push(
+      loadedRegistry.onChange(updates.notify),
+      loadedRegistry.onRemove(updates.notify),
+      teachIn.onChange(updates.notify),
+      packetListener.onChange(updates.notify),
+      activeMqttRuntime.onStatusChange(updates.notify),
+    );
+    const runningServer = Bun.serve<undefined>({
+      routes: homepageRoutes,
+      development: process.env.NODE_ENV !== 'production',
+      hostname: serverConfig.host,
+      port: serverConfig.port,
+      fetch(request, server) {
+        const url = new URL(request.url);
+        if (url.pathname === '/api/events') {
+          const origin = request.headers.get('origin');
+          if (origin && origin !== url.origin) return new Response(null, { status: 403 });
+          if (server.upgrade(request)) return;
+          return new Response('WebSocket upgrade required', { status: 426 });
+        }
+        return handleRequest(request);
+      },
+      websocket: updates.websocket,
     });
     server = runningServer;
 

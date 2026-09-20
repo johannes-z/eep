@@ -46,6 +46,7 @@ export class TeachInManager {
   private requestedSourceId: number | undefined;
   private readonly candidates = new Map<number, TeachInCandidate>();
   private readonly stateListeners = new Set<TeachInStateListener>();
+  private readonly changeListeners = new Set<() => void>();
 
   constructor(
     private readonly registry: DeviceRegistry,
@@ -68,12 +69,14 @@ export class TeachInManager {
     if (this.active) return;
     this.active = true;
     for (const listener of this.stateListeners) listener(true);
+    this.notify();
   }
 
   stop(): void {
     if (!this.active) return;
     this.active = false;
     for (const listener of this.stateListeners) listener(false);
+    this.notify();
   }
 
   isActive(): boolean {
@@ -83,6 +86,15 @@ export class TeachInManager {
   onStateChange(listener: TeachInStateListener): () => void {
     this.stateListeners.add(listener);
     return () => this.stateListeners.delete(listener);
+  }
+
+  onChange(listener: () => void): () => void {
+    this.changeListeners.add(listener);
+    return () => this.changeListeners.delete(listener);
+  }
+
+  private notify(): void {
+    for (const listener of this.changeListeners) listener();
   }
 
   listCandidates(): TeachInCandidate[] {
@@ -159,6 +171,7 @@ export class TeachInManager {
     }
 
     this.candidates.set(candidate.targetId, candidate);
+    this.notify();
     if (!isResponse) this.respond(candidate, 'teachInAccepted');
     if (this.requestedSourceId !== undefined) {
       void this.accept(candidate.targetId)
@@ -215,11 +228,12 @@ export class TeachInManager {
     };
     const accepted = await this.registry.upsert(device);
     this.candidates.delete(targetId);
+    this.notify();
     return accepted;
   }
 
   reject(targetId: number): void {
-    this.candidates.delete(targetId);
+    if (this.candidates.delete(targetId)) this.notify();
   }
 
   async transmit(sourceId?: number): Promise<void> {

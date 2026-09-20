@@ -73,15 +73,27 @@ test('waits for MQTT client shutdown and ignores stale events', async () => {
     (() => clients.shift() as FakeMqttClient) as unknown as MqttConnector,
   );
   const settings = { ...defaultMqttSettings(), url: 'mqtt://localhost:1883' };
+  const notifications: MqttRuntimeStatus[] = [];
+  const unsubscribe = runtime.onStatusChange(() => notifications.push({ ...status }));
 
   await runtime.apply(settings, homeAssistant);
   firstClient.emit('connect');
   expect(status.connected).toBe(true);
+  expect(notifications.at(-1)).toEqual({ connected: true });
+
+  firstClient.emit('error', new Error('connection lost'));
+  expect(notifications.at(-1)).toEqual({ connected: false, error: 'connection lost' });
+  firstClient.emit('connect');
+  firstClient.emit('close');
+  expect(notifications.at(-1)).toEqual({ connected: false });
+  firstClient.emit('connect');
 
   const replacement = runtime.apply(settings, homeAssistant);
   await new Promise((resolve) => setTimeout(resolve, 0));
+  const notificationCount = notifications.length;
   firstClient.emit('error', new Error('stale failure'));
   firstClient.emit('close');
+  expect(notifications).toHaveLength(notificationCount);
   expect(status.error).toBeUndefined();
   firstClient.endCallback?.();
   await replacement;
@@ -96,4 +108,9 @@ test('waits for MQTT client shutdown and ignores stale events', async () => {
   secondClient.endCallback?.();
   await stopping;
   expect(status.connected).toBe(false);
+  expect(notifications.at(-1)).toEqual({ connected: false });
+  unsubscribe();
+  const finalCount = notifications.length;
+  await runtime.stop();
+  expect(notifications).toHaveLength(finalCount);
 });

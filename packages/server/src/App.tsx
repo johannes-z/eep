@@ -5,6 +5,7 @@ import type { MqttSaveResult } from './components/MqttSettings';
 import { getAppRoute } from './ui/routes';
 import { formatEnOceanId } from './util';
 import type {
+  AppSnapshot,
   CommandBody,
   Device,
   GeneralResponse,
@@ -114,9 +115,10 @@ export function App() {
     error: false,
   });
   const [error, setError] = useState('');
+  const [connectionError, setConnectionError] = useState('');
+  const settingsDirty = useRef({ general: false, transport: false, homeAssistant: false, mqtt: false });
 
-  async function loadDevices() {
-    const latest = await request<Device[]>('/api/devices');
+  function applyDevices(latest: Device[]) {
     setDevices(latest);
     const sourceId = pairingSourceRef.current;
     if (sourceId !== null && latest.some((device) => device.sourceId === sourceId)) {
@@ -129,16 +131,9 @@ export function App() {
     }
   }
 
-  async function loadPairing() {
-    const response = await request<PairingResponse>('/api/pairing');
-    setPairing(response.active);
-    setCandidates(response.candidates ?? []);
-  }
-
-  async function loadMqtt() {
-    const latest = await request<MqttResponse>('/api/mqtt');
+  function applyMqtt(latest: MqttResponse) {
     setMqtt((current) =>
-      current
+      current && settingsDirty.current.mqtt
         ? {
             ...current,
             configured: latest.configured,
@@ -156,43 +151,61 @@ export function App() {
     });
   }
 
-  async function loadTransport() {
-    setTransport(await request<TransportResponse>('/api/settings'));
-  }
-
-  async function loadHomeAssistant() {
-    setHomeAssistant(await request<HomeAssistantResponse>('/api/homeassistant'));
-  }
-
-  async function loadGeneral() {
-    setGeneral(await request<GeneralResponse>('/api/general'));
-  }
-
-  async function loadListen() {
-    setListen(await request<ListenResponse>('/api/listen'));
-  }
-
   useEffect(() => {
-    void Promise.all([
-      loadDevices(),
-      loadPairing(),
-      loadMqtt(),
-      loadTransport(),
-      loadHomeAssistant(),
-      loadGeneral(),
-      loadListen(),
-    ]).catch((reason: unknown) =>
-      setError(reason instanceof Error ? reason.message : 'Server unavailable'),
-    );
-    const timer = window.setInterval(() => {
-      void loadDevices().catch(() => undefined);
-      void loadPairing().catch(() => undefined);
-      void loadMqtt().catch(() => undefined);
-      void loadTransport().catch(() => undefined);
-      void loadGeneral().catch(() => undefined);
-      void loadListen().catch(() => undefined);
-    }, 3000);
-    return () => window.clearInterval(timer);
+    let stopped = false;
+    let socket: WebSocket;
+    let retryTimer: number | undefined;
+    let retryDelay = 500;
+    const url = new URL('/api/events', window.location.href);
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+
+    function connect() {
+      socket = new WebSocket(url);
+      socket.onmessage = (event) => {
+        if (stopped) return;
+        try {
+          const message = JSON.parse(String(event.data)) as { type: string; state: AppSnapshot };
+          if (message.type !== 'snapshot') return;
+          const latest = message.state;
+          applyDevices(latest.devices);
+          applyMqtt(latest.mqtt);
+          setPairing(latest.pairing.active);
+          setCandidates(latest.pairing.candidates);
+          setListen(latest.listen);
+          setGeneral((current) =>
+            current && settingsDirty.current.general
+              ? { ...latest.general, start_id: current.start_id }
+              : latest.general,
+          );
+          setTransport((current) =>
+            current && settingsDirty.current.transport
+              ? { ...current, connected: latest.transport.connected }
+              : latest.transport,
+          );
+          setHomeAssistant((current) =>
+            current && settingsDirty.current.homeAssistant ? current : latest.homeAssistant,
+          );
+          retryDelay = 500;
+          setConnectionError('');
+        } catch {
+          socket.close();
+        }
+      };
+      socket.onerror = () => socket.close();
+      socket.onclose = () => {
+        if (stopped) return;
+        setConnectionError('Server connection lost. Reconnecting...');
+        retryTimer = window.setTimeout(connect, retryDelay);
+        retryDelay = Math.min(retryDelay * 2, 10000);
+      };
+    }
+
+    connect();
+    return () => {
+      stopped = true;
+      window.clearTimeout(retryTimer);
+      socket.close();
+    };
   }, []);
 
   async function togglePairing() {
@@ -201,7 +214,6 @@ export function App() {
       await request<PairingResponse>(`/api/pairing/${pairing ? 'stop' : 'start'}`, {
         method: 'POST',
       });
-      await loadPairing();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Unable to change pairing state');
     }
@@ -221,7 +233,6 @@ export function App() {
     setError('');
     try {
       await request<PairingResponse>('/api/pairing/transmit', { method: 'POST' });
-      await loadPairing();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Unable to send pairing signal');
     }
@@ -241,7 +252,6 @@ export function App() {
         headers: { 'content-type': 'application/json' },
         method: 'POST',
       });
-      await Promise.all([loadDevices(), loadPairing(), loadGeneral()]);
       if (pairingSourceRef.current === sourceId) {
         setPairingMessage((current) =>
           current.error
@@ -272,8 +282,6 @@ export function App() {
         headers: { 'content-type': 'application/json' },
         method: 'POST',
       });
-      await Promise.all([loadDevices(), loadPairing()]);
-      await loadGeneral();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Unable to accept device');
     }
@@ -288,8 +296,6 @@ export function App() {
         headers: { 'content-type': 'application/json' },
         method: 'POST',
       });
-      await loadDevices();
-      await loadGeneral();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Command rejected');
     } finally {
@@ -302,8 +308,6 @@ export function App() {
     setError('');
     try {
       await request(`/api/devices/${formatEnOceanId(sourceId)}`, { method: 'DELETE' });
-      await loadDevices();
-      await loadGeneral();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Unable to delete device');
       throw reason;
@@ -320,7 +324,6 @@ export function App() {
         headers: { 'content-type': 'application/json' },
         method: 'PUT',
       });
-      await Promise.all([loadDevices(), loadGeneral()]);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Unable to rename device');
       throw reason;
@@ -354,6 +357,7 @@ export function App() {
         headers: { 'content-type': 'application/json' },
         method: 'PUT',
       });
+      settingsDirty.current.mqtt = false;
       setMqtt(toMqttForm(result));
       setMqttMessage({
         text: result.connected
@@ -385,6 +389,7 @@ export function App() {
         headers: { 'content-type': 'application/json' },
         method: 'PUT',
       });
+      settingsDirty.current.transport = false;
       setTransport(result);
       setTransportMessage({
         text: result.restartRequired ? 'Saved. Restart required.' : 'Saved. Transport applied.',
@@ -414,6 +419,7 @@ export function App() {
         headers: { 'content-type': 'application/json' },
         method: 'PUT',
       });
+      settingsDirty.current.homeAssistant = false;
       setHomeAssistant(result);
       setHomeAssistantMessage({
         text: result.restartRequired
@@ -440,6 +446,7 @@ export function App() {
         headers: { 'content-type': 'application/json' },
         method: 'PUT',
       });
+      settingsDirty.current.general = false;
       setGeneral(result);
       setGeneralMessage({
         text: result.restartRequired
@@ -470,10 +477,19 @@ export function App() {
     mqttMessage,
     onAcceptCandidate: acceptCandidate,
     onCommand: command,
-    onGeneralChange: setGeneral,
-    onHomeAssistantChange: setHomeAssistant,
+    onGeneralChange: (settings) => {
+      settingsDirty.current.general = true;
+      setGeneral(settings);
+    },
+    onHomeAssistantChange: (settings) => {
+      settingsDirty.current.homeAssistant = true;
+      setHomeAssistant(settings);
+    },
     onListen: toggleListen,
-    onMqttChange: setMqtt,
+    onMqttChange: (settings) => {
+      settingsDirty.current.mqtt = true;
+      setMqtt(settings);
+    },
     onPairing: togglePairing,
     onPairChannel: pairChannel,
     onTransmitPairing: transmitPairing,
@@ -483,7 +499,10 @@ export function App() {
     onSaveGeneral: saveGeneral,
     onSaveMqtt: saveMqtt,
     onSaveTransport: saveTransport,
-    onTransportChange: setTransport,
+    onTransportChange: (settings) => {
+      settingsDirty.current.transport = true;
+      setTransport(settings);
+    },
     pairing,
     pairingMessage,
     pairingSourceId,
@@ -508,12 +527,12 @@ export function App() {
             pairing={pairing}
             title={title}
           />
-          {error && (
+          {(connectionError || error) && (
             <div
               className="error-banner"
               role="alert"
             >
-              {error}
+              {connectionError || error}
             </div>
           )}
           <div className="page-content">

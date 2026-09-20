@@ -55,6 +55,7 @@ export interface RequestHandlerOptions {
   listener?: PacketListener;
   onTransmit?: TransmitListener;
   profiles?: ProfileRegistry;
+  onChange?: () => void;
 }
 
 interface PairingState {
@@ -141,7 +142,29 @@ export function createRequestHandler(
     );
   }
 
-  return async function handleRequest(request: Request): Promise<Response> {
+  function snapshot() {
+    return {
+      devices: (options.registry?.list() ?? initialDevices).map(deviceResponse),
+      general: generalSettingsResponse(
+        generalSettings,
+        options.baseId,
+        options.registry?.list() ?? initialDevices,
+      ),
+      transport: transportSettingsResponse(transportSettings, transportConnected(transportSettings)),
+      homeAssistant: homeAssistantSettingsResponse(homeAssistantSettings),
+      mqtt: mqttSettingsResponse(
+        mqttSettings,
+        options.mqttStatus?.(),
+        homeAssistantSettings.discoveryTopic,
+      ),
+      pairing: options.teachIn
+        ? { active: options.teachIn.isActive(), candidates: options.teachIn.listCandidates() }
+        : pairing,
+      listen: options.listener?.snapshot() ?? { active: false, packets: [] },
+    };
+  }
+
+  async function handleRequest(request: Request): Promise<Response> {
     let parts: string[];
     try {
       parts = new URL(request.url).pathname.split('/').filter(Boolean).map(decodeURIComponent);
@@ -447,5 +470,13 @@ export function createRequestHandler(
     }
 
     return new Response(null, { status: 404 });
-  };
+  }
+
+  return Object.assign(async (request: Request): Promise<Response> => {
+    try {
+      return await handleRequest(request);
+    } finally {
+      if (request.method !== 'GET' && request.method !== 'HEAD') options.onChange?.();
+    }
+  }, { snapshot });
 }

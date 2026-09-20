@@ -132,4 +132,14 @@ export interface SettingsFormMessage {
   error: boolean;
 }
 
+export interface AppSnapshot {
+  devices: Device[];
+  general: GeneralResponse;
+  transport: TransportResponse;
+  homeAssistant: HomeAssistantResponse;
+  mqtt: MqttResponse;
+  pairing: PairingResponse;
+  listen: ListenResponse;
+}
+
 export type CommandBody = Record<string, unknown>;

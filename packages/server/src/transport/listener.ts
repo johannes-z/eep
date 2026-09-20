@@ -42,14 +42,26 @@ export class PacketListener {
   private active = false;
   private nextId = 1;
   private packets: ListenPacket[] = [];
+  private readonly listeners = new Set<() => void>();
+
+  onChange(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private notify(): void {
+    for (const listener of this.listeners) listener();
+  }
 
   start(): void {
     this.packets = [];
     this.active = true;
+    this.notify();
   }
 
   stop(): void {
     this.active = false;
+    this.notify();
   }
 
   snapshot(): ListenSnapshot {
@@ -85,6 +97,7 @@ export class PacketListener {
       },
     ].slice(-PacketListener.maxPackets);
     this.nextId += 1;
+    this.notify();
   }
 
   captureOutgoing(payload: ArrayLike<number>): void {

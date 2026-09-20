@@ -13,6 +13,12 @@ bun run start
 The web UI listens on `127.0.0.1:3000` by default. Set `HOST=0.0.0.0` when the service should be reachable from another host.
 The HTTP API has no built-in authentication; keep it on a trusted network or place it behind an authenticated reverse proxy before exposing it remotely.
 
+The web UI receives live state snapshots over `/api/events` using WebSocket, with automatic
+reconnection and resynchronization instead of polling. Commands and settings saves use HTTP.
+Reverse proxies must forward WebSocket upgrades and preserve the original Host and scheme
+so the WebSocket endpoint can validate the browser's Origin. Protect this endpoint with the
+same authentication as the HTTP API.
+
 ## Standalone releases
 
 Tagged releases publish standalone binaries for Windows x64, Linux x64 and arm64, and macOS x64 and arm64.

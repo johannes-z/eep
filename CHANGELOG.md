@@ -1,8 +1,20 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
-
 ## Unreleased
+
+
+### Bug Fixes
+
+- Fixes (755158c)
+
+
+### Refactoring
+
+- Refactor (1a84656)
+
+## v1.0.1
+
 
 ### Bug Fixes
 
@@ -14,6 +26,13 @@ All notable changes to this project will be documented in this file.
 
 - Fixes (dc60924)
 
+
 ### Features
 
 - Add fan profile tests and implement fan state mappings (ffefd25)
+
+
+### Miscellaneous
+
+- Release v1.0.1 (62c7bfa)
+

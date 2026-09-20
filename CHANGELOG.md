@@ -3,10 +3,17 @@
 All notable changes to this project will be documented in this file.
 ## Unreleased
 
+## v1.0.2
+
 
 ### Bug Fixes
 
 - Fixes (755158c)
+
+
+### Miscellaneous
+
+- Release v1.0.2 (fb309e5)
 
 
 ### Refactoring

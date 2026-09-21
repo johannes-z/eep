@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 
 
+### Features
+
+- Enhance transport settings to display dongle hardware information (50f7edc)
+
+- Update server dependencies and implement application lifecycle management (85ee603)
+
+## v1.2.0
+
+
 ### Documentation
 
 - Add docs (15f6693)
@@ -12,6 +21,11 @@ All notable changes to this project will be documented in this file.
 ### Features
 
 - Add F6-02-01 rocker switch profile and support (44bdb96)
+
+
+### Miscellaneous
+
+- Release v1.2.0 (243e212)
 
 
 ### Refactoring

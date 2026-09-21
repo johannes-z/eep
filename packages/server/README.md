@@ -71,6 +71,12 @@ backoff from one to thirty seconds, and connection changes are pushed to the UI.
 disconnected transports reject commands rather than silently accepting them. Transceiver base IDs
 and available channels are refreshed after connection recovery or replacement.
 
+The transport page also displays the dongle's application description, application firmware
+version, API version, chip ID, and chip version. These read-only values are queried using ESP3
+`CO_RD_VERSION` over either serial or TCP at startup and after reconnection or replacement.
+Unavailable or unsupported information is shown as `Unavailable`; version-query failures do
+not disable the transport. Hardware details are cleared when the connection is lost.
+
 Saving unrelated settings leaves unchanged MQTT secrets untouched, including the existing secrets
 file's comments and formatting.
 
@@ -93,7 +99,7 @@ MQTT environment booleans accept `true` or `false`; malformed numeric and boolea
 
 The console opens at `/devices`, with search, compact power/mode controls, and expandable details,
 rename, and removal. Device availability remains an integration concern rather than a list column or
-filter. `/settings/transport` includes the connection, dongle base ID, and sender allocation settings.
+filter. `/settings/transport` includes connection settings and read-only dongle hardware information.
 Unregistered pages return 404; there is no `/settings/general` alias. Pairing and the RX/TX packet listener remain
 separate workspaces. Navigation and device rows adapt to narrow screens.
 

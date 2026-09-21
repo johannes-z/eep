@@ -24,9 +24,7 @@ export function Devices() {
     <section className="devices-page">
       <div className="overview-toolbar">
         <div>
-          <h2>
-            Devices <span className="heading-count">{devices.length}</span>
-          </h2>
+          <h2>Devices</h2>
         </div>
         <Link
           className="save-button"

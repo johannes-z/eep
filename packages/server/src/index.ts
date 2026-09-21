@@ -21,6 +21,7 @@ import {
   buildUteTeachInQuery,
   buildUteTeachInResponse,
   readBaseId,
+  readVersion,
   type UteResponse,
 } from './transport/esp3';
 import { TransportRuntime } from './transport/runtime';
@@ -132,6 +133,10 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
       console.warn(`Unable to read USB 300 base ID: ${(error as Error).message}`);
       return undefined;
     });
+    let transportHardware = await readVersion(openedTransport).catch((error: unknown) => {
+      console.warn('[transport] Unable to read dongle version:', error);
+      return undefined;
+    });
     const defaultSourceId = baseId !== undefined && baseId < 0xffffffff ? baseId + 1 : 1;
     const startId = serverConfig.startId ?? defaultSourceId;
     let activeTransportRuntime: TransportRuntime;
@@ -205,6 +210,7 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
       teachIn,
       transportSettings: serverConfig.transport,
       transportConnected: () => activeTransportRuntime.isConnected,
+      transportHardware: () => transportHardware,
       saveTransportSettings: (settings) => saveTransportSettings(configurationPath, settings),
       applyTransportSettings,
       saveGeneralSettings: (settings) => saveGeneralSettings(configurationPath, settings),
@@ -232,11 +238,16 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
       activeMqttRuntime.onStatusChange(updates.notify),
       activeTransportRuntime.onStatusChange(() => {
         baseId = undefined;
+        transportHardware = undefined;
         updates.notify();
         if (!activeTransportRuntime.isConnected) return;
         const connection = activeTransportRuntime.current;
         void readBaseId(connection)
-          .then((value) => {
+          .catch((error: unknown) => {
+            console.warn('[transport] Unable to refresh base ID:', error);
+            return undefined;
+          })
+          .then(async (value) => {
             if (
               !activeTransportRuntime.isConnected ||
               activeTransportRuntime.current !== connection
@@ -244,8 +255,18 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
               return;
             baseId = value;
             updates.notify();
+            const hardware = await readVersion(connection);
+            if (
+              !activeTransportRuntime.isConnected ||
+              activeTransportRuntime.current !== connection
+            )
+              return;
+            transportHardware = hardware;
+            updates.notify();
           })
-          .catch((error: unknown) => console.warn('[transport] Unable to refresh base ID:', error));
+          .catch((error: unknown) =>
+            console.warn('[transport] Unable to refresh dongle version:', error),
+          );
       }),
       () => teachIn.stop(),
     );

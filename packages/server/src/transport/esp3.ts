@@ -68,43 +68,82 @@ export function buildCommonCommand(command: number): Buffer {
   return Buffer.from([0x55, ...header, getChecksum(header), ...data, getChecksum(data)]);
 }
 
-export async function readBaseId(connection: TransportConnection): Promise<number | undefined> {
+export interface DongleVersion {
+  applicationVersion: string;
+  apiVersion: string;
+  chipId: string;
+  chipVersion: string;
+  description: string;
+}
+
+async function readCommonCommand(
+  connection: TransportConnection,
+  command: number,
+  responseLength: number,
+  label: string,
+): Promise<Esp3Frame | undefined> {
   if (!connection.on) return undefined;
   const parser = new Esp3Parser();
-  return new Promise<number>((resolve, reject) => {
+  return new Promise<Esp3Frame>((resolve, reject) => {
     let settled = false;
     let timer: ReturnType<typeof setTimeout>;
-    const finish = (error?: Error, value?: number): void => {
+    const finish = (error?: Error, value?: Esp3Frame): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       connection.off?.('data', onData);
       if (error) reject(error);
-      else resolve(value as number);
+      else resolve(value as Esp3Frame);
     };
     const onData = (chunk: unknown): void => {
       if (!chunk || typeof chunk !== 'object' || !('length' in chunk)) return;
       for (const frame of parser.push(chunk as ArrayLike<number>)) {
         if (frame.packetType !== 2 || frame.data.length === 0) continue;
         if (frame.data[0] !== 0) {
-          finish(new Error(`USB 300 rejected base ID request with status ${frame.data[0]}`));
+          finish(new Error(`Dongle rejected ${label} request with status ${frame.data[0]}`));
           return;
         }
-        if (frame.data.length < 5) continue;
-        const baseId =
-          (frame.data[1] << 24) | (frame.data[2] << 16) | (frame.data[3] << 8) | frame.data[4];
-        finish(undefined, baseId >>> 0);
+        if (frame.data.length !== responseLength) continue;
+        finish(undefined, frame);
         return;
       }
     };
-    timer = setTimeout(() => finish(new Error('Timed out reading USB 300 base ID')), 3000);
+    timer = setTimeout(() => finish(new Error(`Timed out reading dongle ${label}`)), 3000);
     connection.on?.('data', onData);
     void Promise.resolve()
-      .then(() => connection.write(buildCommonCommand(0x08)))
+      .then(() => connection.write(buildCommonCommand(command)))
       .catch((error: unknown) =>
-        finish(error instanceof Error ? error : new Error('Failed to read USB 300 base ID')),
+        finish(error instanceof Error ? error : new Error(`Failed to read dongle ${label}`)),
       );
   });
+}
+
+export async function readBaseId(connection: TransportConnection): Promise<number | undefined> {
+  const frame = await readCommonCommand(connection, 0x08, 5, 'base ID');
+  if (!frame) return undefined;
+  const baseId =
+    (frame.data[1] << 24) | (frame.data[2] << 16) | (frame.data[3] << 8) | frame.data[4];
+  return baseId >>> 0;
+}
+
+export async function readVersion(
+  connection: TransportConnection,
+): Promise<DongleVersion | undefined> {
+  const frame = await readCommonCommand(connection, 0x03, 33, 'version');
+  if (!frame) return undefined;
+  const descriptionBytes = frame.data.slice(17, 33);
+  const terminator = descriptionBytes.indexOf(0);
+  return {
+    applicationVersion: frame.data.slice(1, 5).join('.'),
+    apiVersion: frame.data.slice(5, 9).join('.'),
+    chipId: bytesToId(frame.data.slice(9, 13)),
+    chipVersion: bytesToId(frame.data.slice(13, 17)),
+    description: Buffer.from(
+      terminator === -1 ? descriptionBytes : descriptionBytes.slice(0, terminator),
+    )
+      .toString('ascii')
+      .trim(),
+  };
 }
 
 const uteRequestTypes: UteRequestType[] = ['teachIn', 'teachOut', 'unspecified', 'reserved'];

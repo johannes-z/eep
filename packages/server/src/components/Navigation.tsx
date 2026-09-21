@@ -135,12 +135,10 @@ export function Sidebar({
 
 export function TopBar({
   title,
-  connectionStatus,
   navigationOpen,
   onToggleNavigation,
 }: {
   title: string;
-  connectionStatus: 'connecting' | 'connected' | 'disconnected';
   navigationOpen: boolean;
   onToggleNavigation: () => void;
 }) {
@@ -160,21 +158,6 @@ export function TopBar({
         </button>
         <span className="breadcrumb">Workspace /</span>
         <h1>{title}</h1>
-      </div>
-      <div className="topbar-actions">
-        <span
-          className="connection-state"
-          role="status"
-        >
-          <span
-            className={`status-dot ${connectionStatus === 'connected' ? 'online' : 'warning'}`}
-          />
-          {connectionStatus === 'connected'
-            ? 'Live'
-            : connectionStatus === 'connecting'
-              ? 'Connecting'
-              : 'Reconnecting'}
-        </span>
       </div>
     </header>
   );

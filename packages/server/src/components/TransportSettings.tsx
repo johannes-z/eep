@@ -10,10 +10,18 @@ export function TransportSettings({
   general: GeneralResponse;
 }) {
   const { settings, message, saving, onChange, onSave } = useSettingsForm(live, '/api/settings');
-  const sender = useSettingsForm(general, '/api/general', ({ start_id }) => ({ start_id }));
   const update = <K extends keyof TransportResponse>(key: K, value: TransportResponse[K]) =>
     onChange({ ...settings, [key]: value });
   const status = live.type === 'none' ? 'Disabled' : live.connected ? 'Connected' : 'Disconnected';
+  const hardware = live.connected ? live.hardware : null;
+  const hardwareFields = [
+    { label: 'Application description', value: hardware?.description },
+    { label: 'Base ID', value: live.connected ? general.base_id : null },
+    { label: 'Application firmware version', value: hardware?.applicationVersion },
+    { label: 'API version', value: hardware?.apiVersion },
+    { label: 'Chip ID', value: hardware?.chipId },
+    { label: 'Chip version', value: hardware?.chipVersion },
+  ];
 
   return (
     <SettingsLayout
@@ -76,39 +84,23 @@ export function TransportSettings({
           saving={saving}
         />
       </SettingsForm>
-      <SettingsForm
-        saving={sender.saving}
-        onSubmit={() => sender.onSave(sender.settings)}
-      >
+      <fieldset className="settings-panel settings-form">
         <div className="form-section">
-          <h3>Sender ID allocation</h3>
+          <h3>Hardware Information</h3>
         </div>
-        <label className="setting-field">
-          <span>Start ID</span>
-          <input
-            maxLength={8}
-            pattern="[0-9a-fA-F]{1,8}"
-            required
-            spellCheck={false}
-            value={sender.settings.start_id}
-            onChange={(event) =>
-              sender.onChange({ ...sender.settings, start_id: event.target.value })
-            }
-          />
-        </label>
-        <label className="setting-field">
-          <span>USB 300 base ID</span>
-          <input
-            readOnly
-            value={general.base_id ?? 'Unavailable'}
-          />
-        </label>
-        <SettingsActions
-          label="Save sender ID"
-          message={sender.message}
-          saving={sender.saving}
-        />
-      </SettingsForm>
+        {hardwareFields.map(({ label, value }) => (
+          <label
+            className="setting-field"
+            key={label}
+          >
+            <span>{label}</span>
+            <input
+              readOnly
+              value={value || 'Unavailable'}
+            />
+          </label>
+        ))}
+      </fieldset>
     </SettingsLayout>
   );
 }

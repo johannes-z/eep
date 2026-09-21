@@ -7,7 +7,7 @@ import type { TransportSettings } from './config';
 import { DeviceRegistry } from './devices/registry';
 import { TeachInManager } from './devices/teachin';
 import { PacketListener } from './transport/listener';
-import { buildCommonCommand } from './transport/esp3';
+import { buildCommonCommand, type DongleVersion } from './transport/esp3';
 
 import {
   createRequestHandler as createHandler,
@@ -110,6 +110,33 @@ test('general settings reflect a reconnected transceiver base ID', async () => {
   const response = await handler(new Request('http://localhost/api/general'));
   expect(await response.json()).toMatchObject({ base_id: 'ff800000' });
   expect(handler.snapshot().general).toMatchObject({ base_id: 'ff800000' });
+});
+
+test('transport settings expose live dongle hardware and hide it after disconnect', async () => {
+  let connected = true;
+  let hardware: DongleVersion | undefined;
+  const handler = createRequestHandler(new FakeTransport(), {
+    transportConnected: () => connected,
+    transportHardware: () => hardware,
+  });
+  expect(handler.snapshot().transport.hardware).toBeNull();
+  hardware = {
+    applicationVersion: '2.15.0.1',
+    apiVersion: '2.6.0.0',
+    chipId: '05010203',
+    chipVersion: '00000003',
+    description: 'USB 300',
+  };
+  const response = await handler(new Request('http://localhost/api/settings'));
+  expect(await response.json()).toMatchObject({ hardware });
+  expect(handler.snapshot().transport.hardware).toEqual(hardware);
+  connected = false;
+  expect(handler.snapshot().transport.hardware).toBeNull();
+  const disconnected = await handler(new Request('http://localhost/api/settings'));
+  expect(await disconnected.json()).toMatchObject({ hardware: null });
+  hardware = { ...hardware, chipId: '05010204' };
+  connected = true;
+  expect(handler.snapshot().transport.hardware).toEqual(hardware);
 });
 
 test('returns 200 and writes a payload for a configured device', async () => {

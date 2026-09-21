@@ -7,6 +7,7 @@ import type { TeachInManager } from '../devices/teachin';
 import { defaultMqttSettings, type MqttSettings } from '../mqtt';
 import { createDefaultProfileRegistry, type ProfileRegistry } from '../profiles';
 import type { TransportConnection } from '../transport/adapters';
+import type { DongleVersion } from '../transport/esp3';
 import type { PacketListener } from '../transport/listener';
 import {
   createSettingsResource,
@@ -32,6 +33,7 @@ export interface RequestHandlerOptions {
   teachIn: TeachInManager;
   transportSettings?: TransportSettings;
   transportConnected?: () => boolean;
+  transportHardware?: () => DongleVersion | undefined;
   saveTransportSettings?: (settings: TransportSettings) => Promise<void>;
   applyTransportSettings?: (settings: TransportSettings) => Promise<void>;
   homeAssistantSettings?: HomeAssistantSettings;
@@ -75,7 +77,12 @@ export function createRequestHandler(
   const transport = createSettingsResource({
     initial: options.transportSettings ?? defaults.transport,
     parse: parseTransportSettings,
-    describe: (settings) => transportSettingsResponse(settings, transportConnected(settings)),
+    describe: (settings) =>
+      transportSettingsResponse(
+        settings,
+        transportConnected(settings),
+        options.transportHardware?.(),
+      ),
     apply: options.applyTransportSettings,
     save: options.saveTransportSettings,
   });

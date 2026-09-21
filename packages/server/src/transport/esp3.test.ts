@@ -7,6 +7,7 @@ import {
   buildUteTeachInQuery,
   buildUteTeachInResponse,
   readBaseId,
+  readVersion,
   Esp3Parser,
   parseRadioERP1,
   parseUteInfo,
@@ -122,6 +123,98 @@ test('rejects a one-byte ESP3 error response without waiting for the timeout', a
   });
   expect(readBaseId(connection)).rejects.toThrow('rejected base ID request with status 1');
   expect(events.listenerCount('data')).toBe(0);
+});
+
+function responseFrame(data: number[]): Uint8Array {
+  const header = [0, data.length, 0, 2];
+  return Uint8Array.from([0x55, ...header, getChecksum(header), ...data, getChecksum(data)]);
+}
+
+test.each(['USB 300', '1234567890abcdef'])(
+  'reads dongle version information (%s)',
+  async (description) => {
+    const events = new EventEmitter();
+    const connection = Object.assign(events, {
+      write: (payload: Uint8Array) => {
+        expect(new Esp3Parser().push(payload)).toEqual([
+          { packetType: 5, data: [0x03], optionalData: [] },
+        ]);
+        events.emit('data', responseFrame([0]));
+        events.emit('data', responseFrame([0, 0xff, 0xe7, 0x66, 0x80]));
+        const descriptionBytes = Buffer.alloc(16);
+        descriptionBytes.write(description, 'ascii');
+        const response = responseFrame([
+          0,
+          2,
+          15,
+          0,
+          1,
+          2,
+          6,
+          0,
+          0,
+          0xff,
+          0x80,
+          0,
+          1,
+          0,
+          0,
+          0,
+          3,
+          ...descriptionBytes,
+        ]);
+        events.emit('data', response.subarray(0, 10));
+        events.emit('data', response.subarray(10));
+      },
+    });
+    expect(await readVersion(connection)).toEqual({
+      applicationVersion: '2.15.0.1',
+      apiVersion: '2.6.0.0',
+      chipId: 'ff800001',
+      chipVersion: '00000003',
+      description,
+    });
+    expect(events.listenerCount('data')).toBe(0);
+  },
+);
+
+test('rejects unsupported version queries and cleans up the listener', () => {
+  const events = new EventEmitter();
+  const connection = Object.assign(events, {
+    write: () => {
+      events.emit('data', responseFrame([2]));
+    },
+  });
+  expect(readVersion(connection)).rejects.toThrow('rejected version request with status 2');
+  expect(events.listenerCount('data')).toBe(0);
+});
+
+test('cleans up version listeners when a transport write fails', () => {
+  const events = new EventEmitter();
+  const connection = Object.assign(events, {
+    write: async () => {
+      throw new Error('Disconnected');
+    },
+  });
+  expect(readVersion(connection)).rejects.toThrow('Disconnected');
+  expect(events.listenerCount('data')).toBe(0);
+});
+
+test('times out a silent dongle and removes the version listener', () => {
+  const events = new EventEmitter();
+  const connection = Object.assign(events, { write: () => undefined });
+  expect(readVersion(connection)).rejects.toThrow('Timed out reading dongle version');
+  expect(events.listenerCount('data')).toBe(0);
+});
+
+test('does not query version information on a disabled transport', async () => {
+  expect(
+    await readVersion({
+      write: () => {
+        throw new Error('Disabled');
+      },
+    }),
+  ).toBeUndefined();
 });
 
 test('parses a UTE query in wire order', () => {

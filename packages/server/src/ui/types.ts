@@ -2,6 +2,7 @@ import type { Device as RegisteredDevice } from '../devices/types';
 import type { ProfileEntityDescriptor, ProfileEntityState } from '../profiles/types';
 export type { ListenPacket, ListenSnapshot as ListenResponse } from '../transport/listener';
 import type { ListenSnapshot } from '../transport/listener';
+import type { DongleVersion } from '../transport/esp3';
 
 export type AppView =
   | 'devices'
@@ -59,6 +60,7 @@ export interface MqttForm extends MqttResponse {
 
 export interface TransportResponse {
   connected: boolean;
+  hardware: DongleVersion | null;
   type: 'none' | 'serial' | 'tcp';
   port: string;
   baudrate: number;

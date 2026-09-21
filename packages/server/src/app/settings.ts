@@ -12,6 +12,7 @@ import {
 } from '../config';
 import type { MqttSettings } from '../mqtt';
 import type { Device } from '../devices/types';
+import type { DongleVersion } from '../transport/esp3';
 import { parseEnOceanId } from '../util';
 
 export interface MqttStatus {
@@ -103,9 +104,11 @@ export function mqttSettingsResponse(
 export function transportSettingsResponse(
   settings: TransportSettings,
   connected: boolean,
+  hardware?: DongleVersion,
 ): Record<string, unknown> {
   return {
     connected,
+    hardware: connected ? (hardware ?? null) : null,
     type: settings.type,
     port: settings.path,
     baudrate: settings.baudRate,

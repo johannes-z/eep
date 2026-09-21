@@ -3,7 +3,6 @@ import { readFile } from 'node:fs/promises';
 import type { HomeAssistantSettings } from '../../config';
 import type { Device } from '../../devices/types';
 import type { DeviceRegistry } from '../../devices/registry';
-import type { TeachInManager } from '../../devices/teachin';
 import type { MqttSettings } from '../../mqtt';
 import { MqttEntityBridge } from '../homeassistant/bridge';
 import { createDefaultProfileRegistry, type ProfileRegistry } from '../../profiles';
@@ -47,7 +46,6 @@ export class MqttRuntime {
     private readonly sendCommand: (device: Device, request: unknown) => Promise<void>,
     private readonly runtimeStatus: MqttRuntimeStatus,
     private readonly profiles: ProfileRegistry = createDefaultProfileRegistry(),
-    private readonly teachIn?: TeachInManager,
     private readonly restart?: () => Promise<void>,
     private readonly connectClient: MqttClientFactory = connect,
   ) {}
@@ -111,7 +109,6 @@ export class MqttRuntime {
           homeAssistant,
         },
         this.profiles,
-        this.teachIn,
         this.restart,
       );
       this.bridge.start();

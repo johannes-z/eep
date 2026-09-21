@@ -73,7 +73,6 @@ test('waits for MQTT client shutdown and ignores stale events', async () => {
     status,
     undefined,
     undefined,
-    undefined,
     (() => clients.shift() as FakeMqttClient) as unknown as MqttConnector,
   );
   const settings = { ...defaultMqttSettings(), url: 'mqtt://localhost:1883' };
@@ -130,7 +129,6 @@ test('can stop a disconnected client without waiting for publish acknowledgement
     { connected: false },
     undefined,
     undefined,
-    undefined,
     (() => client) as unknown as MqttConnector,
   );
   await runtime.apply({ ...defaultMqttSettings(), url: 'mqtt://localhost:1883' }, homeAssistant);
@@ -154,7 +152,6 @@ test('loads TLS files, preserves inline PEM, and rejects missing files before re
     registry,
     async () => undefined,
     { connected: false },
-    undefined,
     undefined,
     undefined,
     ((_url: Parameters<MqttConnector>[0], connectionOptions: Parameters<MqttConnector>[1]) => {

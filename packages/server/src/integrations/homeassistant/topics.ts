@@ -14,13 +14,6 @@ export interface EntityTopics {
   availability: string;
 }
 
-export interface PermitJoinTopics {
-  discovery: string;
-  command: string;
-  state: string;
-  bridgeAvailability: string;
-}
-
 export interface RestartTopics {
   discovery: string;
   command: string;
@@ -75,20 +68,6 @@ export function entityTopics(
     percentageState: `${base}/percentage/state`,
     presetState: `${base}/preset/state`,
     availability: `${base}/availability`,
-  };
-}
-
-export function permitJoinTopics(
-  discoveryPrefix: string,
-  baseTopic: string,
-  bridgeAvailability: string,
-): PermitJoinTopics {
-  const base = `${baseTopic}/permit_join`;
-  return {
-    discovery: `${discoveryPrefix}/switch/permit_join/config`,
-    command: `${base}/set`,
-    state: `${base}/state`,
-    bridgeAvailability,
   };
 }
 

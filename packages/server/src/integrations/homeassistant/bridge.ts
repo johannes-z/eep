@@ -1,16 +1,9 @@
 import type { HomeAssistantSettings } from '../../config';
 import type { Device } from '../../devices/types';
 import type { DeviceRegistry } from '../../devices/registry';
-import type { TeachInManager } from '../../devices/teachin';
 import type { MqttClientLike, MqttSettings } from '../../mqtt';
 import { createDefaultProfileRegistry, type ProfileRegistry } from '../../profiles';
-import {
-  deviceDiagnosticTopics,
-  entityObjectId,
-  entityTopics,
-  permitJoinTopics,
-  restartTopics,
-} from './topics';
+import { deviceDiagnosticTopics, entityObjectId, entityTopics, restartTopics } from './topics';
 import { bridgeDeviceInfo, deviceAvailability, deviceInfo, diagnosticValues } from './device';
 import { publish, publishOptions, subscribe } from './publisher';
 import { HomeAssistantStatePublisher } from './state';
@@ -26,7 +19,6 @@ export class MqttEntityBridge {
   private readonly bridgeAvailability: string;
   private readonly removeChangeListener: () => void;
   private readonly removeDeviceListener: () => void;
-  private readonly removeTeachInListener: () => void;
   private readonly statePublisher: HomeAssistantStatePublisher;
   private readonly publishedEntityObjectIds = new Map<number, string>();
   private publicationQueue: Promise<void> = Promise.resolve();
@@ -40,7 +32,6 @@ export class MqttEntityBridge {
       'baseTopic' | 'forceDisableRetain' | 'includeDeviceInformation'
     > & { homeAssistant?: HomeAssistantSettings } = {},
     private readonly profiles: ProfileRegistry = createDefaultProfileRegistry(),
-    private readonly teachIn?: TeachInManager,
     private readonly restart?: () => Promise<void>,
   ) {
     this.homeAssistantEnabled = settings.homeAssistant?.enabled !== false;
@@ -63,14 +54,6 @@ export class MqttEntityBridge {
         bridgePublishOptions: this.bridgePublishOptions,
       },
     );
-    this.removeTeachInListener =
-      this.teachIn?.onStateChange(() => {
-        if (this.started && !this.stopped) {
-          void this.enqueuePublication(() => this.publishPermitJoinState()).catch(
-            (error: unknown) => console.error('MQTT Permit join state update failed:', error),
-          );
-        }
-      }) ?? (() => undefined);
     this.removeChangeListener = this.registry.onChange((device) => {
       if (!this.started || this.stopped || this.client.connected === false) return;
       void this.enqueuePublication(async () => {
@@ -109,7 +92,6 @@ export class MqttEntityBridge {
   async stop({ publishOffline = true }: { publishOffline?: boolean } = {}): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
-    this.removeTeachInListener();
     this.removeChangeListener();
     this.removeDeviceListener();
     await this.publicationQueue;
@@ -151,8 +133,6 @@ export class MqttEntityBridge {
     }
     await publish(this.client, this.bridgeAvailability, 'online', this.bridgePublishOptions);
     await this.publishRestartDiscovery();
-    await this.publishPermitJoinDiscovery();
-    await this.publishPermitJoinState();
     for (const device of this.registry.list()) {
       await this.clearEntityDiscovery(device);
       this.publishedEntityObjectIds.delete(device.sourceId);
@@ -250,14 +230,6 @@ export class MqttEntityBridge {
 
   private async clearDiscovery(): Promise<void> {
     const clearOptions = { ...publishOptions, retain: true };
-    if (this.teachIn) {
-      const topics = permitJoinTopics(
-        this.discoveryPrefix,
-        this.baseTopic,
-        this.bridgeAvailability,
-      );
-      await publish(this.client, topics.discovery, '', clearOptions);
-    }
     const restart = restartTopics(this.discoveryPrefix, this.baseTopic, this.bridgeAvailability);
     await publish(this.client, restart.discovery, '', clearOptions);
     for (const device of this.registry.list()) {
@@ -332,38 +304,6 @@ export class MqttEntityBridge {
     }
   }
 
-  private async publishPermitJoinDiscovery(): Promise<void> {
-    if (!this.homeAssistantEnabled || !this.teachIn) return;
-    const topics = permitJoinTopics(this.discoveryPrefix, this.baseTopic, this.bridgeAvailability);
-    const payload = {
-      name: 'Permit join',
-      unique_id: 'eep_permit_join',
-      object_id: 'eep_permit_join',
-      default_entity_id: 'switch.eep_permit_join',
-      command_topic: topics.command,
-      state_topic: topics.state,
-      payload_on: 'ON',
-      payload_off: 'OFF',
-      state_on: 'ON',
-      state_off: 'OFF',
-      icon: 'mdi:access-point-network',
-      availability: [{ topic: topics.bridgeAvailability }],
-      availability_mode: 'all',
-      ...(this.includeDeviceInformation
-        ? {
-            device: bridgeDeviceInfo(),
-          }
-        : {}),
-    };
-    await publish(
-      this.client,
-      topics.discovery,
-      JSON.stringify(payload),
-      this.bridgePublishOptions,
-    );
-    await subscribe(this.client, topics.command);
-  }
-
   private async publishRestartDiscovery(): Promise<void> {
     if (!this.homeAssistantEnabled) return;
     const topics = restartTopics(this.discoveryPrefix, this.baseTopic, this.bridgeAvailability);
@@ -391,35 +331,9 @@ export class MqttEntityBridge {
     await subscribe(this.client, topics.command);
   }
 
-  private async publishPermitJoinState(): Promise<void> {
-    if (!this.homeAssistantEnabled || !this.teachIn) return;
-    const topics = permitJoinTopics(this.discoveryPrefix, this.baseTopic, this.bridgeAvailability);
-    await publish(
-      this.client,
-      topics.state,
-      this.teachIn.isActive() ? 'ON' : 'OFF',
-      this.bridgePublishOptions,
-    );
-  }
-
   private async handleMessage(topic: string, payload: Buffer): Promise<void> {
     if (this.stopped) return;
     if (this.homeAssistantEnabled) {
-      const permitTopics = permitJoinTopics(
-        this.discoveryPrefix,
-        this.baseTopic,
-        this.bridgeAvailability,
-      );
-      if (this.teachIn && topic === permitTopics.command) {
-        const message = payload.toString().trim().toUpperCase();
-        if (message === 'ON') {
-          this.teachIn.start();
-          await this.teachIn.transmit();
-        } else if (message === 'OFF') this.teachIn.stop();
-        else throw new Error(`Unsupported Permit join state: ${message}`);
-        await this.enqueuePublication(() => this.publishPermitJoinState());
-        return;
-      }
       const restart = restartTopics(this.discoveryPrefix, this.baseTopic, this.bridgeAvailability);
       if (topic === restart.command) {
         if (payload.toString().trim().toUpperCase() !== 'PRESS') {

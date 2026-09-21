@@ -171,7 +171,6 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
         ),
       mqttStatus,
       profiles,
-      teachIn,
       async () => {
         process.kill(process.pid, 'SIGTERM');
       },

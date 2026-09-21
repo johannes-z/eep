@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { d2ValueToFanState } from './profiles/D2-50-00/fan';
 import { DeviceRegistry } from './devices/registry';
 import { applyRadioPacket } from './devices/inbound';
-import { TeachInManager } from './devices/teachin';
 import type { MqttClientLike } from './mqtt';
 import { MqttEntityBridge } from './integrations/homeassistant/bridge';
 
@@ -507,79 +506,6 @@ test('clears the Home Assistant preset when an MQTT speed is selected', async ()
   });
 });
 
-test('publishes and controls the Home Assistant Permit join switch', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'eep-mqtt-pairing-'));
-  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
-  const client = new FakeMqttClient();
-  let signalCount = 0;
-  const teachIn = new TeachInManager(registry, 0xffe76685, undefined, undefined, async () => {
-    signalCount += 1;
-  });
-  const bridge = new MqttEntityBridge(
-    client,
-    registry,
-    async () => undefined,
-    {},
-    undefined,
-    teachIn,
-  );
-  bridge.start();
-  await bridge.publishAll();
-
-  const discovery = client.published.find(
-    (message) => message.topic === 'homeassistant/switch/permit_join/config',
-  );
-  expect(JSON.parse(discovery?.payload ?? '{}')).toMatchObject({
-    unique_id: 'eep_permit_join',
-    command_topic: 'eep/permit_join/set',
-    state_topic: 'eep/permit_join/state',
-    payload_on: 'ON',
-    payload_off: 'OFF',
-    state_on: 'ON',
-    state_off: 'OFF',
-    icon: 'mdi:access-point-network',
-    device: {
-      name: 'Enocean2MQTT Bridge',
-      manufacturer: 'Enocean2MQTT',
-      model: 'Bridge',
-    },
-  });
-  const restartDiscovery = client.published.find(
-    (message) => message.topic === 'homeassistant/button/restart/config',
-  );
-  expect(JSON.parse(restartDiscovery?.payload ?? '{}')).toMatchObject({
-    unique_id: 'eep_restart',
-    command_topic: 'eep/restart/set',
-    payload_press: 'PRESS',
-    icon: 'mdi:restart',
-    device: { name: 'Enocean2MQTT Bridge' },
-  });
-  expect(
-    client.published.find((message) => message.topic === 'eep/permit_join/state')?.payload,
-  ).toBe('OFF');
-
-  client.send('eep/permit_join/set', 'ON');
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(teachIn.isActive()).toBe(true);
-  expect(signalCount).toBe(1);
-  expect(
-    client.published.filter((message) => message.topic === 'eep/permit_join/state').at(-1)?.payload,
-  ).toBe('ON');
-
-  teachIn.stop();
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(
-    client.published.filter((message) => message.topic === 'eep/permit_join/state').at(-1)?.payload,
-  ).toBe('OFF');
-
-  await bridge.stop();
-  expect(
-    client.published
-      .filter((message) => message.topic === 'homeassistant/switch/permit_join/config')
-      .at(-1)?.payload,
-  ).toBe('');
-});
-
 test('publishes offline availability when the bridge stops', async () => {
   const { bridge, client } = await createBridge();
   await bridge.stop();
@@ -611,7 +537,6 @@ test('handles the Home Assistant bridge Restart button', async () => {
     registry,
     async () => undefined,
     {},
-    undefined,
     undefined,
     async () => {
       restartCount += 1;

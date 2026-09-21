@@ -4,9 +4,31 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 
 
+### Documentation
+
+- Add docs (15f6693)
+
+
+### Features
+
+- Add F6-02-01 rocker switch profile and support (44bdb96)
+
+
+### Refactoring
+
+- Remove TeachInManager references and related code from MQTT integration (a2fa45d)
+
+## v1.1.0
+
+
 ### Features
 
 - Update device teach-in info to allow optional channel and manufacturerId (86680f9)
+
+
+### Miscellaneous
+
+- Release v1.1.0 (0f801bb)
 
 
 ### Refactoring

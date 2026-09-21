@@ -16,6 +16,7 @@ export interface ProfilePacket {
   readonly RORG: number;
   readonly payload: ArrayLike<number>;
   readonly senderId: string | number;
+  readonly status?: number;
   readonly teachIn?: boolean;
   readonly teachInInfo?: unknown;
 }
@@ -49,6 +50,7 @@ export type ProfileEntityContext = ProfileDeviceContext;
 export interface ProfileEntityDescriptor {
   readonly kind: string;
   readonly deviceClass?: string;
+  readonly jsonState?: boolean;
   readonly protocol: string;
   readonly power: boolean;
   readonly commands: readonly string[];
@@ -58,6 +60,7 @@ export interface ProfileEntityDescriptor {
 
 export interface ProfileEntityState {
   readonly isOn: boolean;
+  readonly attributes?: { readonly [key: string]: JsonValue };
   readonly percentage?: number;
   readonly preset?: string;
 }

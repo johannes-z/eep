@@ -33,9 +33,9 @@ In learn mode, the receiving actuator reduces the input sensitivity in order to 
 
 The 1BS telegram has its own teach-in telegram, which can signal the teach-in command through the `DB_0.BIT_3` data bit.
 
-| Offset | Size | Bitrange | Valid range |
-|---:|---:|---|---|
-| 4 | 1 | DB0.3, LRN Bit | `0`: Teach-in telegram; `1`: Data telegram |
+| Offset | Size | Bitrange       | Valid range                                |
+| -----: | ---: | -------------- | ------------------------------------------ |
+|      4 |    1 | DB0.3, LRN Bit | `0`: Teach-in telegram; `1`: Data telegram |
 
 Here, an EEP profile must also be manually allocated per sender ID.
 
@@ -47,31 +47,31 @@ The 4BS telegram also has its own teach-in telegram, with more teach-in variatio
 
 The profile-less unidirectional teach-in procedure functions according to the same principle as the 1BS telegram: if the data bit is `DB_0.BIT_3 = 0`, then a teach-in telegram is sent. This includes the 'LRN TYPE' `DB_0.BIT_7 = 0` data bit. Then no EEP profile identifier and no manufacturer ID are transferred.
 
-| Offset | Size | Bitrange | Valid range |
-|---:|---:|---|---|
-| 24 | 1 | DB0.7, LRN Type | `0`: telegram without EEP and Manufacturer ID |
-| 28 | 1 | DB0.3, LRN Bit | `0`: Teach-in telegram; `1`: Data telegram |
+| Offset | Size | Bitrange        | Valid range                                   |
+| -----: | ---: | --------------- | --------------------------------------------- |
+|     24 |    1 | DB0.7, LRN Type | `0`: telegram without EEP and Manufacturer ID |
+|     28 |    1 | DB0.3, LRN Bit  | `0`: Teach-in telegram; `1`: Data telegram    |
 
 ### Variation 2
 
 For the unidirectional profile teach-in procedure, it is preferred, in opposite to variation 1, as the teach-in telegram contains both the complete EEP number and the manufacturer ID. The device is therefore clearly identifiable as ready-to-use and can be securely executed in a complex system environment or by foreign systems. In this case, the 'LRN TYPE' data bit is `DB_0.BIT_7 = 1`.
 
-| Offset | Size | Bitrange | Valid range |
-|---:|---:|---|---|
-| 24 | 1 | DB0.7, LRN Type | `1`: telegram with EEP number and Manufacturer ID |
-| 28 | 1 | DB0.3, LRN Bit | `0`: Teach-in telegram; `1`: Data telegram |
+| Offset | Size | Bitrange        | Valid range                                       |
+| -----: | ---: | --------------- | ------------------------------------------------- |
+|     24 |    1 | DB0.7, LRN Type | `1`: telegram with EEP number and Manufacturer ID |
+|     28 |    1 | DB0.3, LRN Bit  | `0`: Teach-in telegram; `1`: Data telegram        |
 
 ### Variation 3
 
 During the bidirectional teach-in procedure, further bits are required from DB_0 in order to develop the mutual teach-in between two communication partners. The procedure is made up of two teach-in telegrams, which are exchanged on both sides.
 
-| Offset | Size | Bitrange | Data | Valid range |
-|---:|---:|---|---|---|
-| 24 | 1 | DB0.7 | LRN Type | `0`: telegram without EEP and Manufacturer ID; `1`: telegram with EEP number and Manufacturer ID |
-| 25 | 1 | DB0.6 | EEP Result | `0`: EEP not supported; `1`: EEP supported |
-| 26 | 1 | DB0.5 | LRN Result | `0`: Sender ID deleted/not stored; `1`: Sender ID stored |
-| 27 | 1 | DB0.4 | LRN Status | `0`: Query; `1`: Response |
-| 28 | 1 | DB0.3 | LRN Bit | `0`: Teach-in telegram; `1`: Data telegram |
+| Offset | Size | Bitrange | Data       | Valid range                                                                                      |
+| -----: | ---: | -------- | ---------- | ------------------------------------------------------------------------------------------------ |
+|     24 |    1 | DB0.7    | LRN Type   | `0`: telegram without EEP and Manufacturer ID; `1`: telegram with EEP number and Manufacturer ID |
+|     25 |    1 | DB0.6    | EEP Result | `0`: EEP not supported; `1`: EEP supported                                                       |
+|     26 |    1 | DB0.5    | LRN Result | `0`: Sender ID deleted/not stored; `1`: Sender ID stored                                         |
+|     27 |    1 | DB0.4    | LRN Status | `0`: Query; `1`: Response                                                                        |
+|     28 |    1 | DB0.3    | LRN Bit    | `0`: Teach-in telegram; `1`: Data telegram                                                       |
 
 ## Smart Ack Teach-in ohne Repeater
 
@@ -79,40 +79,40 @@ Under Smart Ack (SA), the teach-in procedure is more complex as, alongside the S
 
 After the learn mode is activated on the controller, the teach-in procedure can be started on the client. The client sends an `SA_LEARN_REQUEST` telegram:
 
-| Data | Value | Description |
-|---|---|---|
-| Request Code | `0b11111` | Default value - send by sensor |
+| Data            | Value           | Description                          |
+| --------------- | --------------- | ------------------------------------ |
+| Request Code    | `0b11111`       | Default value - send by sensor       |
 | Manufacturer ID | `0bnnnnnnnnnnn` | Corresponding to the teach-in sensor |
-| EEP No. | `0xnnnnnn` | RORG, FUNC, TYPE |
-| RSSI | `0x00` | 0 = Without repeater |
-| Repeater ID | `0x00000000` | 0 = Without repeater |
-| Sender ID | `0xnnnnnnnn` | Chip ID of sensor for teach-in |
-| Status | `0x0F` | 0F = no repeating permitted |
-| CHCK | `0xnn` | Checksum |
+| EEP No.         | `0xnnnnnn`      | RORG, FUNC, TYPE                     |
+| RSSI            | `0x00`          | 0 = Without repeater                 |
+| Repeater ID     | `0x00000000`    | 0 = Without repeater                 |
+| Sender ID       | `0xnnnnnnnn`    | Chip ID of sensor for teach-in       |
+| Status          | `0x0F`          | 0F = no repeating permitted          |
+| CHCK            | `0xnn`          | Checksum                             |
 
 During the response period in the SA client, which is always 550 ms during teach-in, the controller creates a new mailbox in its postmaster and leaves its first message there with an OK receipt. This entry is requested from the postmaster by the SA client with an `SA_RECLAIM` 'Learn' telegram:
 
-| Data | Value | Description |
-|---|---|---|
-| Message Index | `0b0` | Bit 7: 0 = Learn Reclaim |
-| Sender ID | `0xnnnnnnnn` | Chip ID of sensor for teach-in |
-| Status | `0x0F` | 0F = no repeating desired |
-| CHCK | `0xnn` | Checksum |
+| Data          | Value        | Description                    |
+| ------------- | ------------ | ------------------------------ |
+| Message Index | `0b0`        | Bit 7: 0 = Learn Reclaim       |
+| Sender ID     | `0xnnnnnnnn` | Chip ID of sensor for teach-in |
+| Status        | `0x0F`       | 0F = no repeating desired      |
+| CHCK          | `0xnn`       | Checksum                       |
 
 The final telegram sent to the SA client, `SA_LRN_ANSWER`, contains the 'Learn Acknowledge' message from the mailbox that the teach-in procedure has been carried out successfully.
 
-| Data | Value | Description |
-|---|---|---|
-| RORG | `0xA6` | A6 = ADR Telegram |
-| RORG-EN | `0xC7` | RORG encapsulated / C7 = SA_LRN_ANSWER |
-| Index | `0x02` | Message Index; 02 = Learn Acknowledge |
-| Response time | `0xnnnn` | Response time in ms in which the controller can prepare the data and send it to the postmaster; maximum 550 ms = `0x0226` |
-| Acknowledge code | `0x00` | First Learn In successful |
-| Mailbox index | `0xnn` | Index number of the assigned mailbox |
-| Postmaster ID | `0xnnnnnnnn` | Device ID of the Postmaster candidate |
-| Controller ID | `0xnnnnnnnn` | Device ID of the assigned controller |
-| Status | `0x0F` | 0F = no repeating permitted |
-| CHCK | `0xnn` | Checksum |
+| Data             | Value        | Description                                                                                                               |
+| ---------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| RORG             | `0xA6`       | A6 = ADR Telegram                                                                                                         |
+| RORG-EN          | `0xC7`       | RORG encapsulated / C7 = SA_LRN_ANSWER                                                                                    |
+| Index            | `0x02`       | Message Index; 02 = Learn Acknowledge                                                                                     |
+| Response time    | `0xnnnn`     | Response time in ms in which the controller can prepare the data and send it to the postmaster; maximum 550 ms = `0x0226` |
+| Acknowledge code | `0x00`       | First Learn In successful                                                                                                 |
+| Mailbox index    | `0xnn`       | Index number of the assigned mailbox                                                                                      |
+| Postmaster ID    | `0xnnnnnnnn` | Device ID of the Postmaster candidate                                                                                     |
+| Controller ID    | `0xnnnnnnnn` | Device ID of the assigned controller                                                                                      |
+| Status           | `0x0F`       | 0F = no repeating permitted                                                                                               |
+| CHCK             | `0xnn`       | Checksum                                                                                                                  |
 
 ## Smart Ack Teach-in mit Repeater
 
@@ -122,18 +122,18 @@ The controller can recognize from the received RSSI which repeater is best suite
 
 The addressed `SA_LRN_ANSWER` telegram with the message 'Learn Reply' by the controller to the repeater ensures that the postmaster is activated and a mailbox is created.
 
-| Data | Value | Description |
-|---|---|---|
-| RORG | `0xA6` | A6 = ADR Telegram |
-| RORG-EN | `0xC7` | RORG encapsulated / C7 = SA_LRN_ANSWER |
-| Index | `0x01` | Message Index; 01 = Learn Reply |
-| Response time | `0xnnnn` | Response time in ms; maximum 550 ms = `0x0226` |
-| Acknowledge code | `0x00` | First Learn In successful |
-| Sender ID | `0xnnnnnnnn` | Chip ID of sensor to be taught-in |
-| Postmaster ID | `0xnnnnnnnn` | Device ID of the Postmaster candidate |
-| Controller ID | `0xnnnnnnnn` | Device ID of the assigned controller |
-| Status | `0x0F` | 0F = no repeating permitted |
-| CHCK | `0xnn` | Checksum |
+| Data             | Value        | Description                                    |
+| ---------------- | ------------ | ---------------------------------------------- |
+| RORG             | `0xA6`       | A6 = ADR Telegram                              |
+| RORG-EN          | `0xC7`       | RORG encapsulated / C7 = SA_LRN_ANSWER         |
+| Index            | `0x01`       | Message Index; 01 = Learn Reply                |
+| Response time    | `0xnnnn`     | Response time in ms; maximum 550 ms = `0x0226` |
+| Acknowledge code | `0x00`       | First Learn In successful                      |
+| Sender ID        | `0xnnnnnnnn` | Chip ID of sensor to be taught-in              |
+| Postmaster ID    | `0xnnnnnnnn` | Device ID of the Postmaster candidate          |
+| Controller ID    | `0xnnnnnnnn` | Device ID of the assigned controller           |
+| Status           | `0x0F`       | 0F = no repeating permitted                    |
+| CHCK             | `0xnn`       | Checksum                                       |
 
 A mailbox is created for the SA client in the repeater's postmaster. An initial entry with an OK message is left there. The client requests this information from the repeater's postmaster with the `SA_RECLAIM` 'Learn' telegram. The final `SA_LRN_ANSWER` is the same Learn Acknowledge sequence described above, with mailbox index, Postmaster ID and Controller ID.
 

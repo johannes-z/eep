@@ -35,6 +35,25 @@ test('parses a fragmented ERP1 frame', () => {
   });
 });
 
+test.each([0x20, 0x30, 0x21, 0x32])(
+  'preserves RPS status byte %s separately from payload',
+  (status) => {
+    expect(
+      parseRadioERP1({
+        packetType: 1,
+        data: [0xf6, 0x10, ...toHex(0x05010203), status],
+        optionalData: [],
+      }),
+    ).toMatchObject({
+      RORG: 0xf6,
+      payload: [0x10],
+      senderId: '05010203',
+      status,
+      teachIn: false,
+    });
+  },
+);
+
 test('builds a successful UTE teach-in response', () => {
   const response = buildUteTeachInResponse(0xffe76681, 0x05010203, [0, 0, 0, 0, 0, 0x50, 0xd2]);
   const parser = new Esp3Parser();

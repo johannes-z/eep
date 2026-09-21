@@ -189,6 +189,9 @@ export class MqttEntityBridge {
       ...(descriptor.deviceClass ? { device_class: descriptor.deviceClass } : {}),
       ...(descriptor.commands.includes('command') ? { command_topic: topics.command } : {}),
       state_topic: topics.state,
+      ...(descriptor.jsonState
+        ? { value_template: '{{ value_json.state }}', json_attributes_topic: topics.state }
+        : {}),
       ...(descriptor.percentage
         ? {
             percentage_command_topic: topics.percentageCommand,

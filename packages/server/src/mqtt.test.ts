@@ -123,6 +123,86 @@ test.each([true, false])(
   },
 );
 
+test.each([true, false])(
+  'publishes F6-02-01 press/release state and button details (Home Assistant: %s)',
+  async (enabled) => {
+    const directory = await mkdtemp(join(tmpdir(), 'eep-mqtt-rocker-'));
+    const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+    const client = new FakeMqttClient();
+    const bridge = new MqttEntityBridge(client, registry, async () => undefined, {
+      homeAssistant: { enabled, discoveryTopic: 'homeassistant', statusTopic: 'eep/status' },
+    });
+    const stateTopic = 'eep/binary_sensor/ffe76685/state';
+    try {
+      await registry.upsert({
+        sourceId: 0xffe76685,
+        targetId: 0x05010203,
+        name: 'Wall rocker',
+        profileId: 'F6-02-01',
+        capabilities: ['rocker'],
+        availability: 'online',
+      });
+      bridge.start();
+      await bridge.publishAll();
+      expect(client.published.some((message) => message.topic === stateTopic)).toBe(false);
+      const discovery = client.published
+        .filter((message) => message.topic === 'homeassistant/binary_sensor/ffe76685/config')
+        .at(-1);
+      if (enabled) {
+        const configuration = JSON.parse(discovery?.payload ?? '{}');
+        expect(configuration).toMatchObject({
+          state_topic: stateTopic,
+          value_template: '{{ value_json.state }}',
+          json_attributes_topic: stateTopic,
+        });
+        expect(configuration.command_topic).toBeUndefined();
+        expect(configuration.device_class).toBeUndefined();
+      } else {
+        expect(discovery?.payload).toBe('');
+      }
+      expect(client.subscribed.some((topic) => topic.includes('/binary_sensor/'))).toBe(false);
+      for (const { data, status, expected } of [
+        {
+          data: 0x10,
+          status: 0x30,
+          expected: { state: 'ON', messageType: 'N', pressed: true, buttons: ['AI'] },
+        },
+        {
+          data: 0x35,
+          status: 0x30,
+          expected: { state: 'ON', messageType: 'N', pressed: true, buttons: ['A0', 'BI'] },
+        },
+        {
+          data: 0x70,
+          status: 0x20,
+          expected: { state: 'ON', messageType: 'U', pressed: true, buttonCount: '3_or_4' },
+        },
+        {
+          data: 0,
+          status: 0x20,
+          expected: { state: 'OFF', messageType: 'U', pressed: false, buttonCount: 0 },
+        },
+      ]) {
+        await applyRadioPacket(
+          { RORG: 0xf6, senderId: '05010203', payload: [data], status },
+          registry,
+        );
+        await bridge.publishAll();
+        expect(
+          JSON.parse(
+            client.published.filter((message) => message.topic === stateTopic).at(-1)?.payload ??
+              '{}',
+          ),
+        ).toEqual(expected);
+      }
+    } finally {
+      await bridge.stop();
+      await registry.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
 test('publishes Home Assistant fan discovery for seeded devices', async () => {
   const { client } = await createBridge();
   const discovery = client.published

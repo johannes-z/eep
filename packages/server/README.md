@@ -182,6 +182,28 @@ Single Input Contact sensors use the receive-only `D5-00-01` profile with `capab
 `<base_topic>/binary_sensor/<sourceId>/state`, including when Home Assistant is disabled.
 No state is published until the first data telegram arrives. Commands are not supported.
 
+### F6-02-01 rocker switches
+
+Two-rocker switches using Application Style 1 use the receive-only `F6-02-01` profile with
+`capabilities: [rocker]` (also the default when omitted). The RPS status byte distinguishes
+N-messages from U-messages. N-messages expose `messageType: "N"`, the boolean `pressed`, and
+one or two `buttons` in action order: `AI`, `A0`, `BI`, or `B0`. The second action is included
+only when SA is set. U-messages expose `messageType: "U"`, `pressed`, and `buttonCount: 0`
+or `"3_or_4"`; they do not identify individual buttons. A normal release is a U-message with
+`pressed: false` and `buttonCount: 0`. Malformed payloads and missing or invalid RPS status
+cannot update state. Commands are not supported.
+
+Decoded fields are available in the web UI's reported state. MQTT publishes JSON on
+`<base_topic>/binary_sensor/<sourceId>/state`, for example:
+
+```json
+{ "messageType": "N", "pressed": true, "buttons": ["AI", "BI"], "state": "ON" }
+```
+
+The `state` field is `ON` while pressed and `OFF` when released. Home Assistant discovers a
+press/release binary sensor with the decoded fields as attributes. MQTT works independently
+of Home Assistant; neither publishes a synthetic release before the first telegram.
+
 ## Pairing and Teach-In
 
 Web-console pairing starts with `Pair` on a specific sender-channel row. There is no global
@@ -206,6 +228,13 @@ The sender appears as a candidate without an EEP, even when a channel was select
 `D5-00-01` and add the device explicitly: a 1BS learn telegram contains neither an EEP nor a
 manufacturer ID (EEP 2.6.8, appendix 3.2). No teach-in response is sent, and no manufacturer or
 channel metadata is inferred. Learn telegrams never update contact state.
+
+For F6-02-01 switches such as PTM200, start pairing and press a rocker. RPS switches do not
+send a dedicated teach-in telegram: a valid ordinary RPS telegram creates a candidate only
+while pairing is active. Select `F6-02-01` explicitly and add the device, since the telegram
+does not identify its EEP. No UTE response is sent and no manufacturer or channel metadata
+is inferred. Alternatively, configure the sender ID as `targetId` with `profileId: F6-02-01`
+in the device configuration. Subsequent press and release telegrams update device state.
 
 For receiver-driven devices such as the AEROline vent, activate its local learn mode, then select
 a free sender channel on the Pairing page and choose `Pair` in its row while the receiver's learning

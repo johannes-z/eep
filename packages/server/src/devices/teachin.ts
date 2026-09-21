@@ -123,6 +123,25 @@ export class TeachInManager {
 
   observe(packet: RadioERP1Packet): TeachInCandidate | undefined {
     if (!this.active) return undefined;
+    const targetId = parseEnOceanId(packet.senderId);
+    if (targetId === undefined || targetId < 1 || targetId === 0xffffffff) {
+      return undefined;
+    }
+    const rpsProfiles =
+      packet.RORG === 0xf6
+        ? this.profiles.getByRorg(0xf6).filter(
+            (profile) =>
+              profile.decodeIngress(
+                {
+                  sourceId: this.requestedSourceId ?? this.startId,
+                  targetId,
+                  capabilities: profile.defaultCapabilities(),
+                },
+                packet,
+              ).kind === 'reported',
+          )
+        : [];
+    const isRpsTeachIn = rpsProfiles.length > 0;
     const is1bsTeachIn =
       packet.RORG === 0xd5 &&
       packet.payload.length === 1 &&
@@ -130,20 +149,21 @@ export class TeachInManager {
       packet.payload[0] >= 0 &&
       packet.payload[0] <= 0xff &&
       (packet.payload[0] & 0x08) === 0;
-    const info = is1bsTeachIn
-      ? {
-          eep: undefined,
-          channel: undefined,
-          manufacturer: undefined,
-          direction: 'unidirectional' as const,
-          responseExpected: false,
-          command: 'query' as const,
-          requestType: 'teachIn' as const,
-          response: undefined,
-        }
-      : packet.RORG === 0xd4
-        ? parseUteInfo(Array.from(packet.payload))
-        : undefined;
+    const info =
+      is1bsTeachIn || isRpsTeachIn
+        ? {
+            eep: undefined,
+            channel: undefined,
+            manufacturer: undefined,
+            direction: 'unidirectional' as const,
+            responseExpected: false,
+            command: 'query' as const,
+            requestType: 'teachIn' as const,
+            response: undefined,
+          }
+        : packet.RORG === 0xd4
+          ? parseUteInfo(Array.from(packet.payload))
+          : undefined;
     if (!info) return undefined;
     const isResponse = info.command === 'response';
     if (!isResponse && info.command !== 'query') return undefined;
@@ -159,10 +179,6 @@ export class TeachInManager {
           .some((byte, index) => byte !== packet.payload[index + 1]))
     )
       return undefined;
-    const targetId = parseEnOceanId(packet.senderId);
-    if (targetId === undefined || targetId < 1 || targetId === 0xffffffff) {
-      return undefined;
-    }
     if (this.requestedTargetId !== undefined) return undefined;
     const existing = this.registry.findByTargetId(targetId);
     if (this.accepting.has(targetId)) return undefined;
@@ -175,11 +191,13 @@ export class TeachInManager {
         this.sourceId(),
       targetId,
       eep: isResponse ? undefined : info.eep?.toUpperCase(),
-      ...(is1bsTeachIn || isResponse
+      ...(is1bsTeachIn || isRpsTeachIn || isResponse
         ? {
             profileOptions: (is1bsTeachIn
               ? this.profiles.getByRorg(0xd5)
-              : this.profiles.list()
+              : isRpsTeachIn
+                ? rpsProfiles
+                : this.profiles.list()
             ).map((profile) => profile.metadata.id),
           }
         : {}),
@@ -204,7 +222,7 @@ export class TeachInManager {
       return undefined;
     }
 
-    if (is1bsTeachIn || isResponse) {
+    if (is1bsTeachIn || isRpsTeachIn || isResponse) {
       if (this.requestedSourceId !== undefined) this.requestedTargetId = targetId;
       if (isResponse) this.pendingQuery = undefined;
       this.candidates.set(targetId, candidate);

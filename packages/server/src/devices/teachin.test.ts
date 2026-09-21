@@ -93,6 +93,95 @@ test('ignores 1BS data and malformed telegrams while pairing', async () => {
   }
 });
 
+test.each([false, true])(
+  'pairs an RPS rocker with explicit profile confirmation and no reply (targeted: %s)',
+  async (targeted) => {
+    const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-rocker-'));
+    const filePath = join(directory, 'configuration.yaml');
+    let registry = await DeviceRegistry.load(filePath);
+    const responses: string[] = [];
+    const manager = new TeachInManager(registry, 0xffe76685, async (_candidate, response) => {
+      responses.push(response);
+    });
+    const packet = parseRadioERP1({
+      packetType: 1,
+      data: [0xf6, 0x15, 0x05, 0x01, 0x02, 0x03, 0x31],
+      optionalData: [],
+    });
+    if (!packet) throw new Error('Expected an RPS packet');
+    try {
+      expect(packet.teachIn).toBe(false);
+      expect(manager.observe(packet)).toBeUndefined();
+      manager.start();
+      if (targeted) await manager.transmit(0xffe76686);
+      expect(manager.observe(packet)).toMatchObject({
+        eep: undefined,
+        profileOptions: ['F6-02-01'],
+        direction: 'unidirectional',
+        responseExpected: false,
+      });
+      expect(registry.findByTargetId(0x05010203)).toBeUndefined();
+      expect(manager.accept(0x05010203)).rejects.toThrow('Select an EEP');
+      expect(manager.accept(0x05010203, 'D5-00-01')).rejects.toThrow('EEP does not match');
+      await manager.accept(0x05010203, 'F6-02-01');
+      expect(registry.findByTargetId(0x05010203)).toMatchObject({
+        sourceId: targeted ? 0xffe76686 : 0xffe76685,
+        profileId: 'F6-02-01',
+        capabilities: ['rocker'],
+        teachIn: { eep: 'F6-02-01', direction: 'unidirectional', responseExpected: false },
+      });
+      expect(responses).toEqual([]);
+      expect((await applyRadioPacket(packet, registry))?.device.reportedState).toEqual({
+        messageType: 'N',
+        pressed: true,
+        buttons: ['AI', 'BI'],
+      });
+      const release = { ...packet, payload: [0], status: 0x20 };
+      expect((await applyRadioPacket(release, registry))?.device.reportedState).toEqual({
+        messageType: 'U',
+        pressed: false,
+        buttonCount: 0,
+      });
+      expect(await applyRadioPacket({ ...packet, status: undefined }, registry)).toBeUndefined();
+      manager.stop();
+      await registry.close();
+      registry = await DeviceRegistry.load(filePath);
+      expect(registry.findByTargetId(0x05010203)).toMatchObject({
+        profileId: 'F6-02-01',
+        reportedState: { messageType: 'U', pressed: false, buttonCount: 0 },
+      });
+    } finally {
+      manager.stop();
+      await registry.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test('ignores malformed RPS packets during pairing', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-rocker-invalid-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  const manager = new TeachInManager(registry, 0xffe76685);
+  try {
+    manager.start();
+    for (const packet of [
+      { payload: [0x10], status: undefined },
+      { payload: [0x10], status: 0x10 },
+      { payload: [], status: 0x30 },
+      { payload: [0x10, 0], status: 0x30 },
+      { payload: [0x90], status: 0x30 },
+      { payload: [0x30], status: 0x20 },
+    ]) {
+      expect(manager.observe({ RORG: 0xf6, senderId: '05010203', ...packet })).toBeUndefined();
+    }
+    expect(manager.listCandidates()).toEqual([]);
+  } finally {
+    manager.stop();
+    await registry.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('pairing expires automatically and notifies subscribers', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-expiry-'));
   const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));

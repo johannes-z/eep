@@ -165,6 +165,7 @@ export function parseRadioERP1(frame: Esp3Frame): RadioERP1Packet | undefined {
     RORG: rorg,
     payload,
     senderId,
+    status: frame.data[frame.data.length - 1],
     ...(frame.optionalData.length >= 5
       ? { destinationId: bytesToId(frame.optionalData.slice(1, 5)) }
       : {}),

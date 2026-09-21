@@ -91,7 +91,11 @@ export class HomeAssistantStatePublisher {
         await publish(
           this.client,
           topics.state,
-          state.isOn ? 'ON' : 'OFF',
+          descriptor.jsonState
+            ? JSON.stringify({ ...state.attributes, state: state.isOn ? 'ON' : 'OFF' })
+            : state.isOn
+              ? 'ON'
+              : 'OFF',
           this.options.bridgePublishOptions,
         );
         if (descriptor.percentage) {

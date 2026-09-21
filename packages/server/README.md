@@ -218,6 +218,11 @@ When MQTT/Home Assistant is enabled, the integration exposes the discovered `Per
 switch with the `mdi:access-point-network` icon. The bridge also exposes a
 `Restart` button with the `mdi:restart` icon. Both controls are attached to the bridge device.
 
+`Restart` gracefully closes and reinitializes the application in the same process, reloading
+configuration and persisted device state. HTTP/WebSocket and MQTT connections are briefly
+interrupted and then reconnect. No external process supervisor is required. `SIGINT` and
+`SIGTERM` still shut down the server without restarting it.
+
 Automatic joining uses the EEP Universal Teach-In (UTE) D4 telegram format. The server accepts
 valid UTE teach-in queries for profiles present in its profile registry. Queries that expect a
 response are accepted and persisted automatically during permit-join before a positive reply

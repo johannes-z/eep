@@ -1,8 +1,9 @@
+import { useMutation, useMutationState, useQueryClient } from '@tanstack/react-query';
 import { Outlet, useRouterState } from '@tanstack/react-router';
 import { createContext, useContext, useState } from 'react';
 import { Sidebar, TopBar } from '../components/Navigation';
 import { formatEnOceanId } from '../util';
-import { request } from './api';
+import { request, snapshotQueryOptions } from './api';
 import { useLiveSnapshot } from './liveSnapshot';
 import { findAppRoute } from './routes';
 import type { AppSnapshot, CommandBody, TeachInCandidate } from './types';
@@ -23,6 +24,13 @@ interface AppContextValue extends AppSnapshot {
 
 const AppContext = createContext<AppContextValue | null>(null);
 
+interface AppRequest {
+  path: string;
+  method?: 'POST' | 'PUT' | 'DELETE';
+  body?: unknown;
+  sourceId?: number;
+}
+
 export function useAppContext() {
   const context = useContext(AppContext);
   if (!context) throw new Error('App context is unavailable');
@@ -31,46 +39,45 @@ export function useAppContext() {
 
 export function App() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const { snapshot, status } = useLiveSnapshot();
+  const queryClient = useQueryClient();
+  const { snapshot, status, error: queryError } = useLiveSnapshot();
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [error, setError] = useState('');
-  const [busyTargets, setBusyTargets] = useState<ReadonlySet<number>>(() => new Set());
+  const action = useMutation({
+    mutationKey: ['app-action'],
+    mutationFn: ({ path, method = 'POST', body }: AppRequest) => request(path, method, body),
+    onMutate: () => setError(''),
+    onError: (reason) => setError(reason.message),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: snapshotQueryOptions.queryKey }),
+  });
+  const pendingTargets = useMutationState({
+    filters: { mutationKey: ['app-action'], status: 'pending' },
+    select: (mutation) => (mutation.state.variables as AppRequest).sourceId,
+  });
+  const busyTargets = new Set(pendingTargets.filter((sourceId) => sourceId !== undefined));
   const [pairingRequest, setPairingRequest] = useState<{
     sourceId: number;
     sending: boolean;
   } | null>(null);
 
-  async function execute(path: string, method = 'POST', body?: unknown) {
-    setError('');
-    try {
-      await request(path, method, body);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Request failed');
-      throw reason;
-    }
-  }
-
-  async function deviceRequest(sourceId: number, method: string, body?: unknown, command = false) {
-    setBusyTargets((current) => new Set(current).add(sourceId));
-    try {
-      await execute(
-        `/api/devices/${formatEnOceanId(sourceId)}${command ? '/command' : ''}`,
-        method,
-        body,
-      );
-    } finally {
-      setBusyTargets((current) => {
-        const next = new Set(current);
-        next.delete(sourceId);
-        return next;
-      });
-    }
+  async function deviceRequest(
+    sourceId: number,
+    method: AppRequest['method'],
+    body?: unknown,
+    command = false,
+  ) {
+    await action.mutateAsync({
+      path: `/api/devices/${formatEnOceanId(sourceId)}${command ? '/command' : ''}`,
+      method,
+      body,
+      sourceId,
+    });
   }
 
   async function pairChannel(sourceId: number) {
     setPairingRequest({ sourceId, sending: true });
     try {
-      await execute('/api/pairing/transmit', 'POST', { sourceId });
+      await action.mutateAsync({ path: '/api/pairing/transmit', body: { sourceId } });
       setPairingRequest({ sourceId, sending: false });
     } catch {
       setPairingRequest(null);
@@ -107,16 +114,15 @@ export function App() {
         >
           <TopBar
             title={findAppRoute(pathname)?.title ?? 'Page not found'}
-            connectionStatus={status}
             navigationOpen={navigationOpen}
             onToggleNavigation={() => setNavigationOpen(!navigationOpen)}
           />
-          {(connectionError || error) && (
+          {(connectionError || error || queryError) && (
             <div
               className="error-banner"
               role="alert"
             >
-              {connectionError || error}
+              {connectionError || error || queryError?.message}
             </div>
           )}
           <div className="page-content">
@@ -134,22 +140,18 @@ export function App() {
                     void pairChannel(sourceId);
                   },
                   onCancelPairing: () => {
-                    void execute('/api/pairing/stop').catch(() => undefined);
+                    action.mutate({ path: '/api/pairing/stop' });
                   },
                   onAcceptCandidate: ({ targetId }, profileId) => {
-                    void execute('/api/pairing/accept', 'POST', { targetId, profileId }).catch(
-                      () => undefined,
-                    );
+                    action.mutate({ path: '/api/pairing/accept', body: { targetId, profileId } });
                   },
                   onRejectCandidate: ({ targetId }) => {
-                    void execute('/api/pairing/reject', 'POST', { targetId }).catch(
-                      () => undefined,
-                    );
+                    action.mutate({ path: '/api/pairing/reject', body: { targetId } });
                   },
                   onListen: () => {
-                    void execute(`/api/listen/${snapshot.listen.active ? 'stop' : 'start'}`).catch(
-                      () => undefined,
-                    );
+                    action.mutate({
+                      path: `/api/listen/${snapshot.listen.active ? 'stop' : 'start'}`,
+                    });
                   },
                   pairingSourceId,
                   pairingMessage: {

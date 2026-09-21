@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import homepage from '../public/index.html';
 
 import { getMqttSettings, resolveServerConfig, type AddonConfig } from './config';
+import { createApplicationLifecycle } from './app/lifecycle';
 import { createRequestHandler } from './app/requestHandler';
 import type { MqttStatus } from './app/settings';
 import { sendDeviceCommand } from './devices/commands';
@@ -64,6 +65,38 @@ function createTeachInSignalSender(
 }
 
 export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
+  const lifecycle = createApplicationLifecycle((restart) => startServer(addonConfig, restart));
+  let shutdownPromise: Promise<void> | undefined;
+  const shutdown = (): Promise<void> => {
+    shutdownPromise ??= lifecycle
+      .stop()
+      .catch((error: unknown) => {
+        console.error('Shutdown error:', error);
+      })
+      .finally(() => {
+        process.exit(0);
+      });
+    return shutdownPromise;
+  };
+  const onShutdown = (): void => {
+    void shutdown();
+  };
+  process.once('SIGINT', onShutdown);
+  process.once('SIGTERM', onShutdown);
+
+  try {
+    await lifecycle.restart();
+  } catch (error) {
+    process.off('SIGINT', onShutdown);
+    process.off('SIGTERM', onShutdown);
+    throw error;
+  }
+}
+
+async function startServer(
+  addonConfig: AddonConfig,
+  restart: () => Promise<void>,
+): Promise<() => Promise<void>> {
   let registry: DeviceRegistry | undefined;
   let initialTransport: TransportConnection | undefined;
   let transportRuntime: TransportRuntime | undefined;
@@ -176,9 +209,7 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
         ),
       mqttStatus,
       profiles,
-      async () => {
-        process.kill(process.pid, 'SIGTERM');
-      },
+      restart,
     );
     mqttRuntime = activeMqttRuntime;
     const applyMqttSettings = async (settings: MqttSettings): Promise<void> => {
@@ -291,24 +322,8 @@ export async function initialize(addonConfig: AddonConfig = {}): Promise<void> {
 
     if (activeMqttSettings) await applyMqttSettings(activeMqttSettings);
 
-    let shutdownPromise: Promise<void> | undefined;
-    const shutdown = async (): Promise<void> => {
-      if (shutdownPromise) return shutdownPromise;
-      shutdownPromise = (async () => {
-        try {
-          await cleanup();
-        } catch (error) {
-          console.error('Shutdown error:', error);
-        } finally {
-          process.exit(0);
-        }
-      })();
-      return shutdownPromise;
-    };
-    process.once('SIGINT', () => void shutdown());
-    process.once('SIGTERM', () => void shutdown());
-
     console.log(`Server listening on port ${runningServer.port}`);
+    return cleanup;
   } catch (error) {
     await cleanup();
     console.error('Initialization error:', error);

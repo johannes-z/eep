@@ -1,5 +1,6 @@
-import { startTransition, useActionState, useState } from 'react';
-import { request } from './api';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
+import { request, snapshotQueryOptions } from './api';
 import type { SettingsFormMessage } from './types';
 
 export function useSettingsForm<Settings>(
@@ -7,34 +8,26 @@ export function useSettingsForm<Settings>(
   path: string,
   serialize: (settings: Settings) => unknown = (settings) => settings,
 ) {
+  const queryClient = useQueryClient();
   const [draft, setDraft] = useState<Settings | null>(null);
-  const [message, save, saving] = useActionState<SettingsFormMessage, Settings>(
-    async (_previous, settings) => {
-      try {
-        const result = await request<{ restartRequired?: boolean }>(
-          path,
-          'PUT',
-          serialize(settings),
-        );
-        setDraft(null);
-        return {
-          text: result.restartRequired ? 'Saved. Restart required.' : 'Saved.',
-          error: false,
-        };
-      } catch (reason) {
-        return {
-          text: reason instanceof Error ? reason.message : 'Unable to save settings',
-          error: true,
-        };
-      }
+  const save = useMutation({
+    mutationFn: (settings: Settings) =>
+      request<{ restartRequired?: boolean }>(path, 'PUT', serialize(settings)),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: snapshotQueryOptions.queryKey });
+      setDraft(null);
     },
-    { text: '', error: false },
-  );
+  });
+  const message: SettingsFormMessage = save.isError
+    ? { text: save.error.message, error: true }
+    : save.isSuccess
+      ? { text: save.data.restartRequired ? 'Saved. Restart required.' : 'Saved.', error: false }
+      : { text: '', error: false };
   return {
     settings: draft ?? live,
     onChange: setDraft,
-    onSave: (settings: Settings) => startTransition(() => save(settings)),
+    onSave: (settings: Settings) => save.mutate(settings),
     message,
-    saving,
+    saving: save.isPending,
   };
 }

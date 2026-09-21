@@ -268,12 +268,6 @@ function DeviceRow({ device }: { device: Device }) {
               <div>
                 <h3>Reported state</h3>
                 <pre>{JSON.stringify(device.reportedState ?? null, null, 2)}</pre>
-                {pending && (
-                  <>
-                    <h3>Requested state</h3>
-                    <pre>{JSON.stringify(device.desiredState, null, 2)}</pre>
-                  </>
-                )}
               </div>
             </div>
           </td>

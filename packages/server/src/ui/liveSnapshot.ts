@@ -1,4 +1,6 @@
-import { useSyncExternalStore } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useState, useSyncExternalStore } from 'react';
+import { cacheLiveSnapshot, snapshotQueryOptions } from './api';
 import type { AppSnapshot } from './types';
 
 interface LiveState {
@@ -8,7 +10,10 @@ interface LiveState {
 
 const initialState: LiveState = { snapshot: null, status: 'connecting' };
 
-export function createLiveSnapshotStore(openSocket: () => WebSocket) {
+export function createLiveSnapshotStore(
+  openSocket: () => WebSocket,
+  onSnapshot: (snapshot: AppSnapshot) => void = () => undefined,
+) {
   let state = initialState;
   const listeners = new Set<() => void>();
   let disconnect: (() => void) | undefined;
@@ -49,6 +54,7 @@ export function createLiveSnapshotStore(openSocket: () => WebSocket) {
             throw new Error('Invalid snapshot');
           }
           retryDelay = 500;
+          onSnapshot(message.state);
           publish({ snapshot: message.state, status: 'connected' });
         } catch {
           current.close();
@@ -88,12 +94,23 @@ export function createLiveSnapshotStore(openSocket: () => WebSocket) {
   };
 }
 
-const liveStore = createLiveSnapshotStore(() => {
-  const url = new URL('/api/events', window.location.href);
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  return new WebSocket(url);
-});
-
 export function useLiveSnapshot() {
-  return useSyncExternalStore(liveStore.subscribe, liveStore.getSnapshot, () => initialState);
+  const queryClient = useQueryClient();
+  const query = useQuery(snapshotQueryOptions);
+  const [liveStore] = useState(() =>
+    createLiveSnapshotStore(
+      () => {
+        const url = new URL('/api/events', window.location.href);
+        url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+        return new WebSocket(url);
+      },
+      (snapshot) => cacheLiveSnapshot(queryClient, snapshot),
+    ),
+  );
+  const { status } = useSyncExternalStore(
+    liveStore.subscribe,
+    liveStore.getSnapshot,
+    () => initialState,
+  );
+  return { snapshot: query.data ?? null, status, error: query.error };
 }

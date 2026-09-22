@@ -6,9 +6,21 @@ All notable changes to this project will be documented in this file.
 
 ### Features
 
+- Implement momentary button sensors for F6-02-01 profile and enhance MQTT discovery (e304464)
+
+## v1.3.0
+
+
+### Features
+
 - Enhance transport settings to display dongle hardware information (50f7edc)
 
 - Update server dependencies and implement application lifecycle management (85ee603)
+
+
+### Miscellaneous
+
+- Release v1.3.0 (e3c9589)
 
 ## v1.2.0
 

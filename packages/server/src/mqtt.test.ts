@@ -357,8 +357,17 @@ test.each([true, false])(
       expectDiscovery('ffe76686', 'bedroom_rocker');
       expect(lastMessage(stateTopic)?.payload).toBe(pressedState);
 
+      const shutdownStart = client.published.length;
       await bridge.stop();
-      expectCleared('ffe76686');
+      expectDiscovery('ffe76686', 'bedroom_rocker');
+      expect(lastMessage('custom/status')).toMatchObject({
+        payload: 'offline',
+        options: { qos: 1, retain },
+      });
+      expect(lastMessage('custom/binary_sensor/ffe76686/availability')?.payload).toBe('offline');
+      expect(
+        client.published.slice(shutdownStart).some((message) => message.topic.endsWith('/config')),
+      ).toBe(false);
       bridge = new MqttEntityBridge(client, registry, async () => undefined, {
         ...settings,
         homeAssistant: { ...settings.homeAssistant, enabled: false },
@@ -467,12 +476,12 @@ test('shutdown waits for in-flight discovery before publishing final offline sta
     ).toBe('offline');
     for (const topic of new Set(
       client.published
-        .filter((message) => message.topic.endsWith('/config'))
+        .filter((message) => message.topic.endsWith('/config') && message.payload)
         .map((message) => message.topic),
     )) {
-      expect(client.published.filter((message) => message.topic === topic).at(-1)?.payload).toBe(
-        '',
-      );
+      expect(
+        client.published.filter((message) => message.topic === topic).at(-1)?.payload,
+      ).not.toBe('');
     }
   } finally {
     release.resolve();
@@ -699,25 +708,37 @@ test('clears the Home Assistant preset when an MQTT speed is selected', async ()
   });
 });
 
-test('publishes offline availability when the bridge stops', async () => {
-  const { bridge, client } = await createBridge();
-  await bridge.stop();
+test('preserves Home Assistant discovery and publishes offline availability when the bridge stops', async () => {
+  const { bridge, client, registry } = await createBridge();
+  try {
+    const discovery = client.published.filter(
+      (message) => message.topic.endsWith('/config') && message.payload,
+    );
+    expect(discovery.length).toBeGreaterThan(0);
+    const shutdownStart = client.published.length;
+    await bridge.stop();
 
-  const availabilityStates = client.published.filter(
-    (message) => message.topic === 'eep/fan/ffe76681/availability',
-  );
-  expect(availabilityStates.at(-1)?.payload).toBe('offline');
-  expect(client.published.find((message) => message.topic === 'eep/status')?.payload).toBe(
-    'online',
-  );
-  expect(client.published.filter((message) => message.topic === 'eep/status').at(-1)?.payload).toBe(
-    'offline',
-  );
-  expect(
-    client.published
-      .filter((message) => message.topic === 'homeassistant/fan/ffe76681/config')
-      .at(-1)?.payload,
-  ).toBe('');
+    expect(client.published.slice(shutdownStart)).not.toHaveLength(0);
+    for (const message of client.published.slice(shutdownStart)) {
+      expect(message.topic.endsWith('/config')).toBe(false);
+      expect(message.payload).toBe('offline');
+      expect(message.options).toEqual({ qos: 1, retain: true });
+    }
+    for (const configuration of discovery) {
+      expect(
+        client.published.filter((message) => message.topic === configuration.topic).at(-1),
+      ).toEqual(configuration);
+      const entity = JSON.parse(configuration.payload);
+      for (const availability of entity.availability) {
+        expect(
+          client.published.filter((message) => message.topic === availability.topic).at(-1),
+        ).toMatchObject({ payload: 'offline', options: { qos: 1, retain: true } });
+      }
+    }
+  } finally {
+    await bridge.stop();
+    await registry.close();
+  }
 });
 
 test('handles the Home Assistant bridge Restart button', async () => {

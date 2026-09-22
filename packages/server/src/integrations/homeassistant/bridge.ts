@@ -107,11 +107,6 @@ export class MqttEntityBridge {
     } catch (error) {
       console.error('MQTT offline availability cleanup failed:', error);
     }
-    try {
-      await this.clearDiscovery();
-    } catch (error) {
-      console.error('MQTT discovery cleanup failed:', error);
-    }
   }
 
   private enqueuePublication(operation: () => Promise<void>): Promise<void> {

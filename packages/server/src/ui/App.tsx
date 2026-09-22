@@ -18,6 +18,8 @@ interface AppContextValue extends AppSnapshot {
   onCancelPairing: () => void;
   onAcceptCandidate: (candidate: TeachInCandidate, profileId?: string) => void;
   onRejectCandidate: (candidate: TeachInCandidate) => void;
+  onIgnoreCandidate: (candidate: TeachInCandidate) => void;
+  onClearIgnoredDevice: (targetId: number) => void;
   onListen: () => void;
   pairingSourceId: number | null;
   pairingMessage: { text: string; error: boolean };
@@ -144,10 +146,32 @@ export function App() {
                     action.mutate({ path: '/api/pairing/stop' });
                   },
                   onAcceptCandidate: ({ targetId }, profileId) => {
-                    action.mutate({ path: '/api/pairing/accept', body: { targetId, profileId } });
+                    action.mutate({
+                      path: '/api/pairing/accept',
+                      body: { targetId, profileId },
+                      sourceId: targetId,
+                    });
                   },
                   onRejectCandidate: ({ targetId }) => {
-                    action.mutate({ path: '/api/pairing/reject', body: { targetId } });
+                    action.mutate({
+                      path: '/api/pairing/reject',
+                      body: { targetId },
+                      sourceId: targetId,
+                    });
+                  },
+                  onIgnoreCandidate: ({ targetId }) => {
+                    action.mutate({
+                      path: '/api/pairing/ignore',
+                      body: { targetId },
+                      sourceId: targetId,
+                    });
+                  },
+                  onClearIgnoredDevice: (targetId) => {
+                    action.mutate({
+                      path: '/api/pairing/unignore',
+                      body: { targetId },
+                      sourceId: targetId,
+                    });
                   },
                   onListen: () => {
                     action.mutate({

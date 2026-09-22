@@ -31,6 +31,7 @@ export interface TeachInCandidate {
 export interface PairingResponse {
   active: boolean;
   candidates: TeachInCandidate[];
+  ignoredDevices: number[];
 }
 
 export interface MqttResponse {

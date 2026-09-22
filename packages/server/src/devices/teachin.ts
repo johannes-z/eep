@@ -46,6 +46,7 @@ export class TeachInManager {
   private session = 0;
   private pendingQuery?: { sourceId: number; payload: number[]; expiresAt: number };
   private readonly accepting = new Map<number, Promise<Device>>();
+  private readonly ignoring = new Set<number>();
   private readonly reservedSourceIds = new Set<number>();
   private readonly candidates = new Map<number, TeachInCandidate>();
   private readonly stateListeners = new Set<TeachInStateListener>();
@@ -120,6 +121,37 @@ export class TeachInManager {
     return structuredClone([...this.candidates.values()]);
   }
 
+  listIgnoredDevices(): number[] {
+    return this.registry.listIgnoredDevices();
+  }
+
+  async ignore(targetId: number): Promise<void> {
+    if (this.accepting.has(targetId)) throw new Error('Device acceptance is in progress');
+    if (this.ignoring.has(targetId)) throw new Error('Ignore update is in progress');
+    if (this.registry.isDiscoveryIgnored(targetId)) return;
+    if (!this.candidates.has(targetId)) throw new Error('Unknown teach-in candidate');
+    this.ignoring.add(targetId);
+    try {
+      await this.registry.setDiscoveryIgnored(targetId, true);
+      if (this.requestedTargetId === targetId) this.requestedTargetId = undefined;
+      this.candidates.delete(targetId);
+      this.notify();
+    } finally {
+      this.ignoring.delete(targetId);
+    }
+  }
+
+  async clearIgnored(targetId: number): Promise<void> {
+    if (this.ignoring.has(targetId)) throw new Error('Ignore update is in progress');
+    this.ignoring.add(targetId);
+    try {
+      await this.registry.setDiscoveryIgnored(targetId, false);
+      this.notify();
+    } finally {
+      this.ignoring.delete(targetId);
+    }
+  }
+
   private sourceId(): number {
     const usedSourceIds = new Set([
       ...this.registry.list().flatMap((device) => {
@@ -139,6 +171,7 @@ export class TeachInManager {
     if (targetId === undefined || targetId < 1 || targetId === 0xffffffff) {
       return undefined;
     }
+    if (this.registry.isDiscoveryIgnored(targetId) || this.ignoring.has(targetId)) return undefined;
     const is1bsTeachIn =
       packet.RORG === 0xd5 &&
       packet.payload.length === 1 &&
@@ -326,6 +359,9 @@ export class TeachInManager {
   async accept(targetId: number, selectedProfileId?: string): Promise<Device> {
     if (!Number.isInteger(targetId) || targetId < 1 || targetId >= 0xffffffff) {
       throw new Error('targetId must be a valid EnOcean identifier');
+    }
+    if (this.registry.isDiscoveryIgnored(targetId) || this.ignoring.has(targetId)) {
+      throw new Error('Device is ignored');
     }
     const pending = this.accepting.get(targetId);
     if (pending) return pending;

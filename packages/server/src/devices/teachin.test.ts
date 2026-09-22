@@ -213,6 +213,90 @@ test('passive discoveries survive channel cancellation, are bounded, and can be 
   }
 });
 
+test('persists ignored discoveries and allows discovery again after clearing', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-ignored-discovery-'));
+  const filePath = join(directory, 'configuration.yaml');
+  let registry = await DeviceRegistry.load(filePath);
+  let manager = new TeachInManager(registry, 0xffe76685);
+  const packet = { RORG: 0xf6, senderId: 0x05010203, payload: [0x10], status: 0x30 };
+  try {
+    manager.observe(packet);
+    await manager.ignore(packet.senderId);
+    expect(manager.listCandidates()).toEqual([]);
+    expect(manager.listIgnoredDevices()).toEqual([packet.senderId]);
+    expect(manager.observe(packet)).toBeUndefined();
+    expect(manager.accept(packet.senderId, 'F6-02-01')).rejects.toThrow('Device is ignored');
+    const configuration = Bun.YAML.parse(await Bun.file(filePath).text()) as {
+      ignoredDevices: string[];
+    };
+    expect(configuration.ignoredDevices).toEqual(['05010203']);
+    manager.stop();
+    await registry.close();
+    registry = await DeviceRegistry.load(filePath);
+    manager = new TeachInManager(registry, 0xffe76685);
+    expect(manager.listIgnoredDevices()).toEqual([packet.senderId]);
+    manager.start();
+    expect(manager.observe(packet)).toBeUndefined();
+    expect(
+      manager.observe({
+        RORG: 0xd4,
+        senderId: packet.senderId,
+        payload: [0x80, 0xff, 0x0b, 0, 0, 0x50, 0xd2],
+      }),
+    ).toBeUndefined();
+    await manager.clearIgnored(packet.senderId);
+    expect(manager.listIgnoredDevices()).toEqual([]);
+    expect(manager.listCandidates()).toEqual([]);
+    expect(manager.observe(packet)?.targetId).toBe(packet.senderId);
+    manager.stop();
+    await registry.close();
+    registry = await DeviceRegistry.load(filePath);
+    expect(registry.listIgnoredDevices()).toEqual([]);
+  } finally {
+    manager.stop();
+    await registry.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('does not allow acceptance during an ignore write and preserves discovery after failure', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-ignore-failure-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  const manager = new TeachInManager(registry, 0xffe76685);
+  const release = Promise.withResolvers<void>();
+  const packet = { RORG: 0xf6, senderId: 0x05010203, payload: [0x10], status: 0x30 };
+  const save = spyOn(registry, 'setDiscoveryIgnored').mockImplementationOnce(async () => {
+    await release.promise;
+    throw new Error('Cannot save ignore list');
+  });
+  try {
+    manager.observe(packet);
+    let notifications = 0;
+    manager.onChange(() => {
+      notifications += 1;
+    });
+    const pending = manager.ignore(packet.senderId).catch((error: Error) => error.message);
+    expect(manager.observe(packet)).toBeUndefined();
+    expect(manager.accept(packet.senderId, 'F6-02-01')).rejects.toThrow('Device is ignored');
+    expect(manager.clearIgnored(packet.senderId)).rejects.toThrow('in progress');
+    release.resolve();
+    expect(await pending).toBe('Cannot save ignore list');
+    expect(manager.listCandidates()).toHaveLength(1);
+    expect(manager.listIgnoredDevices()).toEqual([]);
+    expect(notifications).toBe(0);
+    save.mockRestore();
+    const acceptance = manager.accept(packet.senderId, 'F6-02-01');
+    expect(manager.ignore(packet.senderId)).rejects.toThrow('acceptance is in progress');
+    await acceptance;
+  } finally {
+    release.resolve();
+    save.mockRestore();
+    manager.stop();
+    await registry.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('reuses a legacy receive-only channel without changing its device identity', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-passive-reuse-'));
   const filePath = join(directory, 'configuration.yaml');

@@ -11,12 +11,16 @@ function PairingRoute() {
       connected={app.transport.connected}
       active={app.pairing.active}
       candidates={app.pairing.candidates}
+      ignoredDevices={app.pairing.ignoredDevices}
+      busyTargets={app.busyTargets}
       message={app.pairingMessage}
       sourceId={app.pairingSourceId}
       onPair={app.onPairChannel}
       onCancel={app.onCancelPairing}
       onAccept={app.onAcceptCandidate}
       onReject={app.onRejectCandidate}
+      onIgnore={app.onIgnoreCandidate}
+      onClearIgnored={app.onClearIgnoredDevice}
     />
   );
 }

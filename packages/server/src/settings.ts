@@ -12,6 +12,7 @@ export interface PersistedConfiguration {
   transport?: Partial<TransportSettings>;
   homeassistant?: Partial<HomeAssistantSettings>;
   devices?: Record<string, unknown>;
+  ignoredDevices?: Array<string | number>;
 }
 
 const writeQueues = new Map<string, Promise<void>>();

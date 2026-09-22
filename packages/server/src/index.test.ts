@@ -92,7 +92,7 @@ test('discovers and adds a receive-only rocker without channel pairing', async (
   );
   expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({ sourceId: 0x05010203, transmitId: null });
-  expect(handler.snapshot().pairing).toEqual({ active: false, candidates: [] });
+  expect(handler.snapshot().pairing).toEqual({ active: false, candidates: [], ignoredDevices: [] });
   await fixtureRegistry.upsert({
     ...fixtureRegistry.findByTargetId(0x05010203)!,
     sourceId: 0xffe76685,
@@ -109,6 +109,41 @@ test('discovers and adds a receive-only rocker without channel pairing', async (
     }),
   );
   expect(command.status).toBe(400);
+  expect(transport.writes).toHaveLength(0);
+});
+
+test('ignores and restores discovered devices through the pairing API', async () => {
+  const transport = new FakeTransport();
+  const teachIn = new TeachInManager(fixtureRegistry, 0xffe76685);
+  const handler = createRequestHandler(transport, { teachIn });
+  const packet = { RORG: 0xf6, senderId: '05010203', payload: [0x10], status: 0x30 };
+  teachIn.observe(packet);
+  const action = (name: string, targetId: unknown) =>
+    handler(
+      new Request(`http://localhost/api/pairing/${name}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ targetId }),
+      }),
+    );
+  const ignored = await action('ignore', packet.senderId);
+  expect(ignored.status).toBe(200);
+  expect(await ignored.json()).toEqual({
+    active: false,
+    candidates: [],
+    ignoredDevices: [0x05010203],
+  });
+  expect(teachIn.observe(packet)).toBeUndefined();
+  expect(handler.snapshot().pairing.ignoredDevices).toEqual([0x05010203]);
+  const cleared = await action('unignore', packet.senderId);
+  expect(cleared.status).toBe(200);
+  expect(await cleared.json()).toEqual({ active: false, candidates: [], ignoredDevices: [] });
+  expect(teachIn.observe(packet)?.targetId).toBe(0x05010203);
+  for (const invalid of ['invalid', 'ffffffff', '00000000', -1, 1.5, null, []]) {
+    expect((await action('ignore', invalid)).status).toBe(400);
+    expect((await action('unignore', invalid)).status).toBe(400);
+  }
+  expect((await action('ignore', '05010299')).status).toBe(400);
   expect(transport.writes).toHaveLength(0);
 });
 

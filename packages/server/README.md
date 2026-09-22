@@ -231,6 +231,20 @@ No USB 300 sender channel or outgoing telegram is needed. Paired devices are not
 again. Cancelling channel pairing preserves passive discoveries. The passive list retains
 at most 128 senders and expires entries after five minutes without another telegram.
 
+**Dismiss** removes a candidate until its next telegram. **Ignore device** removes it
+from discovery and suppresses future candidates from that address, including during channel
+pairing. The **Ignored devices** list provides **Allow discovery** to clear an entry;
+the device can appear again when its next supported telegram arrives. Ignoring does not
+pair or control the device, and raw packets remain visible in the Packet Listener.
+
+Ignored physical sender addresses are stored in the portable `configuration.yaml` and
+survive restarts, for example:
+
+```yaml
+ignoredDevices:
+  - '05010203'
+```
+
 For devices requiring outgoing communication, pairing starts with `Pair` on a specific sender-channel row. There is no global
 permit-join control in the web UI; `Cancel pairing` is available while a session is active.
 When MQTT/Home Assistant is enabled, the integration exposes the discovered `Permit join`

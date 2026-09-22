@@ -141,6 +141,16 @@ test('pushes API snapshots for device, settings, pairing, and packet changes', a
     );
     teachIn.observe({ RORG: 0xf6, senderId: '05010204', payload: [0x10], status: 0x30 });
     await passive;
+    const ignored = nextState(
+      (state) =>
+        state.pairing.ignoredDevices.includes(0x05010204) && state.pairing.candidates.length === 0,
+    );
+    await teachIn.ignore(0x05010204);
+    await ignored;
+    const allowed = nextState((state) => state.pairing.ignoredDevices.length === 0);
+    await teachIn.clearIgnored(0x05010204);
+    await allowed;
+    teachIn.observe({ RORG: 0xf6, senderId: '05010204', payload: [0x10], status: 0x30 });
     const dismissed = nextState((state) => state.pairing.candidates.length === 0);
     teachIn.reject(0x05010204);
     await dismissed;

@@ -204,6 +204,19 @@ function serializeDevices(devices: Device[]): Record<string, PersistedDevice> {
   );
 }
 
+function deserializeIgnoredDevices(value: unknown): Set<number> {
+  if (value === undefined) return new Set();
+  if (!Array.isArray(value))
+    throw new Error('Invalid configuration: ignoredDevices must be a list');
+  return new Set(
+    value.map((entry) => {
+      const targetId = parseIdentifier(entry, 'ignoredDevices address');
+      if (targetId < 1 || targetId >= 0xffffffff) throw new Error('Invalid ignoredDevices address');
+      return targetId;
+    }),
+  );
+}
+
 const defaultProfiles = createDefaultProfileRegistry();
 
 const initialDevices = deserializeConfiguredDevices(
@@ -222,6 +235,7 @@ export class DeviceRegistry {
     private readonly stateStore: DeviceStateStore,
     devices: Device[],
     private readonly profiles: ProfileRegistry,
+    private ignoredDevices: Set<number>,
   ) {
     this.devices = devices.map((device) => ({ ...device }));
   }
@@ -258,7 +272,13 @@ export class DeviceRegistry {
         }
         return hydratedDevice;
       });
-      const registry = new DeviceRegistry(filePath, stateStore, hydratedDevices, profiles);
+      const registry = new DeviceRegistry(
+        filePath,
+        stateStore,
+        hydratedDevices,
+        profiles,
+        deserializeIgnoredDevices(configuration.ignoredDevices),
+      );
       await registry.save();
       for (const device of resetDevices) stateStore.save(device);
       return registry;
@@ -270,6 +290,42 @@ export class DeviceRegistry {
 
   list(): Device[] {
     return structuredClone(this.devices);
+  }
+
+  listIgnoredDevices(): number[] {
+    return [...this.ignoredDevices].sort((left, right) => left - right);
+  }
+
+  isDiscoveryIgnored(targetId: number): boolean {
+    return this.ignoredDevices.has(targetId);
+  }
+
+  async setDiscoveryIgnored(targetId: number, ignored: boolean): Promise<void> {
+    if (!Number.isInteger(targetId) || targetId < 1 || targetId >= 0xffffffff) {
+      throw new Error('targetId must be a valid EnOcean identifier');
+    }
+    const next = this.writeQueue
+      .catch(() => undefined)
+      .then(async () => {
+        if (ignored && this.findByTargetId(targetId))
+          throw new Error('Cannot ignore a paired device');
+        if (this.ignoredDevices.has(targetId) === ignored) return;
+        const ignoredDevices = new Set(this.ignoredDevices);
+        if (ignored) ignoredDevices.add(targetId);
+        else ignoredDevices.delete(targetId);
+        await updateConfiguration(this.filePath, (configuration) => {
+          if (ignoredDevices.size) {
+            configuration.ignoredDevices = [...ignoredDevices]
+              .sort((left, right) => left - right)
+              .map((address) => address.toString(16).padStart(8, '0'));
+          } else {
+            delete configuration.ignoredDevices;
+          }
+        });
+        this.ignoredDevices = ignoredDevices;
+      });
+    this.writeQueue = next.catch(() => undefined);
+    return next;
   }
 
   findByTargetId(targetId: number): Device | undefined {

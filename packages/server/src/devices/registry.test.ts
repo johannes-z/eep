@@ -350,6 +350,58 @@ test('rejects conflicting identifiers without changing the registry', async () =
   }
 });
 
+test('serializes ignored-device changes and rolls back failed persistence', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-registry-ignored-'));
+  const filePath = join(directory, 'configuration.yaml');
+  const registry = await DeviceRegistry.load(filePath);
+  try {
+    await Promise.all([
+      registry.setDiscoveryIgnored(0x05010203, true),
+      registry.setDiscoveryIgnored(0x05010204, true),
+      registry.update(0xffe76681, { name: 'Renamed' }),
+    ]);
+    const original = await readFile(filePath, 'utf8');
+    const configuration = Bun.YAML.parse(original) as { ignoredDevices: string[] };
+    expect(configuration.ignoredDevices).toEqual(['05010203', '05010204']);
+    expect(registry.listIgnoredDevices()).toEqual([0x05010203, 0x05010204]);
+    registry.listIgnoredDevices().pop();
+    expect(registry.listIgnoredDevices()).toHaveLength(2);
+    expect(registry.setDiscoveryIgnored(registry.list()[0].targetId, true)).rejects.toThrow(
+      'paired device',
+    );
+    await rm(filePath);
+    await mkdir(filePath);
+    expect(registry.setDiscoveryIgnored(0x05010203, false)).rejects.toThrow();
+    expect(registry.setDiscoveryIgnored(0x05010205, true)).rejects.toThrow();
+    expect(registry.listIgnoredDevices()).toEqual([0x05010203, 0x05010204]);
+    await rm(filePath, { recursive: true });
+    await Bun.write(filePath, original);
+    await registry.setDiscoveryIgnored(0x05010203, false);
+    expect(registry.listIgnoredDevices()).toEqual([0x05010204]);
+  } finally {
+    await registry.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test.each([
+  { value: null },
+  { value: {} },
+  { value: ['not-an-address'] },
+  { value: ['00000000'] },
+  { value: ['ffffffff'] },
+  { value: [1.5] },
+])('rejects invalid ignored-device configuration $value', async ({ value }) => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-invalid-ignored-'));
+  const filePath = join(directory, 'configuration.yaml');
+  try {
+    await Bun.write(filePath, stringify({ devices: {}, ignoredDevices: value }));
+    expect(DeviceRegistry.load(filePath)).rejects.toThrow('ignoredDevices');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('does not publish a mutation when configuration persistence fails', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-registry-write-failure-'));
   const filePath = join(directory, 'configuration.yaml');

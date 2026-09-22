@@ -1,4 +1,4 @@
-import { Check, Radio, X } from 'lucide-react';
+import { Ban, Check, Radio, RotateCcw, X } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import type { GeneralResponse, SettingsFormMessage, TeachInCandidate } from '../ui/types';
@@ -9,23 +9,31 @@ export function Pairing({
   connected,
   active,
   candidates,
+  ignoredDevices,
+  busyTargets,
   message,
   sourceId,
   onPair,
   onCancel,
   onAccept,
   onReject,
+  onIgnore,
+  onClearIgnored,
 }: {
   general: GeneralResponse;
   connected: boolean;
   active: boolean;
   candidates: TeachInCandidate[];
+  ignoredDevices: number[];
+  busyTargets: ReadonlySet<number>;
   message: SettingsFormMessage;
   sourceId: number | null;
   onPair: (sourceId: number) => void;
   onCancel: () => void;
   onAccept: (candidate: TeachInCandidate, profileId?: string) => void;
   onReject: (candidate: TeachInCandidate) => void;
+  onIgnore: (candidate: TeachInCandidate) => void;
+  onClearIgnored: (targetId: number) => void;
 }) {
   const [selectedProfiles, setSelectedProfiles] = useState<Record<number, string>>({});
   return (
@@ -203,10 +211,11 @@ export function Pairing({
                           className="small-button"
                           type="button"
                           disabled={
-                            !candidate.eep &&
-                            !candidate.profileOptions?.includes(
-                              selectedProfiles[candidate.targetId] ?? '',
-                            )
+                            busyTargets.has(candidate.targetId) ||
+                            (!candidate.eep &&
+                              !candidate.profileOptions?.includes(
+                                selectedProfiles[candidate.targetId] ?? '',
+                              ))
                           }
                           onClick={() =>
                             onAccept(
@@ -224,8 +233,19 @@ export function Pairing({
                         <button
                           className="icon-button"
                           type="button"
+                          title="Ignore device"
+                          aria-label={`Ignore ${formatTargetId(candidate.targetId)}`}
+                          disabled={busyTargets.has(candidate.targetId)}
+                          onClick={() => onIgnore(candidate)}
+                        >
+                          <Ban size={15} />
+                        </button>
+                        <button
+                          className="icon-button"
+                          type="button"
                           title="Dismiss device"
                           aria-label={`Dismiss ${formatTargetId(candidate.targetId)}`}
+                          disabled={busyTargets.has(candidate.targetId)}
                           onClick={() => onReject(candidate)}
                         >
                           <X size={15} />
@@ -247,6 +267,55 @@ export function Pairing({
             <h3>{active ? 'Waiting for a device' : 'No devices discovered'}</h3>
             {sourceId !== null && <p>Sender {formatTargetId(sourceId)}</p>}
           </div>
+        )}
+      </div>
+      <div className="pairing-results">
+        <h3>
+          Ignored devices <span className="result-count">{ignoredDevices.length}</span>
+        </h3>
+        {ignoredDevices.length ? (
+          <div className="data-table-wrap">
+            <table
+              className="data-table pairing-table"
+              aria-label="Ignored devices"
+            >
+              <thead>
+                <tr>
+                  <th>Device address</th>
+                  <th className="actions-heading">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ignoredDevices.map((targetId) => (
+                  <tr key={targetId}>
+                    <td data-label="Device address">
+                      <code>{formatTargetId(targetId)}</code>
+                    </td>
+                    <td>
+                      <div className="device-actions">
+                        <button
+                          className="small-button"
+                          type="button"
+                          title="Stop ignoring device"
+                          aria-label={`Allow discovery of ${formatTargetId(targetId)}`}
+                          disabled={busyTargets.has(targetId)}
+                          onClick={() => onClearIgnored(targetId)}
+                        >
+                          <RotateCcw
+                            size={15}
+                            aria-hidden="true"
+                          />
+                          Allow discovery
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="muted-copy">No ignored devices.</p>
         )}
       </div>
     </section>

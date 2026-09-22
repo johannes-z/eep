@@ -66,6 +66,7 @@ export function createRequestHandler(
   const pairing = () => ({
     active: options.teachIn.isActive(),
     candidates: options.teachIn.listCandidates(),
+    ignoredDevices: options.teachIn.listIgnoredDevices(),
   });
   const general = createSettingsResource({
     initial: options.generalSettings ?? { startId: defaults.startId ?? 1 },
@@ -259,6 +260,24 @@ export function createRequestHandler(
           const targetId = parseEnOceanId(body.targetId);
           if (targetId === undefined) throw new Error('targetId must be an EnOcean identifier');
           return json(await options.teachIn.accept(targetId, body.profileId));
+        } catch (error) {
+          return json({ error: (error as Error).message }, 400);
+        }
+      }
+
+      if (
+        parts[1] === 'pairing' &&
+        parts.length === 3 &&
+        (parts[2] === 'ignore' || parts[2] === 'unignore') &&
+        request.method === 'POST'
+      ) {
+        try {
+          const body = (await request.json()) as { targetId: number };
+          const targetId = parseEnOceanId(body.targetId);
+          if (targetId === undefined) throw new Error('targetId must be an EnOcean identifier');
+          if (parts[2] === 'ignore') await options.teachIn.ignore(targetId);
+          else await options.teachIn.clearIgnored(targetId);
+          return json(pairing());
         } catch (error) {
           return json({ error: (error as Error).message }, 400);
         }

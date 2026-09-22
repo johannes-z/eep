@@ -173,87 +173,90 @@ export function Pairing({
                 </tr>
               </thead>
               <tbody>
-                {candidates.map((candidate) => (
-                  <tr key={candidate.targetId}>
-                    <td data-label="Device address">
-                      <code>{formatTargetId(candidate.targetId)}</code>
-                    </td>
-                    <td data-label="EEP">
-                      {candidate.eep ?? (
-                        <select
-                          aria-label={`EEP for ${formatTargetId(candidate.targetId)}`}
-                          value={selectedProfiles[candidate.targetId] ?? ''}
-                          onChange={(event) =>
-                            setSelectedProfiles({
-                              ...selectedProfiles,
-                              [candidate.targetId]: event.target.value,
-                            })
-                          }
-                        >
-                          <option value="">Select EEP</option>
-                          {candidate.profileOptions?.map((profileId) => (
-                            <option
-                              key={profileId}
-                              value={profileId}
+                {candidates.map((candidate) => {
+                  const profileOptions = candidate.profileOptions ?? [];
+                  const selectedProfileId =
+                    candidate.eep ??
+                    (profileOptions.length === 1
+                      ? profileOptions[0]
+                      : selectedProfiles[candidate.targetId]);
+                  const hasProfileSelection =
+                    candidate.eep !== undefined ||
+                    (selectedProfileId !== undefined && profileOptions.includes(selectedProfileId));
+                  return (
+                    <tr key={candidate.targetId}>
+                      <td data-label="Device address">
+                        <code>{formatTargetId(candidate.targetId)}</code>
+                      </td>
+                      <td data-label="EEP">
+                        {candidate.eep ??
+                          (profileOptions.length === 1 ? (
+                            profileOptions[0]
+                          ) : (
+                            <select
+                              aria-label={`EEP for ${formatTargetId(candidate.targetId)}`}
+                              value={selectedProfiles[candidate.targetId] ?? ''}
+                              onChange={(event) =>
+                                setSelectedProfiles({
+                                  ...selectedProfiles,
+                                  [candidate.targetId]: event.target.value,
+                                })
+                              }
                             >
-                              {profileId}
-                            </option>
+                              <option value="">Select EEP</option>
+                              {profileOptions.map((profileId) => (
+                                <option
+                                  key={profileId}
+                                  value={profileId}
+                                >
+                                  {profileId}
+                                </option>
+                              ))}
+                            </select>
                           ))}
-                        </select>
-                      )}
-                    </td>
-                    <td data-label="Communication">
-                      {candidate.receiveOnly ? 'Receive only' : 'Channel pairing'}
-                    </td>
-                    <td>
-                      <div className="device-actions">
-                        <button
-                          className="small-button"
-                          type="button"
-                          disabled={
-                            busyTargets.has(candidate.targetId) ||
-                            (!candidate.eep &&
-                              !candidate.profileOptions?.includes(
-                                selectedProfiles[candidate.targetId] ?? '',
-                              ))
-                          }
-                          onClick={() =>
-                            onAccept(
-                              candidate,
-                              candidate.eep ?? selectedProfiles[candidate.targetId],
-                            )
-                          }
-                        >
-                          <Check
-                            size={15}
-                            aria-hidden="true"
-                          />
-                          Add device
-                        </button>
-                        <button
-                          className="icon-button"
-                          type="button"
-                          title="Ignore device"
-                          aria-label={`Ignore ${formatTargetId(candidate.targetId)}`}
-                          disabled={busyTargets.has(candidate.targetId)}
-                          onClick={() => onIgnore(candidate)}
-                        >
-                          <Ban size={15} />
-                        </button>
-                        <button
-                          className="icon-button"
-                          type="button"
-                          title="Dismiss device"
-                          aria-label={`Dismiss ${formatTargetId(candidate.targetId)}`}
-                          disabled={busyTargets.has(candidate.targetId)}
-                          onClick={() => onReject(candidate)}
-                        >
-                          <X size={15} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td data-label="Communication">
+                        {candidate.receiveOnly ? 'Receive only' : 'Channel pairing'}
+                      </td>
+                      <td>
+                        <div className="device-actions">
+                          <button
+                            className="small-button"
+                            type="button"
+                            disabled={busyTargets.has(candidate.targetId) || !hasProfileSelection}
+                            onClick={() => onAccept(candidate, selectedProfileId)}
+                          >
+                            <Check
+                              size={15}
+                              aria-hidden="true"
+                            />
+                            Add device
+                          </button>
+                          <button
+                            className="icon-button"
+                            type="button"
+                            title="Ignore device"
+                            aria-label={`Ignore ${formatTargetId(candidate.targetId)}`}
+                            disabled={busyTargets.has(candidate.targetId)}
+                            onClick={() => onIgnore(candidate)}
+                          >
+                            <Ban size={15} />
+                          </button>
+                          <button
+                            className="icon-button"
+                            type="button"
+                            title="Dismiss device"
+                            aria-label={`Dismiss ${formatTargetId(candidate.targetId)}`}
+                            disabled={busyTargets.has(candidate.targetId)}
+                            onClick={() => onReject(candidate)}
+                          >
+                            <X size={15} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

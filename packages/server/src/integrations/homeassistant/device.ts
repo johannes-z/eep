@@ -1,4 +1,4 @@
-import type { Device } from '../../devices/types';
+import { deviceTransmitId, type Device } from '../../devices/types';
 import { type DeviceDiagnosticField } from './topics';
 
 export const bridgeDeviceId = 'eep_bridge';
@@ -21,7 +21,7 @@ export function diagnosticValues(
     {
       field: 'target_id',
       name: 'Target ID',
-      value: device.sourceId.toString(16).padStart(8, '0'),
+      value: deviceTransmitId(device)?.toString(16).padStart(8, '0') ?? 'None',
     },
     { field: 'eep', name: 'EEP', value: device.teachIn?.eep ?? device.profileId },
   ];

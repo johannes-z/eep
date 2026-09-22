@@ -134,6 +134,17 @@ test('pushes API snapshots for device, settings, pairing, and packet changes', a
     );
     await configured;
 
+    const passive = nextState(
+      (state) =>
+        !state.pairing.active &&
+        state.pairing.candidates.some((item) => item.targetId === 0x05010204),
+    );
+    teachIn.observe({ RORG: 0xf6, senderId: '05010204', payload: [0x10], status: 0x30 });
+    await passive;
+    const dismissed = nextState((state) => state.pairing.candidates.length === 0);
+    teachIn.reject(0x05010204);
+    await dismissed;
+
     const pairing = nextState((state) => state.pairing.active);
     teachIn.start();
     await pairing;

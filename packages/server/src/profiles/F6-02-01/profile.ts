@@ -52,6 +52,7 @@ export const f6Profile: EepProfile = {
     description: 'Light and Blind Control - Application Style 1',
   },
   transientReportedState: true,
+  receiveOnly: true,
 
   entity: {
     describe: () => ({

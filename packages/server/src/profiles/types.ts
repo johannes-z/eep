@@ -81,6 +81,7 @@ export interface EepProfile {
   readonly metadata: ProfileMetadata;
   readonly entity?: ProfileEntityAdapter;
   readonly transientReportedState?: boolean;
+  readonly receiveOnly?: boolean;
 
   defaultCapabilities(): JsonValue;
   validateCapabilities(value: unknown): JsonValue;

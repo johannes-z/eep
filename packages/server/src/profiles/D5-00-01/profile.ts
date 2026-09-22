@@ -18,6 +18,7 @@ function readOnly(): never {
 }
 
 export const d5Profile: EepProfile = {
+  receiveOnly: true,
   metadata: {
     id: 'D5-00-01',
     rorg: 0xd5,

@@ -27,9 +27,10 @@ test.each([false, true])(
     try {
       expect(packet.teachIn).toBe(true);
       expect(packet.teachInInfo).toBeUndefined();
-      expect(manager.observe(packet)).toBeUndefined();
-      manager.start();
-      if (targeted) await manager.transmit(0xffe76686);
+      if (targeted) {
+        manager.start();
+        await manager.transmit(0xffe76686);
+      }
       expect(manager.observe(packet)).toMatchObject({
         eep: undefined,
         profileOptions: ['D5-00-01'],
@@ -46,7 +47,8 @@ test.each([false, true])(
       await manager.accept(0x05010203, 'D5-00-01');
       const device = registry.findByTargetId(0x05010203);
       expect(device).toMatchObject({
-        sourceId: targeted ? 0xffe76686 : 0xffe76685,
+        sourceId: 0x05010203,
+        transmitId: null,
         profileId: 'D5-00-01',
         capabilities: ['contact'],
         teachIn: { eep: 'D5-00-01', direction: 'unidirectional', responseExpected: false },
@@ -76,16 +78,22 @@ test.each([false, true])(
   },
 );
 
-test('ignores 1BS data and malformed telegrams while pairing', async () => {
+test('discovers 1BS data outside pairing but ignores malformed telegrams', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-contact-invalid-'));
   const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
   const manager = new TeachInManager(registry, 0xffe76685);
   try {
-    manager.start();
-    for (const payload of [[], [0x08], [0x09], [0x01, 0x00], [-1], [0x100], [0.5]]) {
+    for (const payload of [[], [0x01, 0x00], [-1], [0x100], [0.5]]) {
       expect(manager.observe({ RORG: 0xd5, senderId: '05010203', payload })).toBeUndefined();
     }
     expect(manager.listCandidates()).toEqual([]);
+    for (const payload of [[0x08], [0x09]]) {
+      expect(manager.observe({ RORG: 0xd5, senderId: '05010203', payload })).toMatchObject({
+        receiveOnly: true,
+        sourceId: 0x05010203,
+        profileOptions: ['D5-00-01'],
+      });
+    }
   } finally {
     manager.stop();
     await registry.close();
@@ -111,10 +119,13 @@ test.each([false, true])(
     if (!packet) throw new Error('Expected an RPS packet');
     try {
       expect(packet.teachIn).toBe(false);
-      expect(manager.observe(packet)).toBeUndefined();
-      manager.start();
-      if (targeted) await manager.transmit(0xffe76686);
+      if (targeted) {
+        manager.start();
+        await manager.transmit(0xffe76686);
+      }
       expect(manager.observe(packet)).toMatchObject({
+        sourceId: 0x05010203,
+        receiveOnly: true,
         eep: undefined,
         profileOptions: ['F6-02-01'],
         direction: 'unidirectional',
@@ -125,12 +136,15 @@ test.each([false, true])(
       expect(manager.accept(0x05010203, 'D5-00-01')).rejects.toThrow('EEP does not match');
       await manager.accept(0x05010203, 'F6-02-01');
       expect(registry.findByTargetId(0x05010203)).toMatchObject({
-        sourceId: targeted ? 0xffe76686 : 0xffe76685,
+        sourceId: 0x05010203,
         profileId: 'F6-02-01',
         capabilities: ['rocker'],
         teachIn: { eep: 'F6-02-01', direction: 'unidirectional', responseExpected: false },
       });
       expect(responses).toEqual([]);
+      expect(manager.listCandidates()).toEqual([]);
+      expect(manager.observe(packet)).toBeUndefined();
+      expect(manager.isActive()).toBe(targeted);
       expect((await applyRadioPacket(packet, registry))?.device.reportedState).toEqual({
         messageType: 'N',
         pressed: true,
@@ -148,7 +162,7 @@ test.each([false, true])(
       registry = await DeviceRegistry.load(filePath);
       const restored = registry.findByTargetId(0x05010203);
       expect(restored).toMatchObject({
-        sourceId: targeted ? 0xffe76686 : 0xffe76685,
+        sourceId: 0x05010203,
         profileId: 'F6-02-01',
         capabilities: ['rocker'],
         teachIn: { eep: 'F6-02-01', direction: 'unidirectional', responseExpected: false },
@@ -166,6 +180,92 @@ test.each([false, true])(
     }
   },
 );
+
+test('passive discoveries survive channel cancellation, are bounded, and can be dismissed', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-passive-candidates-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  const manager = new TeachInManager(registry, 0xffe76685);
+  try {
+    const packet = { RORG: 0xf6, senderId: 0x05010203, payload: [0x10], status: 0x30 };
+    manager.observe(packet);
+    manager.observe(packet);
+    expect(manager.listCandidates()).toHaveLength(1);
+    manager.start();
+    manager.stop();
+    expect(manager.listCandidates()).toHaveLength(1);
+    manager.reject(packet.senderId);
+    expect(manager.listCandidates()).toEqual([]);
+    for (let index = 0; index < 130; index += 1) {
+      manager.observe({ ...packet, senderId: packet.senderId + index });
+    }
+    expect(manager.listCandidates()).toHaveLength(128);
+    expect(manager.listCandidates()[0].targetId).toBe(packet.senderId + 2);
+    const now = spyOn(Date, 'now').mockReturnValue(Date.now() + 300_001);
+    try {
+      expect(manager.listCandidates()).toEqual([]);
+    } finally {
+      now.mockRestore();
+    }
+  } finally {
+    manager.stop();
+    await registry.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('reuses a legacy receive-only channel without changing its device identity', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-passive-reuse-'));
+  const filePath = join(directory, 'configuration.yaml');
+  let registry = await DeviceRegistry.load(filePath);
+  const responses: number[] = [];
+  let manager = new TeachInManager(registry, 0xffe76685, async (candidate) => {
+    responses.push(candidate.sourceId);
+  });
+  try {
+    await registry.upsert({
+      sourceId: 0xffe76685,
+      targetId: 0x05010203,
+      name: 'Existing rocker',
+      profileId: 'F6-02-01',
+      capabilities: ['rocker'],
+      availability: 'online',
+    });
+    const query = {
+      RORG: 0xd4,
+      senderId: 0x05010204,
+      payload: [0x80, 0xff, 0x0b, 0, 0, 0x50, 0xd2],
+    };
+    expect(manager.observe(query)).toBeUndefined();
+    manager.start();
+    await manager.transmit(0xffe76685);
+    expect(manager.observe(query)?.sourceId).toBe(0xffe76685);
+    const fan = await manager.accept(query.senderId);
+    expect(fan).toMatchObject({ sourceId: query.senderId, transmitId: 0xffe76685 });
+    expect(responses).toEqual([0xffe76685]);
+    expect(registry.findBySourceId(0xffe76685)).toMatchObject({
+      name: 'Existing rocker',
+      transmitId: null,
+    });
+    manager.stop();
+    await registry.close();
+    registry = await DeviceRegistry.load(filePath);
+    manager = new TeachInManager(registry, 0xffe76685, async (candidate) => {
+      responses.push(candidate.sourceId);
+    });
+    manager.start();
+    expect(manager.observe(query)?.sourceId).toBeUndefined();
+    expect(await manager.accept(query.senderId)).toMatchObject({
+      sourceId: query.senderId,
+      transmitId: 0xffe76685,
+    });
+    expect(responses).toEqual([0xffe76685, 0xffe76685]);
+    expect(registry.findBySourceId(0xffe76685)?.name).toBe('Existing rocker');
+  } finally {
+    manager.stop();
+    await registry.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test('ignores malformed RPS packets during pairing', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-rocker-invalid-'));
@@ -764,7 +864,8 @@ describe('UTE acceptance safeguards', () => {
     );
     manager.stop();
     expect(
-      await manager.accept(0x05010203, 'D5-00-01').catch((error: Error) => error.message),
-    ).toBe('Permit join is not active');
+      await manager.accept(0x05010203, 'D2-50-00').catch((error: Error) => error.message),
+    ).toBe('EEP does not match the teach-in telegram');
+    expect(await manager.accept(0x05010203, 'D5-00-01')).toMatchObject({ transmitId: null });
   });
 });

@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import type { Device, DeviceTeachInInfo } from './types';
+import { deviceTransmitId, type Device, type DeviceTeachInInfo } from './types';
 import {
   createDefaultProfileRegistry,
   normalizeProfileId,
@@ -15,6 +15,7 @@ import { parseEnOceanId } from '../util';
 
 interface PersistedDevice {
   targetId: string | number;
+  transmitId?: string | number | null;
   name: string;
   profileId: string;
   capabilities?: JsonValue;
@@ -110,6 +111,11 @@ function deserializeDevice(
       })();
   return {
     sourceId,
+    ...(profile?.receiveOnly || value.transmitId === null
+      ? { transmitId: null }
+      : value.transmitId === undefined
+        ? {}
+        : { transmitId: parseIdentifier(value.transmitId, 'transmitId') }),
     targetId: parseIdentifier(value.targetId, 'targetId'),
     name,
     profileId,
@@ -151,11 +157,17 @@ function deserializeRuntimeState(
 function validateDevices(devices: Device[]): Device[] {
   const sourceIds = new Set<number>();
   const targetIds = new Set<number>();
+  const transmitIds = new Set<number>();
   for (const device of devices) {
     if (sourceIds.has(device.sourceId)) throw new Error(`Duplicate sourceId: ${device.sourceId}`);
     sourceIds.add(device.sourceId);
     if (targetIds.has(device.targetId)) throw new Error(`Duplicate targetId: ${device.targetId}`);
     targetIds.add(device.targetId);
+    const transmitId = deviceTransmitId(device);
+    if (transmitId !== undefined) {
+      if (transmitIds.has(transmitId)) throw new Error(`Duplicate transmitId: ${transmitId}`);
+      transmitIds.add(transmitId);
+    }
   }
   return devices;
 }
@@ -172,6 +184,12 @@ function serializeDevice(device: Device): PersistedDevice {
     name: device.name,
     profileId: device.profileId,
     targetId: device.targetId.toString(16).padStart(8, '0'),
+    ...(device.transmitId === undefined
+      ? {}
+      : {
+          transmitId:
+            device.transmitId === null ? null : device.transmitId.toString(16).padStart(8, '0'),
+        }),
     capabilities: device.capabilities,
     ...(device.teachIn === undefined ? {} : { teachIn: device.teachIn }),
   };
@@ -264,6 +282,11 @@ export class DeviceRegistry {
     return device ? structuredClone(device) : undefined;
   }
 
+  findByTransmitId(transmitId: number): Device | undefined {
+    const device = this.devices.find((item) => deviceTransmitId(item) === transmitId);
+    return device ? structuredClone(device) : undefined;
+  }
+
   onChange(listener: DeviceChangeListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -352,6 +375,10 @@ export class DeviceRegistry {
     readText(device.profileId, 'profileId');
     if (device.teachIn !== undefined) validateTeachInInfo(device.teachIn);
     const profile = this.profiles.get(device.profileId);
+    if (profile?.receiveOnly) device.transmitId = null;
+    if (device.transmitId !== undefined && device.transmitId !== null) {
+      parseIdentifier(device.transmitId, 'transmitId');
+    }
     const capabilities = profile?.validateCapabilities(device.capabilities) ?? device.capabilities;
     if (!isJsonValue(capabilities)) throw new Error('Invalid capabilities');
     deserializeRuntimeState({ ...device }, profile, capabilities);

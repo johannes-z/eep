@@ -11,7 +11,7 @@ import {
   validateTransportSettings,
 } from '../config';
 import type { MqttSettings } from '../mqtt';
-import type { Device } from '../devices/types';
+import { deviceTransmitId, type Device } from '../devices/types';
 import type { DongleVersion } from '../transport/esp3';
 import { parseEnOceanId } from '../util';
 
@@ -132,7 +132,12 @@ export function generalSettingsResponse(
   baseId: number | undefined,
   devices: readonly Device[],
 ): Record<string, unknown> {
-  const devicesBySourceId = new Map(devices.map((device) => [device.sourceId, device]));
+  const devicesBySourceId = new Map(
+    devices.flatMap((device) => {
+      const transmitId = deviceTransmitId(device);
+      return transmitId === undefined ? [] : [[transmitId, device] as const];
+    }),
+  );
   return {
     start_id: settings.startId.toString(16).padStart(8, '0'),
     base_id: baseId === undefined ? null : baseId.toString(16).padStart(8, '0'),

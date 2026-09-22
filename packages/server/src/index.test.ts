@@ -73,6 +73,45 @@ test('requires explicit profile selection when accepting a 1BS candidate', async
   expect(await response.json()).toMatchObject({ profileId: 'D5-00-01', targetId: 0x05010203 });
 });
 
+test('discovers and adds a receive-only rocker without channel pairing', async () => {
+  const transport = new FakeTransport();
+  const teachIn = new TeachInManager(fixtureRegistry, 0xffe76685);
+  const handler = createRequestHandler(transport, { teachIn, baseId: () => 0xffe76680 });
+  teachIn.observe({ RORG: 0xf6, senderId: '05010203', payload: [0x10], status: 0x30 });
+  const discovery = await handler(new Request('http://localhost/api/pairing'));
+  expect(await discovery.json()).toMatchObject({
+    active: false,
+    candidates: [{ targetId: 0x05010203, receiveOnly: true, profileOptions: ['F6-02-01'] }],
+  });
+  const response = await handler(
+    new Request('http://localhost/api/pairing/accept', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ targetId: '05010203', profileId: 'F6-02-01' }),
+    }),
+  );
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ sourceId: 0x05010203, transmitId: null });
+  expect(handler.snapshot().pairing).toEqual({ active: false, candidates: [] });
+  await fixtureRegistry.upsert({
+    ...fixtureRegistry.findByTargetId(0x05010203)!,
+    sourceId: 0xffe76685,
+    targetId: 0x05010204,
+  });
+  const general = await handler(new Request('http://localhost/api/general'));
+  const { channels } = (await general.json()) as { channels: Array<{ id: string; used: boolean }> };
+  expect(channels.find((channel) => channel.id === 'ffe76685')?.used).toBe(false);
+  const command = await handler(
+    new Request('http://localhost/api/devices/05010203/command', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ isOn: true }),
+    }),
+  );
+  expect(command.status).toBe(400);
+  expect(transport.writes).toHaveLength(0);
+});
+
 test('rejects cross-origin commands before transmitting', async () => {
   const transport = new FakeTransport();
   const handler = createRequestHandler(transport);

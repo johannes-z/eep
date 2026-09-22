@@ -1,4 +1,4 @@
-import type { Device } from './types';
+import { deviceTransmitId, type Device } from './types';
 import { createDefaultProfileRegistry, type ProfileRegistry } from '../profiles';
 import type { DeviceRegistry } from './registry';
 import type { TransportConnection } from '../transport/adapters';
@@ -14,8 +14,13 @@ export async function sendDeviceCommand(
   onTransmit?: TransmitListener,
 ): Promise<void> {
   const profile = profiles.require(device.profileId);
-  const command = profile.parseCommand(device, request);
-  const payload = profile.encodeCommand(device, command);
+  const sourceId = deviceTransmitId(device);
+  if (profile.receiveOnly || sourceId === undefined) {
+    throw new Error(`${device.profileId} device is read-only`);
+  }
+  const context = { ...device, sourceId };
+  const command = profile.parseCommand(context, request);
+  const payload = profile.encodeCommand(context, command);
   await socket.write(payload);
   await onTransmit?.(payload);
   if (command.desiredState !== undefined) {

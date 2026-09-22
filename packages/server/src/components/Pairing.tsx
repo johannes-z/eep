@@ -33,7 +33,7 @@ export function Pairing({
       <div className="settings-heading">
         <div>
           <h2>Pairing</h2>
-          <p>UTE / 1BS</p>
+          <p>Discovery / teach-in</p>
         </div>
         <span
           className={`settings-status ${active ? 'online' : 'neutral'}`}
@@ -160,6 +160,7 @@ export function Pairing({
                 <tr>
                   <th>Device address</th>
                   <th>EEP</th>
+                  <th>Communication</th>
                   <th className="actions-heading">Actions</th>
                 </tr>
               </thead>
@@ -192,6 +193,9 @@ export function Pairing({
                           ))}
                         </select>
                       )}
+                    </td>
+                    <td data-label="Communication">
+                      {candidate.receiveOnly ? 'Receive only' : 'Channel pairing'}
                     </td>
                     <td>
                       <div className="device-actions">

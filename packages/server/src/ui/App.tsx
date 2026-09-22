@@ -3,6 +3,7 @@ import { Outlet, useRouterState } from '@tanstack/react-router';
 import { createContext, useContext, useState } from 'react';
 import { Sidebar, TopBar } from '../components/Navigation';
 import { formatEnOceanId } from '../util';
+import { deviceTransmitId } from '../devices/types';
 import { request, snapshotQueryOptions } from './api';
 import { useLiveSnapshot } from './liveSnapshot';
 import { findAppRoute } from './routes';
@@ -86,7 +87,7 @@ export function App() {
 
   const paired =
     pairingRequest &&
-    snapshot?.devices.some((device) => device.sourceId === pairingRequest.sourceId);
+    snapshot?.devices.some((device) => deviceTransmitId(device) === pairingRequest.sourceId);
   const pairingSourceId =
     pairingRequest && !paired && (pairingRequest.sending || snapshot?.pairing.active)
       ? pairingRequest.sourceId

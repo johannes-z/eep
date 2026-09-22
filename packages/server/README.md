@@ -105,7 +105,8 @@ separate workspaces. Navigation and device rows adapt to narrow screens.
 
 Home Assistant discovery is configured only through `homeassistant.discoveryTopic` or
 `HA_DISCOVERY_TOPIC`. MQTT discovery-prefix aliases and controller-ID overrides are not supported.
-Outgoing commands use the device's assigned `sourceId`. MQTT fan speed commands use the integer
+Outgoing commands use the device's `transmitId`, falling back to its legacy `sourceId`
+when omitted. `transmitId: null` means no transmit channel. MQTT fan speed commands use the integer
 range advertised by discovery (for example, 0 for off and 1 through 4 for four speeds), not a
 second 0-100 percentage format. HTTP/UI percentage commands remain normalized percentages.
 
@@ -161,6 +162,15 @@ devices:
 
 Omit `level4` or `automaticOnDemand` when the device does not support them. Home Assistant discovery, web controls, command validation, and percentage-to-speed mapping all use this list. Runtime state is stored in SQLite and is independent of the user-editable YAML configuration.
 
+The configuration key (`sourceId` in the API) is the stable application/MQTT identity;
+`targetId` is the physical device address. For legacy transmitting devices the key also
+supplies the transmit address unless `transmitId` overrides it. Receive-only profiles
+automatically use `transmitId: null` and never reserve a USB 300 channel. Newly discovered
+receive-only devices use their physical address as their configuration key. Existing
+devices keep their key and MQTT/Home Assistant identities while their old channel becomes
+available for reuse. If that channel is reused, the new device can have a separate stable
+key and an explicit `transmitId`. No database schema change or re-pairing is needed.
+
 ### D2-50-00 ventilation
 
 Fan commands use the six-byte control message (MT=1), with the direct operating mode in
@@ -206,13 +216,22 @@ Decoded fields are available in the web UI's reported state. MQTT publishes JSON
 { "messageType": "N", "pressed": true, "buttons": ["AI", "BI"], "state": "ON" }
 ```
 
-The `state` field is `ON` while pressed and `OFF` when released. Home Assistant discovers a
-press/release binary sensor with the decoded fields as attributes. MQTT works independently
-of Home Assistant; neither publishes a synthetic release before the first telegram.
+The aggregate `state` field is `ON` while pressed and `OFF` when released. Home Assistant
+discovers four momentary binary sensors, AI, A0, BI, and B0, sharing this JSON topic.
+Only identified pressed buttons turn On; release or unidentified U-messages leave all four
+Off. The initial payload is `{"state":"OFF"}` and server startup clears saved button
+presses. MQTT reconnects preserve live state. MQTT works independently of Home Assistant.
 
 ## Pairing and Teach-In
 
-Web-console pairing starts with `Pair` on a specific sender-channel row. There is no global
+Receive-only F6-02-01 switches and D5-00-01 contacts appear under **Discovered devices**
+whenever supported telegrams arrive, including outside pairing mode. Select the EEP and
+choose **Add device** to register one explicitly; discovery alone does not pair a device.
+No USB 300 sender channel or outgoing telegram is needed. Paired devices are not listed
+again. Cancelling channel pairing preserves passive discoveries. The passive list retains
+at most 128 senders and expires entries after five minutes without another telegram.
+
+For devices requiring outgoing communication, pairing starts with `Pair` on a specific sender-channel row. There is no global
 permit-join control in the web UI; `Cancel pairing` is available while a session is active.
 When MQTT/Home Assistant is enabled, the integration exposes the discovered `Permit join`
 switch with the `mdi:access-point-network` icon. The bridge also exposes a
@@ -233,16 +252,16 @@ Unsupported EEPs receive `EEP not supported` when a response is requested. Teach
 unspecified teach-in/deletion, malformed, and reserved requests are not paired. Re-teaching
 a known sender with a conflicting EEP is rejected without changing its existing profile.
 
-D5-00-01 sensors also support 1BS teach-in: start pairing, then press the sensor's learn button.
-Telegram DB0.3 must be zero for teach-in; ordinary contact reports do not create candidates.
-The sender appears as a candidate without an EEP, even when a channel was selected. Select
+D5-00-01 sensors are discovered from ordinary contact reports or their 1BS learn button.
+Telegram DB0.3 is zero for teach-in and one for data. The sender appears as a candidate
+without an EEP, independently of channel pairing. Select
 `D5-00-01` and add the device explicitly: a 1BS learn telegram contains neither an EEP nor a
 manufacturer ID (EEP 2.6.8, appendix 3.2). No teach-in response is sent, and no manufacturer or
 channel metadata is inferred. Learn telegrams never update contact state.
 
-For F6-02-01 switches such as PTM200, start pairing and press a rocker. RPS switches do not
-send a dedicated teach-in telegram: a valid ordinary RPS telegram creates a candidate only
-while pairing is active. Select `F6-02-01` explicitly and add the device, since the telegram
+For F6-02-01 switches such as PTM200, press a rocker. RPS switches do not
+send a dedicated teach-in telegram: a valid ordinary RPS telegram creates a passive candidate
+without starting pairing. Select `F6-02-01` explicitly and add the device, since the telegram
 does not identify its EEP. No UTE response is sent and no manufacturer or channel metadata
 is inferred. Alternatively, configure the sender ID as `targetId` with `profileId: F6-02-01`
 in the device configuration. Subsequent press and release telegrams update device state.
@@ -257,7 +276,7 @@ the requester rather than the responding device, select the responding device's 
 on the Pairing page before adding it; echoed manufacturer/channel data is not stored as device
 metadata. Incoming supported queries on a selected channel can be accepted automatically.
 Untargeted no-response queries remain candidates for manual acceptance. Pairing expires
-after sixty seconds. Stopping or expiring a session clears pending candidates and channel targeting;
+after sixty seconds. Stopping or expiring a session clears pending channel-pairing candidates and channel targeting;
 a failed transmission closes the session. A persistence operation already in progress may still
 complete after cancellation, but it cannot send a late reply or close a newer session.
 The USB 300 base ID is

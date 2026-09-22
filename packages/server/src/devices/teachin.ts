@@ -1,4 +1,4 @@
-import type { Device } from './types';
+import { deviceTransmitId, type Device } from './types';
 import {
   createDefaultProfileRegistry,
   normalizeProfileId,
@@ -12,6 +12,7 @@ import { parseEnOceanId } from '../util';
 export interface TeachInCandidate {
   sourceId: number;
   targetId: number;
+  receiveOnly?: boolean;
   eep?: string;
   profileOptions?: string[];
   channel?: number;
@@ -83,7 +84,9 @@ export class TeachInManager {
     this.requestedSourceId = undefined;
     this.requestedTargetId = undefined;
     this.activeSourceId = undefined;
-    this.candidates.clear();
+    for (const [targetId, candidate] of this.candidates) {
+      if (!candidate.receiveOnly) this.candidates.delete(targetId);
+    }
     if (!this.active) return;
     this.active = false;
     for (const listener of this.stateListeners) listener(false);
@@ -109,24 +112,74 @@ export class TeachInManager {
   }
 
   listCandidates(): TeachInCandidate[] {
+    for (const [targetId, candidate] of this.candidates) {
+      if (candidate.receiveOnly && Date.now() - Date.parse(candidate.seenAt) >= 300_000) {
+        this.candidates.delete(targetId);
+      }
+    }
     return structuredClone([...this.candidates.values()]);
   }
 
   private sourceId(): number {
     const usedSourceIds = new Set([
-      ...this.registry.list().map((device) => device.sourceId),
-      ...this.listCandidates().map((candidate) => candidate.sourceId),
+      ...this.registry.list().flatMap((device) => {
+        const transmitId = deviceTransmitId(device);
+        return transmitId === undefined ? [] : [transmitId];
+      }),
+      ...this.listCandidates()
+        .filter((candidate) => !candidate.receiveOnly)
+        .map((candidate) => candidate.sourceId),
       ...this.reservedSourceIds,
     ]);
     return nextAvailableSourceId(usedSourceIds, this.activeSourceId ?? this.startId);
   }
 
   observe(packet: RadioERP1Packet): TeachInCandidate | undefined {
-    if (!this.active) return undefined;
     const targetId = parseEnOceanId(packet.senderId);
     if (targetId === undefined || targetId < 1 || targetId === 0xffffffff) {
       return undefined;
     }
+    const is1bsTeachIn =
+      packet.RORG === 0xd5 &&
+      packet.payload.length === 1 &&
+      Number.isInteger(packet.payload[0]) &&
+      packet.payload[0] >= 0 &&
+      packet.payload[0] <= 0xff &&
+      (packet.payload[0] & 0x08) === 0;
+    const passiveProfiles = this.profiles
+      .getByRorg(packet.RORG)
+      .filter(
+        (profile) =>
+          profile.receiveOnly &&
+          (is1bsTeachIn ||
+            profile.decodeIngress(
+              { sourceId: targetId, targetId, capabilities: profile.defaultCapabilities() },
+              packet,
+            ).kind === 'reported'),
+      );
+    if (passiveProfiles.length) {
+      if (this.registry.findByTargetId(targetId) || this.accepting.has(targetId)) return undefined;
+      const destinationId = parseEnOceanId(packet.destinationId);
+      if (destinationId !== undefined && destinationId !== 0xffffffff) return undefined;
+      const candidate: TeachInCandidate = {
+        sourceId: targetId,
+        targetId,
+        receiveOnly: true,
+        eep: undefined,
+        profileOptions: passiveProfiles.map((profile) => profile.metadata.id),
+        direction: 'unidirectional',
+        responseExpected: false,
+        seenAt: new Date().toISOString(),
+        requestPayload: Array.from(packet.payload),
+      };
+      this.candidates.delete(targetId);
+      this.candidates.set(targetId, candidate);
+      const passiveCandidates = this.listCandidates().filter((item) => item.receiveOnly);
+      if (passiveCandidates.length > 128) this.candidates.delete(passiveCandidates[0].targetId);
+      this.notify();
+      return structuredClone(candidate);
+    }
+    if (!this.active) return undefined;
     const rpsProfiles =
       packet.RORG === 0xf6
         ? this.profiles.getByRorg(0xf6).filter(
@@ -142,13 +195,6 @@ export class TeachInManager {
           )
         : [];
     const isRpsTeachIn = rpsProfiles.length > 0;
-    const is1bsTeachIn =
-      packet.RORG === 0xd5 &&
-      packet.payload.length === 1 &&
-      Number.isInteger(packet.payload[0]) &&
-      packet.payload[0] >= 0 &&
-      packet.payload[0] <= 0xff &&
-      (packet.payload[0] & 0x08) === 0;
     const info =
       is1bsTeachIn || isRpsTeachIn
         ? {
@@ -186,7 +232,7 @@ export class TeachInManager {
       sourceId:
         (isResponse ? this.pendingQuery?.sourceId : undefined) ??
         this.requestedSourceId ??
-        existing?.sourceId ??
+        (existing ? deviceTransmitId(existing) : undefined) ??
         this.candidates.get(targetId)?.sourceId ??
         this.sourceId(),
       targetId,
@@ -278,13 +324,14 @@ export class TeachInManager {
   }
 
   async accept(targetId: number, selectedProfileId?: string): Promise<Device> {
-    if (!this.active) throw new Error('Permit join is not active');
     if (!Number.isInteger(targetId) || targetId < 1 || targetId >= 0xffffffff) {
       throw new Error('targetId must be a valid EnOcean identifier');
     }
     const pending = this.accepting.get(targetId);
     if (pending) return pending;
+    this.listCandidates();
     const candidate = this.candidates.get(targetId);
+    if (!this.active && !candidate?.receiveOnly) throw new Error('Permit join is not active');
     if (!candidate) throw new Error('Unknown teach-in candidate');
     const requestedProfile = selectedProfileId ?? candidate.eep;
     if (!requestedProfile) throw new Error('Select an EEP for this teach-in candidate');
@@ -297,19 +344,34 @@ export class TeachInManager {
     }
     const profile = this.profiles.get(profileId);
     if (!profile) throw new Error(`Unsupported EEP: ${candidate.eep}`);
+    if (candidate.receiveOnly && !profile.receiveOnly) {
+      throw new Error('Profile requires channel pairing');
+    }
     const capabilities = profile.defaultCapabilities();
-    const sourceId = candidate.sourceId;
-    const assigned = this.registry.findBySourceId(sourceId);
+    const transmitId = profile.receiveOnly ? undefined : candidate.sourceId;
+    const assigned =
+      transmitId === undefined ? undefined : this.registry.findByTransmitId(transmitId);
     if (assigned && assigned.targetId !== targetId) {
-      throw new Error(`Source ID is already assigned: ${sourceId}`);
+      throw new Error(`Source ID is already assigned: ${transmitId}`);
     }
     const existing = this.registry.findByTargetId(targetId);
     if (existing && normalizeProfileId(existing.profileId) !== profileId) {
       throw new Error('EEP does not match the paired device');
     }
 
+    const preferredId = profile.receiveOnly ? (existing?.sourceId ?? targetId) : candidate.sourceId;
+    const occupant = this.registry.findBySourceId(preferredId);
+    const sourceId =
+      occupant && occupant.targetId !== targetId ? (existing?.sourceId ?? targetId) : preferredId;
+    const identityOwner = this.registry.findBySourceId(sourceId);
+    if (identityOwner && identityOwner.targetId !== targetId) {
+      throw new Error(`Device ID is already assigned: ${sourceId}`);
+    }
+
     const device: Device = {
       sourceId,
+      transmitId:
+        transmitId === undefined ? null : transmitId === sourceId ? undefined : transmitId,
       targetId,
       name: existing?.name ?? `EnOcean ${sourceId.toString(16).padStart(8, '0')}`,
       profileId,
@@ -326,12 +388,15 @@ export class TeachInManager {
       lastSeen: candidate.seenAt,
     };
     const session = this.session;
-    this.reservedSourceIds.add(sourceId);
+    if (transmitId !== undefined) this.reservedSourceIds.add(transmitId);
     const operation = (async () => {
       const accepted = existing
         ? await this.registry.reassignSourceId(existing.sourceId, sourceId, device)
         : await this.registry.upsert(device);
-      if (this.active && this.session === session) {
+      if (candidate.receiveOnly) {
+        this.candidates.delete(targetId);
+        this.notify();
+      } else if (this.active && this.session === session) {
         await this.respond(candidate, 'teachInAccepted');
         if (this.active && this.session === session) {
           this.candidates.delete(targetId);
@@ -346,7 +411,7 @@ export class TeachInManager {
       return await operation;
     } finally {
       this.accepting.delete(targetId);
-      this.reservedSourceIds.delete(sourceId);
+      if (transmitId !== undefined) this.reservedSourceIds.delete(transmitId);
     }
   }
 
@@ -368,9 +433,11 @@ export class TeachInManager {
         throw new Error('sourceId must be a non-zero EnOcean identifier');
       }
       if (
-        this.registry.findBySourceId(sourceId) ||
+        this.registry.findByTransmitId(sourceId) ||
         this.reservedSourceIds.has(sourceId) ||
-        this.listCandidates().some((candidate) => candidate.sourceId === sourceId)
+        this.listCandidates().some(
+          (candidate) => !candidate.receiveOnly && candidate.sourceId === sourceId,
+        )
       ) {
         throw new Error(`Source ID is already assigned: ${sourceId}`);
       }

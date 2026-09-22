@@ -8,6 +8,7 @@ import { DeviceRegistry } from './registry';
 import { sendDeviceCommand } from './commands';
 import { applyRadioPacket } from './inbound';
 import { f6Profile } from '../profiles/F6-02-01/profile';
+import { stringify } from 'yaml';
 
 test('isolates nested state at registry input, read and notification boundaries', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-registry-snapshots-'));
@@ -132,6 +133,67 @@ test('resets momentary reports on startup without losing other device state', as
     }
     await registry.update(rocker.sourceId, { reportedState: press });
     expect(registry.findBySourceId(rocker.sourceId)?.reportedState).toEqual(press);
+  } finally {
+    await registry.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('separates a receive-only identity from a reusable transmit address', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-registry-transmit-'));
+  const filePath = join(directory, 'configuration.yaml');
+  let registry = await DeviceRegistry.load(filePath);
+  try {
+    const rocker = await registry.upsert({
+      sourceId: 0xffe76685,
+      targetId: 0x05010203,
+      name: 'Existing rocker',
+      profileId: 'F6-02-01',
+      capabilities: ['rocker'],
+      availability: 'online',
+    });
+    expect(rocker.transmitId).toBeNull();
+    expect(registry.findByTransmitId(rocker.sourceId)).toBeUndefined();
+    const fan = await registry.upsert({
+      ...registry.list()[0],
+      sourceId: 0x05010204,
+      targetId: 0x05010204,
+      transmitId: rocker.sourceId,
+    });
+    expect(registry.findByTransmitId(rocker.sourceId)?.sourceId).toBe(fan.sourceId);
+    const packets: Uint8Array[] = [];
+    await sendDeviceCommand(
+      {
+        write: async (packet) => {
+          packets.push(packet);
+        },
+      },
+      registry,
+      fan,
+      { value: 1 },
+    );
+    expect(Array.from(packets[0].slice(-13, -9))).toEqual([0xff, 0xe7, 0x66, 0x85]);
+    expect(
+      sendDeviceCommand(
+        {
+          write: async () => {
+            throw new Error('Unexpected write');
+          },
+        },
+        registry,
+        rocker,
+        { isOn: true },
+      ),
+    ).rejects.toThrow('read-only');
+    await registry.close();
+    const configuration = Bun.YAML.parse(await readFile(filePath, 'utf8')) as {
+      devices: Record<string, Record<string, unknown>>;
+    };
+    delete configuration.devices.ffe76685.transmitId;
+    await Bun.write(filePath, stringify(configuration));
+    registry = await DeviceRegistry.load(filePath);
+    expect(registry.findBySourceId(rocker.sourceId)?.transmitId).toBeNull();
+    expect(registry.findByTransmitId(rocker.sourceId)?.sourceId).toBe(fan.sourceId);
   } finally {
     await registry.close();
     await rm(directory, { recursive: true, force: true });

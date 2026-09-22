@@ -10,6 +10,7 @@ export interface DeviceTeachInInfo {
 
 export interface Device {
   sourceId: number;
+  transmitId?: number | null;
   targetId: number;
   name: string;
   profileId: string;
@@ -19,4 +20,8 @@ export interface Device {
   availability: 'online' | 'offline' | 'unknown';
   reportedState?: unknown;
   desiredState?: unknown;
+}
+
+export function deviceTransmitId(device: Device): number | undefined {
+  return device.transmitId === null ? undefined : (device.transmitId ?? device.sourceId);
 }

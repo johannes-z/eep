@@ -17,3 +17,17 @@ test('publishes sender ID, target ID, and EEP diagnostics', () => {
     { field: 'eep', name: 'EEP', value: 'D2-50-00' },
   ]);
 });
+
+test('does not report a transmit channel for receive-only devices', () => {
+  expect(
+    diagnosticValues({
+      sourceId: 0xffe76685,
+      transmitId: null,
+      targetId: 0x05010203,
+      name: 'Rocker',
+      profileId: 'F6-02-01',
+      capabilities: ['rocker'],
+      availability: 'online',
+    }),
+  ).toContainEqual({ field: 'target_id', name: 'Target ID', value: 'None' });
+});

@@ -25,6 +25,20 @@ The following issues are relevant for a number of applications but not mandatory
 
 ## RPS Teach-in
 
+### EnOcean2MQTT receive-only discovery
+
+F6-02-01 RPS switches and D5-00-01 1BS contacts are passively discovered even when
+channel pairing is inactive. A valid supported data telegram (or a 1BS learn telegram)
+adds the sender to **Discovered devices**. The user must confirm the EEP and add the
+device explicitly; unknown traffic is not automatically trusted or registered.
+
+These receive-only profiles have no transmit address and use no USB 300 channel.
+Channel pairing remains necessary for supported devices requiring outgoing telegrams.
+Passive discoveries survive cancellation of channel pairing, expire after five minutes
+without further traffic, and are limited to the 128 most recently seen senders.
+
+### Protocol procedure
+
 The RPS telegram can only send data and has no special telegram modification to teach-in the device. Therefore, the teach-in procedure takes place manually on the actuator/controller through a normal data telegram. The EEP profile must be manually supplied to the controller per sender ID.
 
 In learn mode, the receiving actuator reduces the input sensitivity in order to fade out weakly received data telegrams. This helps avoid inadvertently teaching-in sensors.

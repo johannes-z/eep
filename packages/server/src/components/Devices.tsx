@@ -3,6 +3,7 @@ import { Link } from '@tanstack/react-router';
 import { ChevronDown, Cpu, Fan, Power, Radio, Save, Search, Trash2, X } from 'lucide-react';
 import { useAppContext } from '../ui/App';
 import type { Device } from '../ui/types';
+import { deviceTransmitId } from '../devices/types';
 import { formatLastSeen, formatTargetId } from './deviceUtils';
 
 export function Devices() {
@@ -255,7 +256,11 @@ function DeviceRow({ device }: { device: Device }) {
                   </dd>
                   <dt>Sender / channel</dt>
                   <dd>
-                    <code>{formatTargetId(device.sourceId)}</code>
+                    {deviceTransmitId(device) === undefined ? (
+                      'None (receive only)'
+                    ) : (
+                      <code>{formatTargetId(deviceTransmitId(device)!)}</code>
+                    )}
                   </dd>
                   <dt>EEP</dt>
                   <dd>

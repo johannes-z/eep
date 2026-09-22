@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { DeviceRegistry } from './registry';
 import { sendDeviceCommand } from './commands';
+import { applyRadioPacket } from './inbound';
+import { f6Profile } from '../profiles/F6-02-01/profile';
 
 test('isolates nested state at registry input, read and notification boundaries', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-registry-snapshots-'));
@@ -75,6 +77,65 @@ test('loads configured devices and persists updates by source ID', async () => {
   });
   expect(configuration.devices.ffe76681).not.toHaveProperty('desiredState');
   expect(configuration.devices.ffe76681).not.toHaveProperty('roomName');
+});
+
+test('resets momentary reports on startup without losing other device state', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-registry-momentary-'));
+  const filePath = join(directory, 'configuration.yaml');
+  let registry = await DeviceRegistry.load(filePath);
+  try {
+    const press = { messageType: 'N', pressed: true, buttons: ['AI', 'BI'] };
+    const rocker = await registry.upsert({
+      sourceId: 0xffe76685,
+      targetId: 0x05010203,
+      name: 'Wall rocker',
+      profileId: 'F6-02-01',
+      capabilities: ['rocker'],
+      availability: 'online',
+      lastSeen: '2026-09-22T12:00:00.000Z',
+      reportedState: press,
+    });
+    await registry.upsert({
+      sourceId: 0xffe76686,
+      targetId: 0x05010204,
+      name: 'Window contact',
+      profileId: 'D5-00-01',
+      capabilities: ['contact'],
+      availability: 'unknown',
+    });
+    await applyRadioPacket({ RORG: 0xd5, senderId: '05010204', payload: [0x08] }, registry);
+    const contact = registry.findBySourceId(0xffe76686);
+    const fan = await registry.update(0xffe76681, {
+      reportedState: { isOn: true, percentage: 25, d2Value: 1 },
+      desiredState: { isOn: true, percentage: 75, d2Value: 3 },
+    });
+    expect(registry.findBySourceId(rocker.sourceId)?.reportedState).toEqual(press);
+    for (let restart = 0; restart < 2; restart += 1) {
+      await registry.close();
+      registry = await DeviceRegistry.load(filePath);
+      const restored = registry.findBySourceId(rocker.sourceId)!;
+      const { reportedState: _reportedState, ...metadata } = rocker;
+      expect(restored).toEqual(metadata);
+      expect(f6Profile.entity!.projectState(restored)).toEqual({ isOn: false });
+      expect(registry.findBySourceId(contact!.sourceId)).toEqual(contact);
+      expect(registry.findBySourceId(fan.sourceId)).toEqual(fan);
+      const database = new Database(join(directory, 'state.db'));
+      try {
+        expect(
+          database
+            .query('SELECT reported_state FROM device_runtime_state WHERE source_id = ?')
+            .get(rocker.sourceId),
+        ).toEqual({ reported_state: null });
+      } finally {
+        database.close();
+      }
+    }
+    await registry.update(rocker.sourceId, { reportedState: press });
+    expect(registry.findBySourceId(rocker.sourceId)?.reportedState).toEqual(press);
+  } finally {
+    await registry.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test('persists device removal without re-seeding the initial states', async () => {

@@ -9,14 +9,21 @@ import type { MqttClientLike } from './mqtt';
 import { MqttEntityBridge } from './integrations/homeassistant/bridge';
 
 class FakeMqttClient implements MqttClientLike {
-  published: Array<{ topic: string; payload: string }> = [];
+  connected = true;
+  published: Array<{
+    topic: string;
+    payload: string;
+    options: { qos: 1; retain: boolean };
+  }> = [];
   subscribed: string[] = [];
+  private connectListener?: () => void;
   private messageListener?: (topic: string, payload: Buffer) => void;
 
   on(
     event: 'connect' | 'close' | 'message',
     listener: (() => void) | ((topic: string, payload: Buffer) => void),
   ): this {
+    if (event === 'connect') this.connectListener = listener as () => void;
     if (event === 'message')
       this.messageListener = listener as (topic: string, payload: Buffer) => void;
     return this;
@@ -25,10 +32,10 @@ class FakeMqttClient implements MqttClientLike {
   publish(
     topic: string,
     payload: string,
-    _options: { qos: 1; retain: boolean },
+    options: { qos: 1; retain: boolean },
     callback?: (error?: Error) => void,
   ): void {
-    this.published.push({ topic, payload });
+    this.published.push({ topic, payload, options: { ...options } });
     callback?.();
   }
 
@@ -39,6 +46,11 @@ class FakeMqttClient implements MqttClientLike {
 
   send(topic: string, payload: string): void {
     this.messageListener?.(topic, Buffer.from(payload));
+  }
+
+  reconnect(): void {
+    this.connected = true;
+    this.connectListener?.();
   }
 }
 
@@ -139,25 +151,53 @@ test.each([true, false])(
         name: 'Wall rocker',
         profileId: 'F6-02-01',
         capabilities: ['rocker'],
-        availability: 'online',
+        availability: 'unknown',
       });
       bridge.start();
       await bridge.publishAll();
-      expect(client.published.some((message) => message.topic === stateTopic)).toBe(false);
+      expect(
+        client.published.filter((message) => message.topic === stateTopic).at(-1)?.payload,
+      ).toBe(JSON.stringify({ state: 'OFF' }));
+      expect(
+        client.published
+          .filter((message) => message.topic === 'eep/binary_sensor/ffe76685/availability')
+          .at(-1)?.payload,
+      ).toBe('offline');
       const discovery = client.published
         .filter((message) => message.topic === 'homeassistant/binary_sensor/ffe76685/config')
         .at(-1);
-      if (enabled) {
-        const configuration = JSON.parse(discovery?.payload ?? '{}');
-        expect(configuration).toMatchObject({
-          state_topic: stateTopic,
-          value_template: '{{ value_json.state }}',
-          json_attributes_topic: stateTopic,
-        });
-        expect(configuration.command_topic).toBeUndefined();
-        expect(configuration.device_class).toBeUndefined();
-      } else {
-        expect(discovery?.payload).toBe('');
+      expect(discovery?.payload).toBe('');
+      const configurations = client.published.filter(
+        (message) => message.topic.startsWith('homeassistant/binary_sensor/') && message.payload,
+      );
+      expect(configurations).toHaveLength(enabled ? 4 : 0);
+      for (const button of ['AI', 'A0', 'BI', 'B0']) {
+        const key = button.toLowerCase();
+        const message = client.published
+          .filter((item) => item.topic === `homeassistant/binary_sensor/ffe76685_${key}/config`)
+          .at(-1);
+        if (enabled) {
+          const configuration = JSON.parse(message?.payload ?? '{}');
+          expect(configuration).toMatchObject({
+            name: button,
+            unique_id: `eep_binary_sensor_ffe76685_${key}`,
+            object_id: `wall_rocker_${key}`,
+            default_entity_id: `binary_sensor.wall_rocker_${key}`,
+            state_topic: stateTopic,
+            value_template: `{{ 'ON' if value_json.messageType | default('') == 'N' and value_json.pressed | default(false) and '${button}' in value_json.buttons | default([]) else 'OFF' }}`,
+            json_attributes_topic: stateTopic,
+            device: { identifiers: ['eep_ffe76685'], name: 'Wall rocker' },
+            availability: [
+              { topic: 'eep/status' },
+              { topic: 'eep/binary_sensor/ffe76685/availability' },
+            ],
+            availability_mode: 'all',
+          });
+          expect(configuration.command_topic).toBeUndefined();
+          expect(configuration.device_class).toBeUndefined();
+        } else {
+          expect(message?.payload).toBe('');
+        }
       }
       expect(client.subscribed.some((topic) => topic.includes('/binary_sensor/'))).toBe(false);
       for (const { data, status, expected } of [
@@ -165,6 +205,31 @@ test.each([true, false])(
           data: 0x10,
           status: 0x30,
           expected: { state: 'ON', messageType: 'N', pressed: true, buttons: ['AI'] },
+        },
+        {
+          data: 0x30,
+          status: 0x30,
+          expected: { state: 'ON', messageType: 'N', pressed: true, buttons: ['A0'] },
+        },
+        {
+          data: 0x50,
+          status: 0x30,
+          expected: { state: 'ON', messageType: 'N', pressed: true, buttons: ['BI'] },
+        },
+        {
+          data: 0x70,
+          status: 0x30,
+          expected: { state: 'ON', messageType: 'N', pressed: true, buttons: ['B0'] },
+        },
+        {
+          data: 0x70,
+          status: 0x30,
+          expected: { state: 'ON', messageType: 'N', pressed: true, buttons: ['B0'] },
+        },
+        {
+          data: 0x60,
+          status: 0x30,
+          expected: { state: 'OFF', messageType: 'N', pressed: false, buttons: ['B0'] },
         },
         {
           data: 0x35,
@@ -193,6 +258,134 @@ test.each([true, false])(
               '{}',
           ),
         ).toEqual(expected);
+      }
+    } finally {
+      await bridge.stop();
+      await registry.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each([true, false])(
+  'maintains all rocker discovery entries through lifecycle changes (retain: %s)',
+  async (retain) => {
+    const directory = await mkdtemp(join(tmpdir(), 'eep-mqtt-rocker-lifecycle-'));
+    const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+    const client = new FakeMqttClient();
+    const settings = {
+      baseTopic: 'custom',
+      forceDisableRetain: !retain,
+      homeAssistant: { enabled: true, discoveryTopic: 'ha/custom', statusTopic: 'custom/status' },
+    };
+    let bridge = new MqttEntityBridge(client, registry, async () => undefined, settings);
+    const buttons = ['AI', 'A0', 'BI', 'B0'];
+    const lastMessage = (topic: string) =>
+      client.published.filter((message) => message.topic === topic).at(-1);
+    const expectCleared = (id: string) => {
+      for (const suffix of ['', ...buttons.map((button) => `_${button.toLowerCase()}`)]) {
+        expect(lastMessage(`ha/custom/binary_sensor/${id}${suffix}/config`)).toMatchObject({
+          payload: '',
+          options: { qos: 1, retain: true },
+        });
+      }
+    };
+    const expectDiscovery = (id: string, name: string) => {
+      expect(lastMessage(`ha/custom/binary_sensor/${id}/config`)?.payload).toBe('');
+      for (const button of buttons) {
+        const key = button.toLowerCase();
+        const message = lastMessage(`ha/custom/binary_sensor/${id}_${key}/config`);
+        expect(message?.options).toEqual({ qos: 1, retain });
+        expect(JSON.parse(message?.payload ?? '{}')).toMatchObject({
+          name: button,
+          unique_id: `eep_binary_sensor_${id}_${key}`,
+          object_id: `${name}_${key}`,
+          default_entity_id: `binary_sensor.${name}_${key}`,
+          state_topic: `custom/binary_sensor/${id}/state`,
+          device: { identifiers: [`eep_${id}`] },
+        });
+      }
+    };
+    try {
+      bridge.start();
+      await registry.upsert({
+        sourceId: 0xffe76685,
+        targetId: 0x05010203,
+        name: 'Wall rocker',
+        profileId: 'F6-02-01',
+        capabilities: ['rocker'],
+        availability: 'online',
+      });
+      await bridge.publishAll();
+      expectDiscovery('ffe76685', 'wall_rocker');
+
+      client.published = [];
+      await registry.update(0xffe76685, { name: 'Bedroom rocker' });
+      await bridge.publishAll();
+      expectDiscovery('ffe76685', 'bedroom_rocker');
+      for (const button of buttons) {
+        const messages = client.published.filter(
+          (message) =>
+            message.topic === `ha/custom/binary_sensor/ffe76685_${button.toLowerCase()}/config`,
+        );
+        expect(messages[0]).toMatchObject({ payload: '', options: { retain: true } });
+      }
+
+      client.published = [];
+      await registry.reassignSourceId(0xffe76685, 0xffe76686);
+      await bridge.publishAll();
+      expectCleared('ffe76685');
+      expectDiscovery('ffe76686', 'bedroom_rocker');
+
+      await applyRadioPacket(
+        { RORG: 0xf6, senderId: '05010203', payload: [0x15], status: 0x30 },
+        registry,
+      );
+      await bridge.publishAll();
+      const stateTopic = 'custom/binary_sensor/ffe76686/state';
+      const pressedState = JSON.stringify({
+        messageType: 'N',
+        pressed: true,
+        buttons: ['AI', 'BI'],
+        state: 'ON',
+      });
+      expect(lastMessage(stateTopic)?.payload).toBe(pressedState);
+      client.connected = false;
+      client.published = [];
+      client.reconnect();
+      await bridge.publishAll();
+      expectDiscovery('ffe76686', 'bedroom_rocker');
+      expect(lastMessage(stateTopic)?.payload).toBe(pressedState);
+
+      await bridge.stop();
+      expectCleared('ffe76686');
+      bridge = new MqttEntityBridge(client, registry, async () => undefined, {
+        ...settings,
+        homeAssistant: { ...settings.homeAssistant, enabled: false },
+      });
+      client.published = [];
+      bridge.start();
+      await bridge.publishAll();
+      expectCleared('ffe76686');
+      expect(lastMessage(stateTopic)?.payload).toBe(pressedState);
+      expect(
+        client.published.some((message) => message.topic.endsWith('/config') && message.payload),
+      ).toBe(false);
+
+      await bridge.stop();
+      bridge = new MqttEntityBridge(client, registry, async () => undefined, settings);
+      bridge.start();
+      await bridge.publishAll();
+      expectDiscovery('ffe76686', 'bedroom_rocker');
+      client.published = [];
+      await registry.remove(0xffe76686);
+      await bridge.publishAll();
+      expectCleared('ffe76686');
+      for (const field of ['eep', 'sender_id', 'target_id']) {
+        expect(lastMessage(`ha/custom/sensor/eep_ffe76686_${field}/config`)).toMatchObject({
+          payload: '',
+          options: { retain: true },
+        });
       }
     } finally {
       await bridge.stop();

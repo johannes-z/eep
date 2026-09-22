@@ -223,18 +223,26 @@ export class DeviceRegistry {
       if (devices === undefined) devices = initialDevices.map((device) => ({ ...device }));
 
       const runtimeStates = stateStore.load();
+      const resetDevices: Device[] = [];
       const hydratedDevices = devices.map((device) => {
         const runtimeState = runtimeStates.get(device.sourceId);
         if (!runtimeState) return device;
+        const profile = profiles.get(device.profileId);
         const validatedState = deserializeRuntimeState(
           { ...runtimeState },
-          profiles.get(device.profileId),
+          profile,
           device.capabilities,
         );
-        return { ...device, ...validatedState };
+        const hydratedDevice = { ...device, ...validatedState };
+        if (profile?.transientReportedState && hydratedDevice.reportedState !== undefined) {
+          delete hydratedDevice.reportedState;
+          resetDevices.push(hydratedDevice);
+        }
+        return hydratedDevice;
       });
       const registry = new DeviceRegistry(filePath, stateStore, hydratedDevices, profiles);
       await registry.save();
+      for (const device of resetDevices) stateStore.save(device);
       return registry;
     } catch (error) {
       stateStore.close();

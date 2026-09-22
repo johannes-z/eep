@@ -3,7 +3,13 @@ import type { Device } from '../../devices/types';
 import type { DeviceRegistry } from '../../devices/registry';
 import type { MqttClientLike, MqttSettings } from '../../mqtt';
 import { createDefaultProfileRegistry, type ProfileRegistry } from '../../profiles';
-import { deviceDiagnosticTopics, entityObjectId, entityTopics, restartTopics } from './topics';
+import {
+  deviceDiagnosticTopics,
+  entityDiscoveryEntries,
+  entityObjectId,
+  entityTopics,
+  restartTopics,
+} from './topics';
 import { bridgeDeviceInfo, deviceAvailability, deviceInfo, diagnosticValues } from './device';
 import { publish, publishOptions, subscribe } from './publisher';
 import { HomeAssistantStatePublisher } from './state';
@@ -162,10 +168,6 @@ export class MqttEntityBridge {
     const isFan = descriptor.kind === 'fan';
     const presets = descriptor.presets ?? [];
     const payload = {
-      name: null,
-      unique_id: `eep_${descriptor.kind}_${topics.id}`,
-      object_id: objectId,
-      default_entity_id: `${descriptor.kind}.${objectId}`,
       ...(descriptor.deviceClass ? { device_class: descriptor.deviceClass } : {}),
       ...(descriptor.commands.includes('command') ? { command_topic: topics.command } : {}),
       state_topic: topics.state,
@@ -196,12 +198,21 @@ export class MqttEntityBridge {
           }
         : {}),
     };
-    await publish(
-      this.client,
-      topics.discovery,
-      JSON.stringify(payload),
-      this.bridgePublishOptions,
-    );
+    for (const entry of entityDiscoveryEntries(device, descriptor, this.discoveryPrefix)) {
+      await publish(
+        this.client,
+        entry.topic,
+        JSON.stringify({
+          ...payload,
+          name: entry.name,
+          unique_id: entry.uniqueId,
+          object_id: entry.objectId,
+          default_entity_id: `${descriptor.kind}.${entry.objectId}`,
+          ...(entry.valueTemplate ? { value_template: entry.valueTemplate } : {}),
+        }),
+        this.bridgePublishOptions,
+      );
+    }
     this.publishedEntityObjectIds.set(device.sourceId, objectId);
     await this.publishDeviceDiagnosticDiscovery(device, descriptor.protocol);
     await this.subscribeDeviceCommands(device);
@@ -266,14 +277,21 @@ export class MqttEntityBridge {
   ): Promise<void> {
     const entity = this.profiles.get(device.profileId)?.entity;
     if (!entity) return;
+    const descriptor = entity.describe(device);
     const topics = entityTopics(
       device,
-      entity.describe(device).kind,
+      descriptor.kind,
       this.discoveryPrefix,
       this.baseTopic,
       this.bridgeAvailability,
     );
-    await publish(this.client, topics.discovery, '', options);
+    const discoveryTopics = new Set([
+      topics.discovery,
+      ...entityDiscoveryEntries(device, descriptor, this.discoveryPrefix).map(
+        (entry) => entry.topic,
+      ),
+    ]);
+    for (const topic of discoveryTopics) await publish(this.client, topic, '', options);
   }
 
   private async publishDeviceDiagnosticDiscovery(device: Device, model: string): Promise<void> {

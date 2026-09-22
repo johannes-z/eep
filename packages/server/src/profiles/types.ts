@@ -51,6 +51,12 @@ export interface ProfileEntityDescriptor {
   readonly kind: string;
   readonly deviceClass?: string;
   readonly jsonState?: boolean;
+  readonly discoveryEntities?: readonly {
+    readonly key: string;
+    readonly name: string;
+    readonly valueTemplate: string;
+  }[];
+  readonly publishInitialState?: boolean;
   readonly protocol: string;
   readonly power: boolean;
   readonly commands: readonly string[];
@@ -74,6 +80,7 @@ export interface ProfileEntityAdapter {
 export interface EepProfile {
   readonly metadata: ProfileMetadata;
   readonly entity?: ProfileEntityAdapter;
+  readonly transientReportedState?: boolean;
 
   defaultCapabilities(): JsonValue;
   validateCapabilities(value: unknown): JsonValue;

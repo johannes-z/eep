@@ -146,9 +146,18 @@ test.each([false, true])(
       manager.stop();
       await registry.close();
       registry = await DeviceRegistry.load(filePath);
-      expect(registry.findByTargetId(0x05010203)).toMatchObject({
+      const restored = registry.findByTargetId(0x05010203);
+      expect(restored).toMatchObject({
+        sourceId: targeted ? 0xffe76686 : 0xffe76685,
         profileId: 'F6-02-01',
-        reportedState: { messageType: 'U', pressed: false, buttonCount: 0 },
+        capabilities: ['rocker'],
+        teachIn: { eep: 'F6-02-01', direction: 'unidirectional', responseExpected: false },
+      });
+      expect(restored?.reportedState).toBeUndefined();
+      expect((await applyRadioPacket(packet, registry))?.device.reportedState).toEqual({
+        messageType: 'N',
+        pressed: true,
+        buttons: ['AI', 'BI'],
       });
     } finally {
       manager.stop();

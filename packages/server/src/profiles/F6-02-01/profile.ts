@@ -51,11 +51,18 @@ export const f6Profile: EepProfile = {
     rorg: 0xf6,
     description: 'Light and Blind Control - Application Style 1',
   },
+  transientReportedState: true,
 
   entity: {
     describe: () => ({
       kind: 'binary_sensor',
       jsonState: true,
+      discoveryEntities: buttons.map((button) => ({
+        key: button.toLowerCase(),
+        name: button,
+        valueTemplate: `{{ 'ON' if value_json.messageType | default('') == 'N' and value_json.pressed | default(false) and '${button}' in value_json.buttons | default([]) else 'OFF' }}`,
+      })),
+      publishInitialState: true,
       protocol: 'F6-02-01 rocker switch',
       power: false,
       commands: [],

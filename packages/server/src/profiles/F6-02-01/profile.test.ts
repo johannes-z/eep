@@ -27,6 +27,19 @@ test('registers F6-02-01 as a receive-only rocker switch', () => {
   expect(f6Profile.entity?.projectState(context)).toEqual({ isOn: false });
 });
 
+test('exposes four initially off momentary sensors with transient reports', () => {
+  const descriptor = f6Profile.entity!.describe(context);
+  expect(descriptor.publishInitialState).toBe(true);
+  expect(f6Profile.transientReportedState).toBe(true);
+  expect(descriptor.discoveryEntities).toEqual(
+    ['AI', 'A0', 'BI', 'B0'].map((button) => ({
+      key: button.toLowerCase(),
+      name: button,
+      valueTemplate: `{{ 'ON' if value_json.messageType | default('') == 'N' and value_json.pressed | default(false) and '${button}' in value_json.buttons | default([]) else 'OFF' }}`,
+    })),
+  );
+});
+
 test.each([
   { data: 0x10, button: 'AI' },
   { data: 0x30, button: 'A0' },

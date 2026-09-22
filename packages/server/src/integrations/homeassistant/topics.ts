@@ -1,4 +1,5 @@
 import type { Device } from '../../devices/types';
+import type { ProfileEntityDescriptor } from '../../profiles/types';
 
 export interface EntityTopics {
   id: string;
@@ -45,6 +46,27 @@ function nameObjectId(name: string): string {
 
 export function entityObjectId(device: Device): string {
   return nameObjectId(device.name) || `eep_${deviceId(device)}`;
+}
+
+export function entityDiscoveryEntries(
+  device: Device,
+  descriptor: ProfileEntityDescriptor,
+  discoveryPrefix: string,
+) {
+  const entities = descriptor.discoveryEntities ?? [
+    { key: '', name: null, valueTemplate: undefined },
+  ];
+  return entities.map((entity) => {
+    const suffix = entity.key ? `_${entity.key}` : '';
+    const id = `${deviceId(device)}${suffix}`;
+    return {
+      topic: `${discoveryPrefix}/${descriptor.kind}/${id}/config`,
+      uniqueId: `eep_${descriptor.kind}_${id}`,
+      objectId: `${entityObjectId(device)}${suffix}`,
+      name: entity.name,
+      valueTemplate: entity.valueTemplate,
+    };
+  });
 }
 
 export function entityTopics(

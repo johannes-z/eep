@@ -84,8 +84,9 @@ export class HomeAssistantStatePublisher {
       this.options.bridgePublishOptions,
     );
     if (
-      availability === 'online' &&
-      (descriptor.kind !== 'binary_sensor' || device.reportedState !== undefined)
+      (availability === 'online' &&
+        (descriptor.kind !== 'binary_sensor' || device.reportedState !== undefined)) ||
+      (descriptor.publishInitialState && device.reportedState === undefined)
     ) {
       if (descriptor.kind === 'fan' || descriptor.kind === 'binary_sensor') {
         await publish(

@@ -6,7 +6,25 @@ All notable changes to this project will be documented in this file.
 
 ### Features
 
+- Enhance device management with transmitId support for receive-only devices (2d8dae6)
+
+- Preserve Home Assistant discovery and publish offline availability on bridge stop (49c8ad4)
+
+- Implement ignored devices management in pairing process (0f9e06d)
+
+- Improve candidate profile selection logic in pairing component (3e73f77)
+
+## v1.4.0
+
+
+### Features
+
 - Implement momentary button sensors for F6-02-01 profile and enhance MQTT discovery (e304464)
+
+
+### Miscellaneous
+
+- Release v1.4.0 (9fcb724)
 
 ## v1.3.0
 

@@ -88,7 +88,7 @@ test('requires explicit EEP teach-in for passive A5 sensor discovery', async () 
   const manager = new TeachInManager(registry, 0xffe76685, async (_candidate, response) => {
     responses.push(response);
   });
-  const packet = { RORG: 0xa5, senderId: 0x051a8f95, payload: [0x10, 0x08, 0x46, 0x80] };
+  const packet = { RORG: 0xa5, senderId: 0x051a8f96, payload: [0x10, 0x08, 0x46, 0x80] };
   try {
     for (const payload of [
       [0x00, 0x85, 0x91, 0x0a],
@@ -103,14 +103,17 @@ test('requires explicit EEP teach-in for passive A5 sensor discovery', async () 
     expect(manager.observe(packet)).toMatchObject({
       targetId: packet.senderId,
       receiveOnly: true,
+      protocol: '4bs',
       eep: 'A5-04-01',
       profileOptions: ['A5-04-01'],
+      manufacturer: 0x46,
     });
     await manager.accept(packet.senderId);
     expect(registry.findByTargetId(packet.senderId)).toMatchObject({
       sourceId: packet.senderId,
       transmitId: null,
       profileId: 'A5-04-01',
+      teachIn: { manufacturerId: 0x46 },
     });
     expect(responses).toEqual([]);
     await applyRadioPacket({ ...packet, payload: [0x00, 125, 125, 0x0a] }, registry);
@@ -131,18 +134,30 @@ test('discovers and updates an A5-04-02 sensor from 4BS packets', async () => {
   const manager = new TeachInManager(registry, 0xffe76685);
   const query = { RORG: 0xa5, senderId: 0x0582fd3c, payload: [0x10, 0x10, 0x46, 0x80] };
   try {
+    expect(manager.observe({ ...query, payload: [0, 0xa4, 0x88, 0x0f] })).toBeUndefined();
+    expect(manager.observe({ ...query, payload: [0x10, 0x08, 0x46, 0x80] })).toMatchObject({
+      eep: 'A5-04-01',
+      profileOptions: ['A5-04-01'],
+    });
     expect(manager.observe(query)).toMatchObject({
       targetId: query.senderId,
       receiveOnly: true,
+      protocol: '4bs',
       eep: 'A5-04-02',
       profileOptions: ['A5-04-02'],
+      manufacturer: 0x46,
     });
     await manager.accept(query.senderId);
     expect(registry.findByTargetId(query.senderId)).toMatchObject({
       sourceId: query.senderId,
       transmitId: null,
       profileId: 'A5-04-02',
-      teachIn: { eep: 'A5-04-02', direction: 'unidirectional', responseExpected: false },
+      teachIn: {
+        eep: 'A5-04-02',
+        manufacturerId: 0x46,
+        direction: 'unidirectional',
+        responseExpected: false,
+      },
     });
 
     await applyRadioPacket(

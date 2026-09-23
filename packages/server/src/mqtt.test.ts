@@ -7,7 +7,11 @@ import { DeviceRegistry } from './devices/registry';
 import { applyRadioPacket } from './devices/inbound';
 import type { MqttClientLike } from './mqtt';
 import { MqttEntityBridge } from './integrations/homeassistant/bridge';
-import { a5Profile, a5TemperatureHumidityExtendedProfile } from './profiles';
+import {
+  a5Profile,
+  a5TemperatureHumidityExtendedProfile,
+  a5TemperatureHumidityProfile,
+} from './profiles';
 import { sendDeviceCommand } from './devices/commands';
 
 class FakeMqttClient implements MqttClientLike {
@@ -249,6 +253,38 @@ test.each([true, false])(
   },
 );
 
+test.each([
+  { profileId: 'A5-04-01', profile: a5TemperatureHumidityProfile },
+  { profileId: 'A5-04-02', profile: a5TemperatureHumidityExtendedProfile },
+])('does not publish an initial state for $profileId sensors', async ({ profileId, profile }) => {
+  const directory = await mkdtemp(join(tmpdir(), `eep-mqtt-${profileId}-initial-`));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  const client = new FakeMqttClient();
+  const bridge = new MqttEntityBridge(client, registry, async () => undefined);
+  const stateTopic = `eep/sensor/0582fd3c/state`;
+  try {
+    await registry.upsert({
+      sourceId: 0x0582fd3c,
+      targetId: 0x0582fd3c,
+      name: profileId,
+      profileId,
+      capabilities: profile.defaultCapabilities(),
+      availability: 'online',
+    });
+    bridge.start();
+    await bridge.publishAll();
+
+    expect(client.published.some((item) => item.topic === stateTopic)).toBe(false);
+    expect(
+      client.published.some((item) => item.topic === 'eep/sensor/0582fd3c/availability'),
+    ).toBe(true);
+  } finally {
+    await bridge.stop();
+    await registry.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('publishes A5-04-02 sensor entities, status, and diagnostics', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-mqtt-a5-sensor-wide-'));
   const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
@@ -277,7 +313,7 @@ test('publishes A5-04-02 sensor entities, status, and diagnostics', async () => 
 
     expect(
       JSON.parse(client.published.filter((item) => item.topic === stateTopic).at(-1)!.payload),
-    ).toEqual({ temperature: 15.84, humidity: 60.8, state: 'ON' });
+    ).toEqual({ temperature: 15.84, humidity: 60.8, db0_1: true, state: 'ON' });
     for (const [kind, key, fields] of [
       ['sensor', 'temperature', { device_class: 'temperature', unit_of_measurement: '\u00b0C' }],
       ['sensor', 'humidity', { device_class: 'humidity', unit_of_measurement: '%' }],
@@ -305,6 +341,21 @@ test('publishes A5-04-02 sensor entities, status, and diagnostics', async () => 
         unique_id: `eep_0582fd3c_${field}`,
       });
     }
+    const db0_1Diagnostic = client.published
+      .filter((item) => item.topic === 'homeassistant/binary_sensor/0582fd3c_tsensor/config')
+      .at(-1);
+    expect(JSON.parse(db0_1Diagnostic?.payload ?? '{}')).toMatchObject({
+      entity_category: 'diagnostic',
+      name: 'T-Sensor',
+      state_topic: stateTopic,
+      value_template: "{{ 'ON' if value_json.db0_1 else 'OFF' }}",
+      unique_id: 'eep_binary_sensor_0582fd3c_tsensor',
+    });
+    expect(
+      client.published.filter(
+        (item) => item.topic === 'homeassistant/binary_sensor/0582fd3c_db0_1/config',
+      ).at(-1)?.payload,
+    ).toBe('');
   } finally {
     await bridge.stop();
     await registry.close();

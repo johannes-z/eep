@@ -85,6 +85,7 @@ export class HomeAssistantStatePublisher {
     );
     if (
       (availability === 'online' &&
+        (descriptor.kind !== 'sensor' || device.reportedState !== undefined) &&
         (descriptor.kind !== 'binary_sensor' || device.reportedState !== undefined) &&
         (descriptor.kind !== 'climate' ||
           device.reportedState !== undefined ||

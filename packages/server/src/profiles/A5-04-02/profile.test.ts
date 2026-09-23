@@ -13,8 +13,8 @@ const decode = (payload: number[]) =>
 test('decodes A5-04-02 temperature and humidity values', () => {
   expect(decode([0, 125, 125, 8])).toEqual({
     kind: 'reported',
-    value: { temperature: 20, humidity: 50 },
-    reportedState: { temperature: 20, humidity: 50 },
+    value: { temperature: 20, humidity: 50, db0_1: false },
+    reportedState: { temperature: 20, humidity: 50, db0_1: false },
     clearDesiredState: true,
   });
   expect(decode([0, 250, 0, 8])).toMatchObject({
@@ -25,8 +25,8 @@ test('decodes A5-04-02 temperature and humidity values', () => {
   });
   expect(decode([0xa4, 0x98, 0x70, 0x0f])).toEqual({
     kind: 'reported',
-    value: { temperature: 15.84, humidity: 60.8 },
-    reportedState: { temperature: 15.84, humidity: 60.8 },
+    value: { temperature: 15.84, humidity: 60.8, db0_1: true },
+    reportedState: { temperature: 15.84, humidity: 60.8, db0_1: true },
     clearDesiredState: true,
   });
 });
@@ -52,6 +52,9 @@ test('exposes read-only extended temperature and humidity state', () => {
     'humidity',
   ]);
   expect(() => a5TemperatureHumidityExtendedProfile.parseCommand(context, {})).toThrow('read-only');
+  expect(() => a5TemperatureHumidityExtendedProfile.encodeCommand(context, { value: {} })).toThrow(
+    'read-only',
+  );
   expect(() =>
     a5TemperatureHumidityExtendedProfile.validateState(
       { temperature: 20, humidity: 50 },

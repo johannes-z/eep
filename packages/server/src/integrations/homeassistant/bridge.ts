@@ -5,6 +5,7 @@ import type { MqttClientLike, MqttSettings } from '../../mqtt';
 import { createDefaultProfileRegistry, type ProfileRegistry } from '../../profiles';
 import {
   deviceDiagnosticTopics,
+  entityDiscoveryTopic,
   entityDiscoveryEntries,
   entityObjectId,
   entityTopics,
@@ -339,6 +340,14 @@ export class MqttEntityBridge {
       topics.discovery,
       ...entityDiscoveryEntries(device, descriptor, this.discoveryPrefix).map(
         (entry) => entry.topic,
+      ),
+      ...(descriptor.deprecatedDiscoveryEntities ?? []).map((entity) =>
+        entityDiscoveryTopic(
+          device,
+          entity.kind ?? descriptor.kind,
+          entity.key,
+          this.discoveryPrefix,
+        ),
       ),
     ]);
     for (const topic of discoveryTopics) await publish(this.client, topic, '', options);

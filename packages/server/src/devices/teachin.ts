@@ -204,11 +204,13 @@ export class TeachInManager {
       const destinationId = parseEnOceanId(packet.destinationId);
       if (destinationId !== undefined && destinationId !== 0xffffffff) return undefined;
       const candidate: TeachInCandidate = {
+        ...(fourBs ? { protocol: '4bs' as const } : {}),
         sourceId: targetId,
         targetId,
         receiveOnly: true,
         eep: fourBs?.eep,
         profileOptions: passiveProfiles.map((profile) => profile.metadata.id),
+        ...(fourBs?.manufacturer !== undefined ? { manufacturer: fourBs.manufacturer } : {}),
         direction: 'unidirectional',
         responseExpected: false,
         seenAt: new Date().toISOString(),
@@ -460,7 +462,7 @@ export class TeachInManager {
     const session = this.session;
     if (transmitId !== undefined) this.reservedSourceIds.add(transmitId);
     const operation = (async () => {
-      if (candidate.protocol === '4bs') {
+      if (candidate.protocol === '4bs' && !candidate.receiveOnly) {
         await this.respond(candidate, 'teachInAccepted');
         if (!this.active || this.session !== session) throw new Error('Pairing session ended');
       }

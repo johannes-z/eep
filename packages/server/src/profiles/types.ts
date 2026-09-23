@@ -66,6 +66,10 @@ export interface ProfileEntityDescriptor {
     readonly max?: number;
     readonly step?: number;
   }[];
+  readonly deprecatedDiscoveryEntities?: readonly {
+    readonly key: string;
+    readonly kind?: 'sensor' | 'binary_sensor' | 'number' | 'switch' | 'select' | 'button';
+  }[];
   readonly publishInitialState?: boolean;
   readonly protocol: string;
   readonly power: boolean;

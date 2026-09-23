@@ -50,6 +50,16 @@ export function entityObjectId(device: Device): string {
   return nameObjectId(device.name) || `eep_${deviceId(device)}`;
 }
 
+export function entityDiscoveryTopic(
+  device: Device,
+  kind: string,
+  key: string,
+  discoveryPrefix: string,
+): string {
+  const suffix = key ? `_${key}` : '';
+  return `${discoveryPrefix}/${kind}/${deviceId(device)}${suffix}/config`;
+}
+
 export function entityDiscoveryEntries(
   device: Device,
   descriptor: ProfileEntityDescriptor,
@@ -65,7 +75,7 @@ export function entityDiscoveryEntries(
     return {
       ...entity,
       kind,
-      topic: `${discoveryPrefix}/${kind}/${id}/config`,
+      topic: entityDiscoveryTopic(device, kind, entity.key, discoveryPrefix),
       uniqueId: `eep_${kind}_${id}`,
       objectId: `${entityObjectId(device)}${suffix}`,
     };

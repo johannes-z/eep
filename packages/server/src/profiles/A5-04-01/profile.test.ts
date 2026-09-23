@@ -13,9 +13,12 @@ const decode = (payload: number[]) =>
 test('decodes A5-04-01 temperature and humidity values', () => {
   expect(decode([0, 125, 125, 8])).toEqual({
     kind: 'reported',
-    value: { temperature: 20, humidity: 50 },
-    reportedState: { temperature: 20, humidity: 50 },
+    value: { temperature: 20, humidity: 50, db0_1: false },
+    reportedState: { temperature: 20, humidity: 50, db0_1: false },
     clearDesiredState: true,
+  });
+  expect(decode([0, 125, 125, 0x0a])).toMatchObject({
+    reportedState: { db0_1: true },
   });
   expect(decode([0, 250, 0, 8])).toMatchObject({
     reportedState: { temperature: 0, humidity: 100 },
@@ -44,6 +47,9 @@ test('rejects teach-in, reserved values, wrong RORG, and malformed payloads', ()
 test('exposes read-only temperature and humidity state', () => {
   expect(a5TemperatureHumidityProfile.defaultCapabilities()).toEqual(['temperature', 'humidity']);
   expect(() => a5TemperatureHumidityProfile.parseCommand(context, {})).toThrow('read-only');
+  expect(() => a5TemperatureHumidityProfile.encodeCommand(context, { value: {} })).toThrow(
+    'read-only',
+  );
   expect(() =>
     a5TemperatureHumidityProfile.validateState(
       { temperature: 20, humidity: 50 },

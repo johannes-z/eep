@@ -4,6 +4,7 @@ interface TemperatureHumidityState {
   readonly [key: string]: JsonValue;
   temperature: number;
   humidity: number;
+  db0_1?: boolean;
 }
 
 function readOnly(): never {
@@ -15,6 +16,7 @@ function state(value: unknown, field: ProfileStateField): TemperatureHumiditySta
     throw new Error(`Invalid ${field} for A5-04-02`);
   }
   const candidate = value as Record<string, unknown>;
+  const db0_1 = candidate.db0_1;
   if (
     typeof candidate.temperature !== 'number' ||
     !Number.isFinite(candidate.temperature) ||
@@ -23,13 +25,15 @@ function state(value: unknown, field: ProfileStateField): TemperatureHumiditySta
     typeof candidate.humidity !== 'number' ||
     !Number.isFinite(candidate.humidity) ||
     candidate.humidity < 0 ||
-    candidate.humidity > 100
+    candidate.humidity > 100 ||
+    (db0_1 !== undefined && typeof db0_1 !== 'boolean')
   ) {
     throw new Error(`Invalid ${field} for A5-04-02`);
   }
   return {
     temperature: candidate.temperature,
     humidity: candidate.humidity,
+    ...(db0_1 === undefined ? {} : { db0_1 }),
   };
 }
 
@@ -50,6 +54,7 @@ function decode(packet: ProfilePacket): TemperatureHumidityState | undefined {
     {
       temperature: Math.round(((data[2] * 80) / 250 - 20) * 100) / 100,
       humidity: (data[1] * 100) / 250,
+      db0_1: (data[3] & 0x02) !== 0,
     },
     'reportedState',
   );
@@ -85,7 +90,15 @@ export const a5TemperatureHumidityExtendedProfile: EepProfile = {
           stateClass: 'measurement',
           valueTemplate: '{{ value_json.humidity }}',
         },
+        {
+          key: 'tsensor',
+          name: 'T-Sensor',
+          kind: 'binary_sensor',
+          entityCategory: 'diagnostic',
+          valueTemplate: "{{ 'ON' if value_json.db0_1 else 'OFF' }}",
+        },
       ],
+      deprecatedDiscoveryEntities: [{ key: 'db0_1', kind: 'binary_sensor' }],
       protocol: 'A5-04-02 temperature and humidity sensor',
       power: false,
       commands: [],

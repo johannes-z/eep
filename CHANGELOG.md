@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 
 
+### Bug Fixes
+
+- Correct targetId usage in PacketRow and ensure proper formatting in PacketListener (9cd2809)
+
+
+### Features
+
+- Add A5-20-06 profile for Micropelt heating actuator (8a14cab)
+
+- Refactor packet listener to use SQLite for persistent storage and improve packet management (10e258a)
+
+- Update A5-20-06 teach-in instructions and add revision-specific details in documentation (ab2018b)
+
+## v1.5.0
+
+
 ### Features
 
 - Enhance device management with transmitId support for receive-only devices (2d8dae6)
@@ -13,6 +29,11 @@ All notable changes to this project will be documented in this file.
 - Implement ignored devices management in pairing process (0f9e06d)
 
 - Improve candidate profile selection logic in pairing component (3e73f77)
+
+
+### Miscellaneous
+
+- Release v1.5.0 (4ff5fb9)
 
 ## v1.4.0
 

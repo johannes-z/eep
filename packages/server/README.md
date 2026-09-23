@@ -119,8 +119,19 @@ Remote commissioning (ReMan/ReCom), security-code changes, and link-table editin
 are not implemented.
 
 To pair, select an unused sender channel on the Pairing page, then hold the MVA005
-wheel at either end stop for at least five seconds until its green LED signals
-teach-in. The server identifies `A5-20-06` and the manufacturer from the 4BS query
+wheel at either end stop until the first green flash after about five seconds.
+The next action depends on the device revision:
+
+- **REV1.5 (July 2020 manual):** turn to the **opposite end stop and immediately
+  release**. Releasing alone does not complete the documented gesture. See
+  [section 6.1](https://www.manualslib.de/manual/1106929/Micropelt-Mva005-Rev1-5-Enocean.html?page=11#manual).
+- **March 2019 manual:** release at the first green flash, as shown in its
+  [teach-in flowchart](https://www.manualslib.com/manual/1603033/Micropelt-Itrv-Mva-005.html?page=16#manual).
+
+The first flash is not pairing confirmation: a subsequent green flash confirms
+success; three red flashes indicate failure. Do not keep holding for ten seconds,
+which is part of the manual reset sequence.
+The server identifies `A5-20-06` and the manufacturer from the 4BS query
 and automatically sends the variation 3 acknowledgement from the selected channel.
 For Micropelt manufacturer `0049`, `80 30 49 80` is answered with `80 30 49 F0`,
 not a UTE response. Mount the actuator and trigger its reference run as described

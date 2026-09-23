@@ -6,7 +6,14 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { a5Profile } from '../profiles';
-import { build4bsFrame, Esp3Parser } from './esp3';
+import {
+  build4bsFrame,
+  build4bsTeachInResponse,
+  buildUteTeachInQuery,
+  Esp3Parser,
+  parseRadioERP1,
+} from './esp3';
+import { getChecksum } from '../util/getChecksum';
 import { PacketListener } from './listener';
 import { sendDeviceCommand } from '../devices/commands';
 import type { TransportSettings } from '../config';
@@ -96,6 +103,76 @@ test('automatically answers actuator wakes and captures RX/TX without repeating 
       reportedState: { temperature: 20 },
     });
   } finally {
+    await transport.stop();
+    await registry.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('channel UTE probe and dongle acknowledgement do not block subsequent A5-20-06 teach-in', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-runtime-4bs-pairing-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  const connection = new FakeConnection();
+  const sourceId = 0xffe76685;
+  const targetId = 0x05010203;
+  const listener = new PacketListener();
+  const teachIn = new TeachInManager(
+    registry,
+    sourceId,
+    async (candidate, response) => {
+      expect(candidate.protocol).toBe('4bs');
+      const payload = build4bsTeachInResponse(
+        candidate.sourceId,
+        candidate.targetId,
+        candidate.requestPayload,
+        response,
+      );
+      connection.write(payload);
+      listener.captureOutgoing(payload);
+    },
+    undefined,
+    async (senderId) => {
+      const payload = buildUteTeachInQuery(senderId);
+      connection.write(payload);
+      listener.captureOutgoing(payload);
+    },
+  );
+  const transport = new TransportRuntime(connection, registry, teachIn, () => undefined);
+  transport.onPacket((frame, radio, direction) => listener.capture(frame, radio, direction));
+  try {
+    await transport.start();
+    teachIn.start();
+    await teachIn.transmit(sourceId);
+    expect(listener.snapshot().packets[0]).toMatchObject({
+      direction: 'tx',
+      data: 'D4 80 FF 0B 00 00 50 D2 FF E7 66 85 00',
+    });
+    const header = [0, 1, 0, 2];
+    connection.emit('data', Uint8Array.from([0x55, ...header, getChecksum(header), 0, 0]));
+    expect(listener.snapshot().packets[1]).toMatchObject({
+      direction: 'rx',
+      packetType: 2,
+      data: '00',
+    });
+    expect(teachIn.isActive()).toBe(true);
+    expect(teachIn.listCandidates()).toEqual([]);
+    expect(registry.findByTargetId(targetId)).toBeUndefined();
+    expect(connection.write).toHaveBeenCalledTimes(1);
+
+    connection.emit('data', build4bsFrame(targetId, 0xffffffff, [0x80, 0x30, 0x49, 0x80]));
+    await teachIn.accept(targetId);
+    expect(connection.write).toHaveBeenCalledTimes(2);
+    const response = new Esp3Parser().push(connection.write.mock.calls[1][0])[0];
+    expect(parseRadioERP1(response)).toMatchObject({
+      RORG: 0xa5,
+      senderId: 'ffe76685',
+      destinationId: '05010203',
+      payload: [0x80, 0x30, 0x49, 0xf0],
+    });
+    expect(registry.findByTargetId(targetId)).toMatchObject({ sourceId, profileId: 'A5-20-06' });
+    expect(teachIn.isActive()).toBe(false);
+  } finally {
+    teachIn.stop();
     await transport.stop();
     await registry.close();
     await rm(directory, { recursive: true, force: true });

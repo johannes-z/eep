@@ -8,7 +8,7 @@ import { parseEnOceanId } from '../util';
 export type TransmitListener = (payload: Uint8Array) => void | Promise<void>;
 
 export async function sendDeviceCommand(
-  socket: TransportConnection,
+  socket: TransportConnection | (() => TransportConnection),
   registry: DeviceRegistry,
   device: Device,
   request: unknown,
@@ -24,7 +24,8 @@ export async function sendDeviceCommand(
   const command = profile.parseCommand(context, request);
   const payload = profile.encodeCommand(context, command);
   if (profile.commandDelivery !== 'onReceive') {
-    await socket.write(payload);
+    const connection = typeof socket === 'function' ? socket() : socket;
+    await connection.write(payload);
     await onTransmit?.(payload);
   }
   if (command.desiredState !== undefined) {

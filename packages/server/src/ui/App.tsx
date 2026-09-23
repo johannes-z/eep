@@ -11,7 +11,7 @@ import type { AppSnapshot, CommandBody, TeachInCandidate } from './types';
 
 interface AppContextValue extends AppSnapshot {
   busyTargets: ReadonlySet<number>;
-  onCommand: (sourceId: number, body: CommandBody) => void;
+  onCommand: (sourceId: number, body: CommandBody) => Promise<void>;
   onDeleteDevice: (sourceId: number) => Promise<void>;
   onRenameDevice: (sourceId: number, name: string) => Promise<void>;
   onPairChannel: (sourceId: number) => void;
@@ -133,9 +133,7 @@ export function App() {
                 value={{
                   ...snapshot,
                   busyTargets,
-                  onCommand: (sourceId, body) => {
-                    void deviceRequest(sourceId, 'POST', body, true).catch(() => undefined);
-                  },
+                  onCommand: (sourceId, body) => deviceRequest(sourceId, 'POST', body, true),
                   onDeleteDevice: (sourceId) => deviceRequest(sourceId, 'DELETE'),
                   onRenameDevice: (sourceId, name) => deviceRequest(sourceId, 'PUT', { name }),
                   onPairChannel: (sourceId) => {

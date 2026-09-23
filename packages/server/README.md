@@ -140,7 +140,13 @@ time-critical acknowledgement precedes pairing persistence; if persistence fails
 repeat pairing after resolving the storage error.
 
 Commands update persistent desired state and are transmitted when the actuator
-next reports, not immediately while it sleeps. Every valid report receives a reply
+next reports, not immediately while it sleeps. Apply saves these settings even
+while the transceiver is disconnected; they survive page reloads and server restarts.
+The control form distinguishes unsaved edits, a successful save for delivery on
+the next device telegram, and validation or storage errors. A save confirmation
+does not mean the actuator has received the command. Devices requiring immediate
+transmission still require a connected transport.
+Every valid report receives a reply
 from its assigned channel. Reported valve position and requested setpoint remain
 separate. A reference-run request is cleared after a successful transport write;
 this is not confirmation of physical execution. A failed write retains the request.

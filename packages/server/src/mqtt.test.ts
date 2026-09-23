@@ -85,10 +85,8 @@ test.each([true, false])(
       registry,
       (device, request) =>
         sendDeviceCommand(
-          {
-            write: () => {
-              throw new Error('Actuator is asleep');
-            },
+          () => {
+            throw new Error('Transport is disconnected');
           },
           registry,
           device,

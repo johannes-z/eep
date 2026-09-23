@@ -116,7 +116,9 @@ function DeviceRow({ device }: { device: Device }) {
   const hasState = device.reportedState !== undefined || device.desiredState !== undefined;
   const currentTemperature = state?.attributes?.currentTemperature;
   const valvePosition = state?.attributes?.valvePosition;
-  const disabled = busyTargets.has(device.sourceId) || !transport.connected;
+  const disabled =
+    busyTargets.has(device.sourceId) ||
+    (!transport.connected && device.profile?.commandDelivery !== 'onReceive');
   const percentage =
     entity?.percentage && state?.percentage !== undefined
       ? Math.round((state.percentage / entity.percentage.max) * 100)
@@ -192,7 +194,9 @@ function DeviceRow({ device }: { device: Device }) {
                 disabled={disabled}
                 title={state?.isOn ? 'Turn off' : 'Turn on'}
                 aria-label={`${state?.isOn ? 'Turn off' : 'Turn on'} ${device.name}`}
-                onClick={() => onCommand(device.sourceId, { isOn: !state?.isOn })}
+                onClick={() => {
+                  void onCommand(device.sourceId, { isOn: !state?.isOn }).catch(() => undefined);
+                }}
               >
                 <Power size={16} />
               </button>
@@ -204,12 +208,12 @@ function DeviceRow({ device }: { device: Device }) {
                 value={control}
                 onChange={(event) => {
                   const value = event.target.value;
-                  onCommand(
+                  void onCommand(
                     device.sourceId,
                     value.startsWith('preset:')
                       ? { preset: value.slice(7) }
                       : { percentage: Number(value.slice(11)) },
-                  );
+                  ).catch(() => undefined);
                 }}
               >
                 <option
@@ -305,7 +309,6 @@ function DeviceRow({ device }: { device: Device }) {
                 </dl>
                 {entity?.controls?.length && (
                   <DeviceCommandForm
-                    key={JSON.stringify(device.desiredState ?? null)}
                     device={device}
                     disabled={disabled}
                   />
@@ -325,11 +328,18 @@ function DeviceRow({ device }: { device: Device }) {
 
 function DeviceCommandForm({ device, disabled }: { device: Device; disabled: boolean }) {
   const { onCommand } = useAppContext();
+  const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [message, setMessage] = useState({ text: '', error: false });
   const controls = device.profile?.entity?.controls ?? [];
   const attributes = device.entityState?.attributes ?? {};
   return (
     <form
-      onSubmit={(event) => {
+      onChange={() => {
+        setDirty(true);
+        setMessage({ text: '', error: false });
+      }}
+      onSubmit={async (event) => {
         event.preventDefault();
         const form = new FormData(
           event.currentTarget,
@@ -351,13 +361,33 @@ function DeviceCommandForm({ device, disabled }: { device: Device; disabled: boo
                     : Number(value)
                   : control.options?.find((option) => String(option.value) === value)?.value;
           }
-        onCommand(device.sourceId, request);
+        setSaving(true);
+        setMessage({ text: '', error: false });
+        try {
+          await onCommand(device.sourceId, request);
+          setDirty(false);
+          setMessage({
+            text:
+              device.profile?.commandDelivery === 'onReceive'
+                ? 'Saved. Delivery on next device telegram.'
+                : 'Command sent.',
+            error: false,
+          });
+        } catch (reason) {
+          setMessage({
+            text: reason instanceof Error ? reason.message : 'Failed to save device settings',
+            error: true,
+          });
+        } finally {
+          setSaving(false);
+        }
       }}
     >
       <h3>Control settings</h3>
       <fieldset
+        key={JSON.stringify(device.desiredState ?? null)}
         className="device-command-grid"
-        disabled={disabled}
+        disabled={disabled || saving}
       >
         {controls
           .filter((control) => control.kind !== 'action')
@@ -430,6 +460,14 @@ function DeviceCommandForm({ device, disabled }: { device: Device; disabled: boo
             ))}
         </div>
       </fieldset>
+      {(saving || message.text || dirty) && (
+        <p
+          className={`form-message${message.error ? ' error' : ''}`}
+          role={message.error ? 'alert' : 'status'}
+        >
+          {saving ? 'Saving...' : message.text || 'Unsaved changes'}
+        </p>
+      )}
     </form>
   );
 }

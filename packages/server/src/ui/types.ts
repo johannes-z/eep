@@ -16,6 +16,7 @@ export interface Device extends RegisteredDevice {
   profile?: {
     id: string;
     description: string;
+    commandDelivery?: 'onReceive';
     entity?: ProfileEntityDescriptor;
   };
   entityState?: ProfileEntityState;

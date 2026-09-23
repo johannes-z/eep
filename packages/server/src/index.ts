@@ -207,7 +207,7 @@ async function startServer(
       loadedRegistry,
       (device, value) =>
         sendDeviceCommand(
-          activeTransportRuntime.current,
+          () => activeTransportRuntime.current,
           loadedRegistry,
           device,
           value,

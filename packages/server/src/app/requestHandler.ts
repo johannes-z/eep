@@ -119,6 +119,7 @@ export function createRequestHandler(
             profile: {
               id: profile.metadata.id,
               description: profile.metadata.description,
+              ...(profile.commandDelivery ? { commandDelivery: profile.commandDelivery } : {}),
               ...(entity ? { entity: entity.describe(device) } : {}),
             },
           }
@@ -129,7 +130,7 @@ export function createRequestHandler(
 
   async function sendCommand(device: Device, request: unknown): Promise<void> {
     await sendDeviceCommand(
-      getSocket(),
+      getSocket,
       options.registry,
       device,
       request,

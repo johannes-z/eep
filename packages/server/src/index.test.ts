@@ -32,13 +32,13 @@ afterEach(async () => {
 });
 
 function createRequestHandler(
-  socket: TransportConnection,
+  socket: TransportConnection | (() => TransportConnection),
   options: Partial<RequestHandlerOptions> = {},
 ) {
   const registry = options.registry ?? fixtureRegistry;
   const teachIn = options.teachIn ?? new TeachInManager(registry, 0xffe76685);
   pairingSessions.push(teachIn);
-  return createHandler(() => socket, {
+  return createHandler(typeof socket === 'function' ? socket : () => socket, {
     registry,
     teachIn,
     listener: new PacketListener(),
@@ -64,7 +64,11 @@ test('exposes A5 actuator controls and queues validated HTTP commands', async ()
     capabilities: a5Profile.defaultCapabilities(),
     availability: 'online',
   });
-  const handler = createRequestHandler(socket);
+  let connectionAttempts = 0;
+  const handler = createRequestHandler(() => {
+    connectionAttempts++;
+    throw new Error('EnOcean transport is not connected');
+  });
   const command = (body: unknown) =>
     handler(
       new Request('http://localhost/api/devices/ffe76685/command', {
@@ -84,9 +88,57 @@ test('exposes A5 actuator controls and queues validated HTTP commands', async ()
   expect((await command({ setpoint: 41 })).status).toBe(400);
   const snapshot = handler.snapshot().devices.find((device) => device.sourceId === 0xffe76685);
   expect(snapshot).toMatchObject({
-    profile: { entity: { kind: 'climate', temperature: { min: 0, max: 40, step: 0.5 } } },
+    profile: {
+      commandDelivery: 'onReceive',
+      entity: { kind: 'climate', temperature: { min: 0, max: 40, step: 0.5 } },
+    },
     entityState: { attributes: { targetTemperature: 22.5 } },
   });
+  const formSettings = {
+    mode: 'valvePosition',
+    setpoint: 65,
+    roomTemperature: null,
+    communicationInterval: 5,
+    temperatureSensor: 'flow',
+    summerMode: false,
+    standby: false,
+  };
+  expect((await command(formSettings)).status).toBe(200);
+  expect(socket.writes).toEqual([]);
+  const refreshed = await handler(new Request('http://localhost/api/devices'));
+  expect(
+    (await refreshed.json()).find((device: { sourceId: number }) => device.sourceId === 0xffe76685),
+  ).toMatchObject({
+    desiredState: formSettings,
+    entityState: {
+      attributes: {
+        mode: 'valvePosition',
+        setpoint: 65,
+        communicationInterval: 5,
+        requestedTemperatureSensor: 'flow',
+      },
+    },
+  });
+  await fixtureRegistry.close();
+  fixtureRegistry = await DeviceRegistry.load(join(fixtureDirectory, 'configuration.yaml'));
+  expect(fixtureRegistry.findBySourceId(0xffe76685)?.desiredState).toMatchObject(formSettings);
+  expect(connectionAttempts).toBe(0);
+});
+
+test('rejects immediate HTTP commands while the transport is disconnected', async () => {
+  const handler = createRequestHandler(() => {
+    throw new Error('EnOcean transport is not connected');
+  });
+  const response = await handler(
+    new Request('http://localhost/api/devices/ffe76681/command', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ value: 1 }),
+    }),
+  );
+  expect(response.status).toBe(400);
+  expect(await response.json()).toEqual({ error: 'EnOcean transport is not connected' });
+  expect(fixtureRegistry.findBySourceId(0xffe76681)?.desiredState).toBeUndefined();
 });
 
 test('requires explicit profile selection when accepting a 1BS candidate', async () => {

@@ -116,6 +116,8 @@ function DeviceRow({ device }: { device: Device }) {
   const hasState = device.reportedState !== undefined || device.desiredState !== undefined;
   const currentTemperature = state?.attributes?.currentTemperature;
   const valvePosition = state?.attributes?.valvePosition;
+  const temperature = state?.attributes?.temperature;
+  const humidity = state?.attributes?.humidity;
   const disabled =
     busyTargets.has(device.sourceId) ||
     (!transport.connected && device.profile?.commandDelivery !== 'onReceive');
@@ -167,12 +169,19 @@ function DeviceRow({ device }: { device: Device }) {
             ? 'Not reported'
             : entity?.kind === 'climate'
               ? `${typeof currentTemperature === 'number' ? currentTemperature : '--'} C / ${typeof valvePosition === 'number' ? valvePosition : '--'}%`
-              : entity?.deviceClass === 'opening'
-                ? state?.isOn
-                  ? 'Open'
-                  : 'Closed'
-                : (state?.preset ??
-                  (state?.isOn ? (levels.length ? `${percentage}%` : 'On') : 'Off'))}
+              : entity?.kind === 'sensor'
+                ? [
+                    typeof temperature === 'number' ? `${temperature} \u00b0C` : undefined,
+                    typeof humidity === 'number' ? `${humidity} %` : undefined,
+                  ]
+                    .filter((value): value is string => value !== undefined)
+                    .join(' / ') || 'Not reported'
+                : entity?.deviceClass === 'opening'
+                  ? state?.isOn
+                    ? 'Open'
+                    : 'Closed'
+                  : (state?.preset ??
+                    (state?.isOn ? (levels.length ? `${percentage}%` : 'On') : 'Off'))}
         </td>
         <td data-label="Control">
           <div className="device-controls">

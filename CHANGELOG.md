@@ -4,11 +4,28 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 
 
+### Bug Fixes
+
+- Add temperature and humidity display for sensor devices in DeviceRow (b3fbdd2)
+
+
+### Features
+
+- Implement explicit EEP teach-in requirement for A5 sensor discovery and enhance teach-in manager logic (7ce8658)
+
+## v1.8.0
+
+
 ### Features
 
 - Enhance A5-20-06 profile with valve setpoint management and improve command handling (6eec586)
 
 - Add A5-04-01 temperature and humidity sensor profile with decoding and testing (163049e)
+
+
+### Miscellaneous
+
+- Release v1.8.0 (8e1a203)
 
 ## v1.7.0
 

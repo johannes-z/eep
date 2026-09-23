@@ -7,7 +7,7 @@ import { DeviceRegistry } from './devices/registry';
 import { applyRadioPacket } from './devices/inbound';
 import type { MqttClientLike } from './mqtt';
 import { MqttEntityBridge } from './integrations/homeassistant/bridge';
-import { a5Profile } from './profiles';
+import { a5Profile, a5TemperatureHumidityExtendedProfile } from './profiles';
 import { sendDeviceCommand } from './devices/commands';
 
 class FakeMqttClient implements MqttClientLike {
@@ -248,6 +248,69 @@ test.each([true, false])(
     }
   },
 );
+
+test('publishes A5-04-02 sensor entities, status, and diagnostics', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-mqtt-a5-sensor-wide-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  const client = new FakeMqttClient();
+  const bridge = new MqttEntityBridge(client, registry, async () => undefined, {
+    homeAssistant: { enabled: true, discoveryTopic: 'homeassistant', statusTopic: 'eep/status' },
+  });
+  const stateTopic = 'eep/sensor/0582fd3c/state';
+  try {
+    await registry.upsert({
+      sourceId: 0x0582fd3c,
+      targetId: 0x0582fd3c,
+      transmitId: null,
+      name: 'FAFT60',
+      profileId: 'A5-04-02',
+      capabilities: a5TemperatureHumidityExtendedProfile.defaultCapabilities(),
+      availability: 'online',
+    });
+    bridge.start();
+    await bridge.publishAll();
+    await applyRadioPacket(
+      { RORG: 0xa5, senderId: 0x0582fd3c, payload: [0, 0xa4, 0x88, 0x0f] },
+      registry,
+    );
+    await bridge.publishAll();
+
+    expect(
+      JSON.parse(client.published.filter((item) => item.topic === stateTopic).at(-1)!.payload),
+    ).toEqual({ temperature: 23.52, humidity: 65.6, state: 'ON' });
+    for (const [kind, key, fields] of [
+      ['sensor', 'temperature', { device_class: 'temperature', unit_of_measurement: '\u00b0C' }],
+      ['sensor', 'humidity', { device_class: 'humidity', unit_of_measurement: '%' }],
+    ] as const) {
+      const message = client.published
+        .filter((item) => item.topic === `homeassistant/${kind}/0582fd3c_${key}/config`)
+        .at(-1);
+      expect(JSON.parse(message?.payload ?? '{}')).toMatchObject({
+        ...fields,
+        state_topic: stateTopic,
+        state_class: 'measurement',
+        value_template: `{{ value_json.${key} }}`,
+        unique_id: `eep_sensor_0582fd3c_${key}`,
+        default_entity_id: `sensor.faft60_${key}`,
+        availability: [{ topic: 'eep/status' }, { topic: 'eep/sensor/0582fd3c/availability' }],
+      });
+    }
+    for (const field of ['sender_id', 'target_id', 'eep']) {
+      const configuration = client.published
+        .filter((item) => item.topic === `homeassistant/sensor/eep_0582fd3c_${field}/config`)
+        .at(-1);
+      expect(JSON.parse(configuration?.payload ?? '{}')).toMatchObject({
+        entity_category: 'diagnostic',
+        state_topic: `eep/device/0582fd3c/${field}/state`,
+        unique_id: `eep_0582fd3c_${field}`,
+      });
+    }
+  } finally {
+    await bridge.stop();
+    await registry.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test('maintains mixed-domain actuator discovery on rename, reconnect and removal', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-mqtt-heating-lifecycle-'));

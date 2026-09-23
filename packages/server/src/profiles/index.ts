@@ -3,6 +3,7 @@ export { d5Profile } from './D5-00-01/profile';
 export { f6Profile } from './F6-02-01/profile';
 export { a5Profile } from './A5-20-06/profile';
 export { a5TemperatureHumidityProfile } from './A5-04-01/profile';
+export { a5TemperatureHumidityExtendedProfile } from './A5-04-02/profile';
 export { ProfileRegistry, normalizeProfileId } from './registry';
 export type {
   EepProfile,
@@ -24,6 +25,7 @@ import { d5Profile } from './D5-00-01/profile';
 import { f6Profile } from './F6-02-01/profile';
 import { a5Profile } from './A5-20-06/profile';
 import { a5TemperatureHumidityProfile } from './A5-04-01/profile';
+import { a5TemperatureHumidityExtendedProfile } from './A5-04-02/profile';
 import { ProfileRegistry } from './registry';
 
 export function createDefaultProfileRegistry(): ProfileRegistry {
@@ -33,5 +35,6 @@ export function createDefaultProfileRegistry(): ProfileRegistry {
     f6Profile,
     a5Profile,
     a5TemperatureHumidityProfile,
+    a5TemperatureHumidityExtendedProfile,
   ]);
 }

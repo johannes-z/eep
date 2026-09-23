@@ -48,6 +48,23 @@ test('parses 4BS profile/manufacturer and answers the MVA005 variation 3 query',
   });
 });
 
+test('parses an A5-04-02 value update packet', () => {
+  const radio = parseRadioERP1({
+    packetType: 1,
+    data: [0xa5, 0xa4, 0xa4, 0x88, 0x0f, 0x05, 0x82, 0xfd, 0x3c, 0x30],
+    optionalData: [0, 0xff, 0xff, 0xff, 0xff, 0x44, 0],
+  });
+
+  expect(radio).toEqual({
+    RORG: 0xa5,
+    payload: [0xa4, 0xa4, 0x88, 0x0f],
+    senderId: '0582fd3c',
+    status: 0x30,
+    destinationId: 'ffffffff',
+    teachIn: false,
+  });
+});
+
 test('4BS teach-in rejects malformed/data/response queries and retains all manufacturer bits', () => {
   for (const payload of [
     [0x80, 0x30, 0x49],

@@ -15,6 +15,8 @@ export function DeviceProfile(props: DeviceProfileProps) {
   switch (props.device.profileId) {
     case 'A5-04-01':
       return <A50401Device {...props} />;
+    case 'A5-04-02':
+      return <A50402Device {...props} />;
     case 'A5-20-06':
       return <A52006Device {...props} />;
     case 'D2-50-00':
@@ -47,6 +49,35 @@ export function A50401Device({ device, hasState }: DeviceProfileProps) {
         <DeviceIdentity
           device={device}
           icon={<Cpu size={19} />}
+        />
+      </td>
+      <td data-label="State">{summary}</td>
+      <td data-label="Control">
+        <div className="device-controls" />
+      </td>
+    </>
+  );
+}
+
+export function A50402Device({ device, hasState }: DeviceProfileProps) {
+  const state = device.entityState;
+  const temperature = state?.attributes?.temperature;
+  const humidity = state?.attributes?.humidity;
+  const summary = hasState
+    ? [
+        typeof temperature === 'number' ? `${temperature} \u00b0C` : undefined,
+        typeof humidity === 'number' ? `${humidity} %` : undefined,
+      ]
+        .filter((value): value is string => value !== undefined)
+        .join(' / ') || 'Not reported'
+    : 'Not reported';
+
+  return (
+    <>
+      <td>
+        <DeviceIdentity
+          device={device}
+          icon={<Thermometer size={19} />}
         />
       </td>
       <td data-label="State">{summary}</td>

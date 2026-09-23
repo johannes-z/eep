@@ -48,6 +48,20 @@ describe('DeviceProfile', () => {
     expect(markup).toContain('21.5 °C / 48 %');
   });
 
+  test('renders the extended temperature and humidity profile', () => {
+    const markup = renderDevice(
+      createDevice('A5-04-02', {
+        reportedState: {},
+        entityState: {
+          isOn: true,
+          attributes: { temperature: -4.8, humidity: 65.6 },
+        },
+      }),
+    );
+
+    expect(markup).toContain('-4.8 °C / 65.6 %');
+  });
+
   test('renders the climate profile controls and state', () => {
     const markup = renderDevice(
       createDevice('A5-20-06', {

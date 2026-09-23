@@ -125,6 +125,41 @@ test('requires explicit EEP teach-in for passive A5 sensor discovery', async () 
   }
 });
 
+test('discovers and updates an A5-04-02 sensor from 4BS packets', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-a5-sensor-wide-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  const manager = new TeachInManager(registry, 0xffe76685);
+  const query = { RORG: 0xa5, senderId: 0x0582fd3c, payload: [0x10, 0x10, 0x46, 0x80] };
+  try {
+    expect(manager.observe(query)).toMatchObject({
+      targetId: query.senderId,
+      receiveOnly: true,
+      eep: 'A5-04-02',
+      profileOptions: ['A5-04-02'],
+    });
+    await manager.accept(query.senderId);
+    expect(registry.findByTargetId(query.senderId)).toMatchObject({
+      sourceId: query.senderId,
+      transmitId: null,
+      profileId: 'A5-04-02',
+      teachIn: { eep: 'A5-04-02', direction: 'unidirectional', responseExpected: false },
+    });
+
+    await applyRadioPacket(
+      { RORG: 0xa5, senderId: query.senderId, payload: [0, 0xa4, 0x88, 0x0f] },
+      registry,
+    );
+    expect(registry.findByTargetId(query.senderId)?.reportedState).toEqual({
+      temperature: 23.52,
+      humidity: 65.6,
+    });
+  } finally {
+    manager.stop();
+    await registry.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('does not persist a 4BS device when the handshake write fails', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-mva005-failure-'));
   const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));

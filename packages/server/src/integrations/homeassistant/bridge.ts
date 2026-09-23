@@ -216,7 +216,12 @@ export class MqttEntityBridge {
     for (const entry of entityDiscoveryEntries(device, descriptor, this.discoveryPrefix)) {
       const entityPayload =
         entry.kind === descriptor.kind
-          ? payload
+          ? {
+              ...payload,
+              ...(entry.deviceClass ? { device_class: entry.deviceClass } : {}),
+              ...(entry.unit ? { unit_of_measurement: entry.unit } : {}),
+              ...(entry.stateClass ? { state_class: entry.stateClass } : {}),
+            }
           : {
               state_topic: topics.state,
               availability: payload.availability,

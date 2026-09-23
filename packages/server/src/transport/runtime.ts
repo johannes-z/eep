@@ -1,5 +1,6 @@
 import type { TransportSettings } from '../config';
 import { applyRadioPacket } from '../devices/inbound';
+import { replyToRadioPacket } from '../devices/commands';
 import type { DeviceRegistry } from '../devices/registry';
 import type { TeachInManager } from '../devices/teachin';
 import { createDefaultProfileRegistry, type ProfileRegistry } from '../profiles';
@@ -9,12 +10,14 @@ import { Esp3Parser, parseRadioERP1, type Esp3Frame } from './esp3';
 export type TransportPacketListener = (
   frame: Esp3Frame,
   radioPacket: ReturnType<typeof parseRadioERP1>,
+  direction: 'rx' | 'tx',
 ) => void;
 
 export class TransportRuntime {
   private stopping = false;
   private connected: boolean;
   private readonly packetListeners = new Set<TransportPacketListener>();
+  private readonly pendingReplies = new Map<string, Promise<void>>();
   private readonly statusListeners = new Set<() => void>();
   private settings?: TransportSettings;
   private retryTimer?: ReturnType<typeof setTimeout>;
@@ -90,6 +93,7 @@ export class TransportRuntime {
     this.setConnected(false);
     await this.replacementQueue;
     await closeTransport(this.connection);
+    await Promise.all(this.pendingReplies.values());
   }
 
   private setConnected(connected: boolean, force = false): void {
@@ -122,12 +126,37 @@ export class TransportRuntime {
         const radioPacket = parseRadioERP1(frame);
         for (const listener of this.packetListeners) {
           try {
-            listener(frame, radioPacket);
+            listener(frame, radioPacket, 'rx');
           } catch (error) {
             console.error('Transport packet listener failed:', error);
           }
         }
         if (!radioPacket) continue;
+        const senderId = String(radioPacket.senderId);
+        if (!this.pendingReplies.has(senderId)) {
+          const reply = replyToRadioPacket(
+            connection,
+            this.registry,
+            radioPacket,
+            this.profiles,
+            (payload) => {
+              for (const outgoing of new Esp3Parser().push(payload)) {
+                for (const listener of this.packetListeners) {
+                  try {
+                    listener(outgoing, parseRadioERP1(outgoing), 'tx');
+                  } catch (error) {
+                    console.error('Transport packet listener failed:', error);
+                  }
+                }
+              }
+            },
+          )
+            .catch((error: unknown) => {
+              console.error('Failed to reply to EnOcean telegram:', error);
+            })
+            .finally(() => this.pendingReplies.delete(senderId));
+          this.pendingReplies.set(senderId, reply);
+        }
         try {
           this.teachIn.observe(radioPacket);
         } catch (error) {

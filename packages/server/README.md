@@ -110,6 +110,69 @@ when omitted. `transmitId: null` means no transmit channel. MQTT fan speed comma
 range advertised by discovery (for example, 0 for off and 1 through 4 for four speeds), not a
 second 0-100 percentage format. HTTP/UI percentage commands remain normalized percentages.
 
+## A5-20-06 Heating Actuators
+
+The Micropelt MVA005 is supported using the field definitions in
+[A5-20-06](../../docs/A5-20-06.md). Support includes both control modes, status and
+diagnostic decoding, cyclic replies, and manual 4BS variation 3 teach-in.
+Remote commissioning (ReMan/ReCom), security-code changes, and link-table editing
+are not implemented.
+
+To pair, select an unused sender channel on the Pairing page, then hold the MVA005
+wheel at either end stop for at least five seconds until its green LED signals
+teach-in. The server identifies `A5-20-06` and the manufacturer from the 4BS query
+and automatically sends the variation 3 acknowledgement from the selected channel.
+For Micropelt manufacturer `0049`, `80 30 49 80` is answered with `80 30 49 F0`,
+not a UTE response. Mount the actuator and trigger its reference run as described
+in the device manual. A failed radio write does not create a paired device. The
+time-critical acknowledgement precedes pairing persistence; if persistence fails,
+repeat pairing after resolving the storage error.
+
+Commands update persistent desired state and are transmitted when the actuator
+next reports, not immediately while it sleeps. Every valid report receives a reply
+from its assigned channel. Reported valve position and requested setpoint remain
+separate. A reference-run request is cleared after a successful transport write;
+this is not confirmation of physical execution. A failed write retains the request.
+Without prior desired settings, the first reply preserves the reported absolute
+setpoint or valve position where available, otherwise it uses 21 C. Later local
+wheel adjustments are reported but do not override an explicit controller setpoint.
+
+Device details expose control settings and reference-run. HTTP commands use
+`POST /api/devices/<sourceId>/command`; MQTT JSON commands use
+`<baseTopic>/climate/<sourceId>/command`. For example:
+
+```json
+{
+  "mode": "temperature",
+  "setpoint": 21.5,
+  "roomTemperature": null,
+  "communicationInterval": 0,
+  "temperatureSensor": "ambient",
+  "summerMode": false,
+  "standby": false
+}
+```
+
+- `mode`: `temperature` (0..40 C, 0.5 C steps) or `valvePosition` (0..100%, integer).
+  Changing mode requires an explicit `setpoint`.
+- `roomTemperature`: external measurement in 0.25 C steps, or `null` for the
+  internal sensor. Zero cannot represent an external temperature in temperature mode.
+- `communicationInterval`: `0` (automatic), `2`, `5`, `10`, `20`, `30`, `60`, or
+  `120` minutes. Firmware `MVA005_V5.26.a.7` does not support 120 minutes.
+- `temperatureSensor`: `ambient` or `flow`; requests the corresponding reading.
+- `summerMode`: eight-hour communication interval. `standby` requires local wake-up.
+- `referenceRun`: `true` queues a one-shot reference run.
+
+MQTT additionally accepts numeric temperatures at `.../temperature/set` and
+`heat`/`off` at `.../mode/set`. Off requests a closed valve, not hardware standby;
+heat restores temperature control (21 C if no active temperature setpoint exists).
+Home Assistant discovers a climate entity. JSON state at `.../state` includes all
+diagnostics, desired settings, `currentTemperature`, `targetTemperature`, and
+`valvePosition`. Flow readings are never published as current room temperature.
+Reserved readings and sensor faults produce `null` readings rather than misleading
+temperatures; `temperatureError` distinguishes the explicit sensor-error code.
+MQTT remains usable with Home Assistant disabled.
+
 ## Development
 
 From the repository root:

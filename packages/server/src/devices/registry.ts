@@ -386,6 +386,24 @@ export class DeviceRegistry {
     });
   }
 
+  async updateDesiredStateIfUnchanged(
+    sourceId: number,
+    expected: unknown,
+    desiredState: unknown,
+  ): Promise<boolean> {
+    const expectedState = structuredClone(expected);
+    const nextState = structuredClone(desiredState);
+    return this.enqueueMutation(() => {
+      const index = this.devices.findIndex((device) => device.sourceId === sourceId);
+      if (index === -1 || !isDeepStrictEqual(this.devices[index].desiredState, expectedState))
+        return { result: false };
+      const next = { ...this.devices[index], desiredState: nextState };
+      this.validateDevice(next);
+      this.devices[index] = next;
+      return { result: true, changedDevice: next };
+    });
+  }
+
   async reassignSourceId(
     sourceId: number,
     newSourceId: number,

@@ -7,6 +7,8 @@ import { DeviceRegistry } from './devices/registry';
 import { applyRadioPacket } from './devices/inbound';
 import type { MqttClientLike } from './mqtt';
 import { MqttEntityBridge } from './integrations/homeassistant/bridge';
+import { a5Profile } from './profiles';
+import { sendDeviceCommand } from './devices/commands';
 
 class FakeMqttClient implements MqttClientLike {
   connected = true;
@@ -71,6 +73,100 @@ async function createBridge() {
   await bridge.publishAll();
   return { bridge, client, commands, registry };
 }
+
+test.each([true, false])(
+  'exposes A5-20-06 climate state and queued MQTT commands (Home Assistant: %s)',
+  async (enabled) => {
+    const directory = await mkdtemp(join(tmpdir(), 'eep-mqtt-heating-'));
+    const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+    const client = new FakeMqttClient();
+    const bridge = new MqttEntityBridge(
+      client,
+      registry,
+      (device, request) =>
+        sendDeviceCommand(
+          {
+            write: () => {
+              throw new Error('Actuator is asleep');
+            },
+          },
+          registry,
+          device,
+          request,
+        ),
+      {
+        homeAssistant: { enabled, discoveryTopic: 'homeassistant', statusTopic: 'eep/status' },
+      },
+    );
+    const base = 'eep/climate/ffe76685';
+    try {
+      await registry.upsert({
+        sourceId: 0xffe76685,
+        targetId: 0x05010203,
+        name: 'Heating',
+        profileId: 'A5-20-06',
+        capabilities: a5Profile.defaultCapabilities(),
+        availability: 'online',
+      });
+      bridge.start();
+      await bridge.publishAll();
+      expect(client.published.some((message) => message.topic === `${base}/state`)).toBe(false);
+      const discovery = client.published
+        .filter((message) => message.topic === 'homeassistant/climate/ffe76685/config')
+        .at(-1)!;
+      if (enabled) {
+        expect(JSON.parse(discovery.payload)).toMatchObject({
+          temperature_command_topic: `${base}/temperature/set`,
+          current_temperature_topic: `${base}/state`,
+          mode_command_topic: `${base}/mode/set`,
+          modes: ['off', 'heat'],
+          min_temp: 0,
+          max_temp: 40,
+          temp_step: 0.5,
+        });
+        expect(JSON.parse(discovery.payload).state_topic).toBeUndefined();
+      } else expect(discovery.payload).toBe('');
+      expect(client.subscribed).toContain(`${base}/command`);
+      expect(client.subscribed).toContain(`${base}/temperature/set`);
+      expect(client.subscribed).toContain(`${base}/mode/set`);
+      await applyRadioPacket(
+        { RORG: 0xa5, senderId: 0x05010203, payload: [22, 0xaa, 40, 0x68] },
+        registry,
+      );
+      await bridge.publishAll();
+      expect(
+        JSON.parse(
+          client.published.filter((message) => message.topic === `${base}/state`).at(-1)!.payload,
+        ),
+      ).toMatchObject({ currentTemperature: 20, targetTemperature: 21, valvePosition: 22 });
+      for (const [topic, payload, expected] of [
+        ['temperature/set', '23.5', { mode: 'temperature', setpoint: 23.5 }],
+        ['mode/set', 'off', { mode: 'valvePosition', setpoint: 0, standby: false }],
+        ['mode/set', 'heat', { mode: 'temperature', setpoint: 21, standby: false }],
+        [
+          'command',
+          '{"mode":"valvePosition","setpoint":45,"communicationInterval":10}',
+          { mode: 'valvePosition', setpoint: 45, communicationInterval: 10 },
+        ],
+      ] as const) {
+        const updated = new Promise<void>((resolve) => {
+          const unsubscribe = registry.onChange(() => {
+            unsubscribe();
+            resolve();
+          });
+        });
+        client.send(`${base}/${topic}`, payload);
+        await updated;
+        expect(registry.findBySourceId(0xffe76685)?.desiredState).toMatchObject(expected);
+        await bridge.publishAll();
+      }
+    } finally {
+      await bridge.stop();
+      await registry.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 test.each([true, false])(
   'publishes D5-00-01 contact state (Home Assistant: %s)',

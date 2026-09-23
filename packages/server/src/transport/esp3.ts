@@ -1,6 +1,7 @@
 import { getChecksum } from '../util/getChecksum';
 import { toHex } from '../util/toHex';
 import type {
+  FourBsTeachInInfo,
   RadioERP1Packet,
   UteCommand,
   UteRequestType,
@@ -194,12 +195,34 @@ function bytesToId(bytes: number[]): string {
   return bytes.map((value) => value.toString(16).padStart(2, '0')).join('');
 }
 
+export function parse4bsTeachIn(payload: ArrayLike<number>): FourBsTeachInInfo | undefined {
+  if (
+    payload.length !== 4 ||
+    Array.from(payload).some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 0xff) ||
+    (payload[3] & 0x08) !== 0
+  )
+    return undefined;
+  const hasProfile = (payload[3] & 0x80) !== 0;
+  const func = payload[0] >> 2;
+  const type = ((payload[0] & 0x03) << 5) | (payload[1] >> 3);
+  return {
+    eep: hasProfile
+      ? `A5-${func.toString(16).padStart(2, '0')}-${type.toString(16).padStart(2, '0')}`.toUpperCase()
+      : undefined,
+    manufacturer: hasProfile ? ((payload[1] & 0x07) << 8) | payload[2] : undefined,
+    command: (payload[3] & 0x10) === 0 ? ('query' as const) : ('response' as const),
+    eepSupported: (payload[3] & 0x40) !== 0,
+    senderStored: (payload[3] & 0x20) !== 0,
+  };
+}
+
 export function parseRadioERP1(frame: Esp3Frame): RadioERP1Packet | undefined {
   if (frame.packetType !== 1 || frame.data.length < 6) return undefined;
   const rorg = frame.data[0];
   const payload = frame.data.slice(1, frame.data.length - 5);
   const senderId = bytesToId(frame.data.slice(frame.data.length - 5, frame.data.length - 1));
   const teachInInfo = rorg === 0xd4 ? parseUteInfo(payload) : undefined;
+  const fourBsTeachInInfo = rorg === 0xa5 ? parse4bsTeachIn(payload) : undefined;
   return {
     RORG: rorg,
     payload,
@@ -210,8 +233,9 @@ export function parseRadioERP1(frame: Esp3Frame): RadioERP1Packet | undefined {
       : {}),
     teachIn:
       (rorg === 0xd5 && payload.length === 1 && (payload[0] & 0x08) === 0) ||
+      fourBsTeachInInfo !== undefined ||
       (teachInInfo?.command === 'query' && teachInInfo.requestType === 'teachIn'),
-    teachInInfo,
+    teachInInfo: teachInInfo ?? fourBsTeachInInfo,
   };
 }
 
@@ -226,12 +250,17 @@ function validateIdentifier(value: number, field: string): void {
   }
 }
 
-function buildUteFrame(senderId: number, targetId: number, payload: number[]): Buffer {
+function buildRadioFrame(
+  rorg: number,
+  senderId: number,
+  targetId: number,
+  payload: number[],
+): Buffer {
   validateIdentifier(senderId, 'controller');
   if (!Number.isInteger(targetId) || targetId < 0 || targetId > 0xffffffff) {
     throw new Error('UTE target ID must be an EnOcean identifier');
   }
-  const data = [0xd4, ...payload, ...toHex(senderId), 0];
+  const data = [rorg, ...payload, ...toHex(senderId), 0];
   const optionalData = [3, ...toHex(targetId), 0xff, 0];
   const header = [0, data.length, optionalData.length, 1];
   return Buffer.from([
@@ -242,6 +271,33 @@ function buildUteFrame(senderId: number, targetId: number, payload: number[]): B
     ...optionalData,
     getChecksum([data, optionalData]),
   ]);
+}
+
+export function build4bsFrame(senderId: number, targetId: number, payload: number[]): Buffer {
+  if (
+    payload.length !== 4 ||
+    payload.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 0xff)
+  ) {
+    throw new Error('4BS payload must contain exactly four bytes');
+  }
+  return buildRadioFrame(0xa5, senderId, targetId, payload);
+}
+
+export function build4bsTeachInResponse(
+  controllerId: number,
+  targetId: number,
+  requestPayload: number[],
+  response: UteResponse = 'teachInAccepted',
+): Buffer {
+  const info = parse4bsTeachIn(requestPayload);
+  if (!info?.eep || info.command !== 'query') {
+    throw new Error('4BS response requires a query with EEP and manufacturer');
+  }
+  if (!Object.hasOwn(uteResponseCodes, response)) throw new Error('Invalid 4BS response result');
+  validateIdentifier(targetId, 'target');
+  const control =
+    response === 'teachInAccepted' ? 0xf0 : response === 'eepNotSupported' ? 0x90 : 0xd0;
+  return build4bsFrame(controllerId, targetId, [...requestPayload.slice(0, 3), control]);
 }
 
 export function buildUteTeachInQuery(
@@ -260,7 +316,7 @@ export function buildUteTeachInQuery(
   if (!Number.isInteger(manufacturerId) || manufacturerId < 0 || manufacturerId > 0x7ff) {
     throw new Error('UTE manufacturer ID must be an 11-bit value');
   }
-  return buildUteFrame(controllerId, targetId, [
+  return buildRadioFrame(0xd4, controllerId, targetId, [
     0x80,
     channel,
     manufacturerId & 0xff,
@@ -288,5 +344,5 @@ export function buildUteTeachInResponse(
   const payload = [...requestPayload];
   payload[0] = responseControl(response, requestPayload[0]);
 
-  return buildUteFrame(controllerId, targetId, payload);
+  return buildRadioFrame(0xd4, controllerId, targetId, payload);
 }

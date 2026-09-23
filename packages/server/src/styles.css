@@ -608,6 +608,28 @@ p {
   gap: 24px;
   padding: 8px 0;
 }
+.device-command-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+  gap: 14px;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.device-command-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+}
+.device-command-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
 .device-details h3 {
   font-size: 12px;
   margin: 0 0 12px;
@@ -834,6 +856,21 @@ p {
 .packet-row time {
   font-size: 11px;
   color: var(--muted);
+}
+.packet-device {
+  min-width: 0;
+}
+.packet-device strong,
+.packet-device span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.packet-device span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
 }
 .packet-row summary code {
   overflow: hidden;

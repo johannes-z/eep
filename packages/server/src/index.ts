@@ -19,6 +19,7 @@ import {
 } from './settings';
 import { closeTransport, openTransport, type TransportConnection } from './transport/adapters';
 import {
+  build4bsTeachInResponse,
   buildUteTeachInQuery,
   buildUteTeachInResponse,
   readBaseId,
@@ -42,7 +43,9 @@ function createTeachInResponder(
   onTransmit: (payload: Uint8Array) => void,
 ): (candidate: TeachInCandidate, response: UteResponse) => Promise<void> {
   return async (candidate, response): Promise<void> => {
-    const payload = buildUteTeachInResponse(
+    const buildResponse =
+      candidate.protocol === '4bs' ? build4bsTeachInResponse : buildUteTeachInResponse;
+    const payload = buildResponse(
       candidate.sourceId,
       candidate.targetId,
       candidate.requestPayload,
@@ -191,8 +194,8 @@ async function startServer(
     );
     transportRuntime = activeTransportRuntime;
     initialTransport = undefined;
-    activeTransportRuntime.onPacket((frame, radioPacket) =>
-      packetListener.capture(frame, radioPacket),
+    activeTransportRuntime.onPacket((frame, radioPacket, direction) =>
+      packetListener.capture(frame, radioPacket, direction),
     );
     await activeTransportRuntime.start(serverConfig.transport);
 

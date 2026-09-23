@@ -24,6 +24,14 @@ export interface UteTeachInInfo {
   response?: UteResponseResult;
 }
 
+export interface FourBsTeachInInfo {
+  eep?: string;
+  manufacturer?: number;
+  command: 'query' | 'response';
+  eepSupported: boolean;
+  senderStored: boolean;
+}
+
 export interface RadioERP1Packet {
   RORG: number;
   payload: ArrayLike<number>;
@@ -31,7 +39,7 @@ export interface RadioERP1Packet {
   status?: number;
   destinationId?: string | number;
   teachIn?: boolean;
-  teachInInfo?: UteTeachInInfo;
+  teachInInfo?: UteTeachInInfo | FourBsTeachInInfo;
 }
 
 export interface InboundStateResult {

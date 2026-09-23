@@ -14,6 +14,7 @@ import {
   type RequestHandlerOptions,
 } from './app/requestHandler';
 import type { TransportConnection } from './transport/adapters';
+import { a5Profile } from './profiles';
 
 let fixtureDirectory: string;
 let fixtureRegistry: DeviceRegistry;
@@ -52,6 +53,41 @@ class FakeTransport {
     this.writes.push(payload);
   }
 }
+
+test('exposes A5 actuator controls and queues validated HTTP commands', async () => {
+  const socket = new FakeTransport();
+  await fixtureRegistry.upsert({
+    sourceId: 0xffe76685,
+    targetId: 0x05010203,
+    name: 'Heating',
+    profileId: 'A5-20-06',
+    capabilities: a5Profile.defaultCapabilities(),
+    availability: 'online',
+  });
+  const handler = createRequestHandler(socket);
+  const command = (body: unknown) =>
+    handler(
+      new Request('http://localhost/api/devices/ffe76685/command', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    );
+  expect((await command({ mode: 'temperature', setpoint: 22.5, referenceRun: true })).status).toBe(
+    200,
+  );
+  expect(socket.writes).toEqual([]);
+  expect(fixtureRegistry.findBySourceId(0xffe76685)?.desiredState).toMatchObject({
+    setpoint: 22.5,
+    referenceRun: true,
+  });
+  expect((await command({ setpoint: 41 })).status).toBe(400);
+  const snapshot = handler.snapshot().devices.find((device) => device.sourceId === 0xffe76685);
+  expect(snapshot).toMatchObject({
+    profile: { entity: { kind: 'climate', temperature: { min: 0, max: 40, step: 0.5 } } },
+    entityState: { attributes: { targetTemperature: 22.5 } },
+  });
+});
 
 test('requires explicit profile selection when accepting a 1BS candidate', async () => {
   const teachIn = new TeachInManager(fixtureRegistry, 0xffe76685);

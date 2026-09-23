@@ -4,6 +4,8 @@ import { getChecksum } from '../util/getChecksum';
 import { changeState } from '../profiles/D2-50-00/changeState';
 import { toHex } from '../util/toHex';
 import {
+  build4bsTeachInResponse,
+  parse4bsTeachIn,
   buildUteTeachInQuery,
   buildUteTeachInResponse,
   readBaseId,
@@ -20,6 +22,50 @@ function uteFrame(payload: number[], senderId = 0x05010203): Esp3Frame {
   const optionalData = [3, ...toHex(0xffe76681), 0xff, 0];
   return { packetType: 1, data, optionalData };
 }
+
+test('parses 4BS profile/manufacturer and answers the MVA005 variation 3 query', () => {
+  const query = [0x80, 0x30, 0x49, 0x80];
+  expect(parse4bsTeachIn(query)).toEqual({
+    eep: 'A5-20-06',
+    manufacturer: 0x49,
+    command: 'query',
+    eepSupported: false,
+    senderStored: false,
+  });
+  const frames = new Esp3Parser().push(build4bsTeachInResponse(0xffe76681, 0x05010203, query));
+  expect(frames).toHaveLength(1);
+  expect(parseRadioERP1(frames[0])).toMatchObject({
+    RORG: 0xa5,
+    payload: [0x80, 0x30, 0x49, 0xf0],
+    senderId: 'ffe76681',
+    destinationId: '05010203',
+    teachIn: true,
+  });
+  expect(parse4bsTeachIn(frames[0].data.slice(1, 5))).toMatchObject({
+    command: 'response',
+    eepSupported: true,
+    senderStored: true,
+  });
+});
+
+test('4BS teach-in rejects malformed/data/response queries and retains all manufacturer bits', () => {
+  for (const payload of [
+    [0x80, 0x30, 0x49],
+    [0x80, 0x30, 256, 0x80],
+    [22, 170, 110, 0xe8],
+  ]) {
+    expect(parse4bsTeachIn(payload)).toBeUndefined();
+    expect(() => build4bsTeachInResponse(1, 2, payload)).toThrow();
+  }
+  expect(parse4bsTeachIn([0x80, 0x37, 0xff, 0x80])?.manufacturer).toBe(0x7ff);
+  expect(parse4bsTeachIn([0, 0, 0, 0])?.eep).toBeUndefined();
+  expect(() => build4bsTeachInResponse(1, 2, [0, 0, 0, 0])).toThrow();
+  expect(() => build4bsTeachInResponse(1, 2, [0x80, 0x30, 0x49, 0xf0])).toThrow();
+  const rejected = new Esp3Parser().push(
+    build4bsTeachInResponse(1, 2, [0x80, 0x30, 0x49, 0x80], 'eepNotSupported'),
+  );
+  expect(rejected[0].data[4]).toBe(0x90);
+});
 
 test('parses a fragmented ERP1 frame', () => {
   const frame = changeState(toHex(0xffe76681), toHex(0x0513cefe), 13);

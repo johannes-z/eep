@@ -1,12 +1,17 @@
 import { useState } from 'react';
 import { Activity, Download, Pause, Play, Search } from 'lucide-react';
 import type { ListenPacket, ListenResponse } from '../ui/types';
+import type { Device } from '../ui/types';
+import { parseEnOceanId } from '../util';
+import { formatTargetId } from './deviceUtils';
 
 export function PacketListener({
   listen,
+  devices,
   onListen,
 }: {
   listen: ListenResponse;
+  devices: Device[];
   onListen: () => void;
 }) {
   const [direction, setDirection] = useState<'all' | 'rx' | 'tx'>('all');
@@ -113,6 +118,7 @@ export function PacketListener({
               <PacketRow
                 key={packet.id}
                 packet={packet}
+                devices={devices}
               />
             ))}
           </div>
@@ -137,15 +143,24 @@ export function PacketListener({
   );
 }
 
-function PacketRow({ packet }: { packet: ListenPacket }) {
+function PacketRow({ packet, devices }: { packet: ListenPacket; devices: Device[] }) {
   const radio = packet.radio;
-  const title = radio ? radio.senderId : `ESP3 type ${packet.packetType}`;
+  const senderId = radio ? parseEnOceanId(radio.senderId) : undefined;
+  const device = radio ? devices.find((candidate) => candidate.sourceId === senderId) : undefined;
+  const title = device?.name ?? radio?.senderId ?? `ESP3 type ${packet.packetType}`;
   return (
     <details className="packet-row">
       <summary>
         <span className={`direction ${packet.direction}`}>{packet.direction.toUpperCase()}</span>
         <time dateTime={packet.timestamp}>{new Date(packet.timestamp).toLocaleTimeString()}</time>
-        <strong>{title}</strong>
+        <div className="packet-device">
+          <strong>{title}</strong>
+          {device && (
+            <span>
+              <code>{formatTargetId(device.sourceId)}</code> / {device.profileId}
+            </span>
+          )}
+        </div>
         <code>
           {packet.data}
           {packet.optionalData ? ` | ${packet.optionalData}` : ''}

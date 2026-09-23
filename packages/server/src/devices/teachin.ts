@@ -6,10 +6,16 @@ import {
 } from '../profiles';
 import type { RadioERP1Packet, UteTeachInInfo } from './inbound';
 import type { DeviceRegistry } from './registry';
-import { buildUteTeachInQuery, parseUteInfo, type UteResponse } from '../transport/esp3';
+import {
+  buildUteTeachInQuery,
+  parse4bsTeachIn,
+  parseUteInfo,
+  type UteResponse,
+} from '../transport/esp3';
 import { parseEnOceanId } from '../util';
 
 export interface TeachInCandidate {
+  protocol?: '4bs';
   sourceId: number;
   targetId: number;
   receiveOnly?: boolean;
@@ -228,6 +234,13 @@ export class TeachInManager {
           )
         : [];
     const isRpsTeachIn = rpsProfiles.length > 0;
+    const fourBs = packet.RORG === 0xa5 ? parse4bsTeachIn(packet.payload) : undefined;
+    if (
+      packet.RORG === 0xa5 &&
+      (!fourBs?.eep || fourBs.command !== 'query' || !this.profiles.get(fourBs.eep)?.fourBsTeachIn)
+    ) {
+      return undefined;
+    }
     const info =
       is1bsTeachIn || isRpsTeachIn
         ? {
@@ -242,7 +255,16 @@ export class TeachInManager {
           }
         : packet.RORG === 0xd4
           ? parseUteInfo(Array.from(packet.payload))
-          : undefined;
+          : fourBs?.eep
+            ? {
+                ...fourBs,
+                channel: undefined,
+                direction: 'bidirectional' as const,
+                responseExpected: true,
+                requestType: 'teachIn' as const,
+                response: undefined,
+              }
+            : undefined;
     if (!info) return undefined;
     const isResponse = info.command === 'response';
     if (!isResponse && info.command !== 'query') return undefined;
@@ -262,6 +284,7 @@ export class TeachInManager {
     const existing = this.registry.findByTargetId(targetId);
     if (this.accepting.has(targetId)) return undefined;
     const candidate: TeachInCandidate = {
+      ...(fourBs ? { protocol: '4bs' as const } : {}),
       sourceId:
         (isResponse ? this.pendingQuery?.sourceId : undefined) ??
         this.requestedSourceId ??
@@ -321,7 +344,9 @@ export class TeachInManager {
       return undefined;
     }
     if (existing && normalizeProfileId(existing.profileId) !== profileId) {
-      void this.respond(candidate, 'general');
+      void this.respond(candidate, 'general').catch((error: unknown) =>
+        console.error('Teach-in rejection failed:', error),
+      );
       return undefined;
     }
     if (this.requestedSourceId !== undefined) this.requestedTargetId = targetId;
@@ -333,7 +358,7 @@ export class TeachInManager {
       void this.accept(candidate.targetId).catch((error: unknown) => {
         if (this.active && this.session === session) {
           this.requestedTargetId = undefined;
-          void this.respond(candidate, 'general');
+          if (candidate.protocol !== '4bs') void this.respond(candidate, 'general');
         }
         console.error('Teach-in acceptance failed:', error);
       });
@@ -349,6 +374,13 @@ export class TeachInManager {
   }
 
   private async respond(candidate: TeachInCandidate, response: UteResponse): Promise<void> {
+    if (candidate.protocol === '4bs') {
+      if (!this.sendResponse) throw new Error('4BS teach-in requires a connected responder');
+      if (Date.now() - Date.parse(candidate.seenAt) >= 500)
+        throw new Error('4BS teach-in response window expired');
+      await this.sendResponse(structuredClone(candidate), response);
+      return;
+    }
     if (!candidate.responseExpected || !this.sendResponse) return;
     if (Date.now() - Date.parse(candidate.seenAt) >= 500) return;
     await this.sendResponse(structuredClone(candidate), response).catch((error: unknown) => {
@@ -426,6 +458,10 @@ export class TeachInManager {
     const session = this.session;
     if (transmitId !== undefined) this.reservedSourceIds.add(transmitId);
     const operation = (async () => {
+      if (candidate.protocol === '4bs') {
+        await this.respond(candidate, 'teachInAccepted');
+        if (!this.active || this.session !== session) throw new Error('Pairing session ended');
+      }
       const accepted = existing
         ? await this.registry.reassignSourceId(existing.sourceId, sourceId, device)
         : await this.registry.upsert(device);
@@ -433,7 +469,7 @@ export class TeachInManager {
         this.candidates.delete(targetId);
         this.notify();
       } else if (this.active && this.session === session) {
-        await this.respond(candidate, 'teachInAccepted');
+        if (candidate.protocol !== '4bs') await this.respond(candidate, 'teachInAccepted');
         if (this.active && this.session === session) {
           this.candidates.delete(targetId);
           this.notify();

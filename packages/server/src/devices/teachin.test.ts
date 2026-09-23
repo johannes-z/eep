@@ -5,8 +5,90 @@ import { join } from 'node:path';
 import { DeviceRegistry } from './registry';
 import { TeachInManager } from './teachin';
 import { applyRadioPacket } from './inbound';
-import { parseRadioERP1 } from '../transport/esp3';
+import { build4bsTeachInResponse, Esp3Parser, parseRadioERP1 } from '../transport/esp3';
 import type { RadioERP1Packet } from './inbound';
+
+test.each([false, true])(
+  'pairs MVA005 with an immediate 4BS variation 3 response (targeted: %s)',
+  async (targeted) => {
+    const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-mva005-'));
+    const filePath = join(directory, 'configuration.yaml');
+    let registry = await DeviceRegistry.load(filePath);
+    const replies: number[][] = [];
+    const manager = new TeachInManager(registry, 0xffe76685, async (candidate, result) => {
+      expect(candidate.protocol).toBe('4bs');
+      expect(registry.findByTargetId(candidate.targetId)).toBeUndefined();
+      const frame = new Esp3Parser().push(
+        build4bsTeachInResponse(
+          candidate.sourceId,
+          candidate.targetId,
+          candidate.requestPayload,
+          result,
+        ),
+      )[0];
+      replies.push(frame.data);
+    });
+    const query = { RORG: 0xa5, senderId: 0x05010203, payload: [0x80, 0x30, 0x49, 0x80] };
+    try {
+      expect(manager.observe(query)).toBeUndefined();
+      manager.start();
+      if (targeted) await manager.transmit(0xffe76686);
+      for (const payload of [
+        [0x80, 0x30, 0x49, 0xf0],
+        [0, 0, 0, 0],
+        [0x80, 0x28, 0x49, 0x80],
+        [22, 0xaa, 40, 8],
+      ]) {
+        expect(manager.observe({ ...query, payload })).toBeUndefined();
+      }
+      expect(manager.observe({ ...query, destinationId: 0x05009999 })).toBeUndefined();
+      expect(manager.observe(query)).toMatchObject({
+        eep: 'A5-20-06',
+        manufacturer: 0x49,
+        direction: 'bidirectional',
+        protocol: '4bs',
+      });
+      expect(replies).toHaveLength(1);
+      manager.observe(query);
+      await manager.accept(query.senderId);
+      expect(replies).toHaveLength(1);
+      expect(replies[0].slice(0, 5)).toEqual([0xa5, 0x80, 0x30, 0x49, 0xf0]);
+      expect(registry.findByTargetId(query.senderId)).toMatchObject({
+        sourceId: targeted ? 0xffe76686 : 0xffe76685,
+        profileId: 'A5-20-06',
+        teachIn: { manufacturerId: 0x49, direction: 'bidirectional', responseExpected: true },
+      });
+      expect(manager.isActive()).toBe(!targeted);
+      await registry.close();
+      registry = await DeviceRegistry.load(filePath);
+      expect(registry.findByTargetId(query.senderId)?.profileId).toBe('A5-20-06');
+    } finally {
+      manager.stop();
+      await registry.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test('does not persist a 4BS device when the handshake write fails', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-mva005-failure-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  const manager = new TeachInManager(registry, 0xffe76685, async () => {
+    throw new Error('Disconnected');
+  });
+  const logging = spyOn(console, 'error').mockImplementation(() => undefined);
+  try {
+    manager.start();
+    manager.observe({ RORG: 0xa5, senderId: 0x05010203, payload: [0x80, 0x30, 0x49, 0x80] });
+    expect(manager.accept(0x05010203)).rejects.toThrow('Disconnected');
+    expect(registry.findByTargetId(0x05010203)).toBeUndefined();
+  } finally {
+    manager.stop();
+    logging.mockRestore();
+    await registry.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test.each([false, true])(
   'pairs a 1BS contact without a UTE response (targeted: %s)',

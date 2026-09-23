@@ -85,7 +85,10 @@ export class HomeAssistantStatePublisher {
     );
     if (
       (availability === 'online' &&
-        (descriptor.kind !== 'binary_sensor' || device.reportedState !== undefined)) ||
+        (descriptor.kind !== 'binary_sensor' || device.reportedState !== undefined) &&
+        (descriptor.kind !== 'climate' ||
+          device.reportedState !== undefined ||
+          device.desiredState !== undefined)) ||
       (descriptor.publishInitialState && device.reportedState === undefined)
     ) {
       if (descriptor.kind === 'fan' || descriptor.kind === 'binary_sensor') {
@@ -119,7 +122,11 @@ export class HomeAssistantStatePublisher {
         await publish(
           this.client,
           topics.state,
-          JSON.stringify(state),
+          JSON.stringify(
+            descriptor.jsonState
+              ? { ...state.attributes, state: state.isOn ? 'ON' : 'OFF' }
+              : state,
+          ),
           this.options.bridgePublishOptions,
         );
       }

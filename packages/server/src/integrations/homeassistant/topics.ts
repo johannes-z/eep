@@ -9,6 +9,8 @@ export interface EntityTopics {
   command: string;
   percentageCommand: string;
   presetCommand: string;
+  temperatureCommand: string;
+  modeCommand: string;
   state: string;
   percentageState: string;
   presetState: string;
@@ -86,6 +88,8 @@ export function entityTopics(
     command: `${base}/command`,
     percentageCommand: `${base}/percentage/set`,
     presetCommand: `${base}/preset/set`,
+    temperatureCommand: `${base}/temperature/set`,
+    modeCommand: `${base}/mode/set`,
     state: `${base}/state`,
     percentageState: `${base}/percentage/state`,
     presetState: `${base}/preset/state`,

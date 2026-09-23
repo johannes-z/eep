@@ -4,9 +4,10 @@ import { useAppContext } from '../ui/App';
 import { routeMetadata } from '../ui/routes';
 
 function PacketListenerRoute() {
-  const { listen, onListen } = useAppContext();
+  const { devices, listen, onListen } = useAppContext();
   return (
     <PacketListener
+      devices={devices}
       listen={listen}
       onListen={onListen}
     />

@@ -161,14 +161,34 @@ export class MqttEntityBridge {
       await this.clearEntityDiscovery(device);
     }
     const isFan = descriptor.kind === 'fan';
+    const isClimate = descriptor.kind === 'climate' && descriptor.temperature !== undefined;
     const presets = descriptor.presets ?? [];
     const payload = {
       ...(descriptor.deviceClass ? { device_class: descriptor.deviceClass } : {}),
-      ...(descriptor.commands.includes('command') ? { command_topic: topics.command } : {}),
-      state_topic: topics.state,
-      ...(descriptor.jsonState
-        ? { value_template: '{{ value_json.state }}', json_attributes_topic: topics.state }
-        : {}),
+      ...(isClimate
+        ? {
+            temperature_command_topic: topics.temperatureCommand,
+            temperature_state_topic: topics.state,
+            temperature_state_template: '{{ value_json.targetTemperature }}',
+            current_temperature_topic: topics.state,
+            current_temperature_template: '{{ value_json.currentTemperature }}',
+            mode_command_topic: topics.modeCommand,
+            mode_state_topic: topics.state,
+            mode_state_template: '{{ value_json.hvacMode }}',
+            modes: ['off', 'heat'],
+            min_temp: descriptor.temperature!.min,
+            max_temp: descriptor.temperature!.max,
+            temp_step: descriptor.temperature!.step,
+            temperature_unit: 'C',
+            json_attributes_topic: topics.state,
+          }
+        : {
+            ...(descriptor.commands.includes('command') ? { command_topic: topics.command } : {}),
+            state_topic: topics.state,
+            ...(descriptor.jsonState
+              ? { value_template: '{{ value_json.state }}', json_attributes_topic: topics.state }
+              : {}),
+          }),
       ...(descriptor.percentage
         ? {
             percentage_command_topic: topics.percentageCommand,
@@ -226,6 +246,9 @@ export class MqttEntityBridge {
       this.bridgeAvailability,
     );
     if (descriptor.commands.includes('command')) await subscribe(this.client, topics.command);
+    if (descriptor.commands.includes('temperature'))
+      await subscribe(this.client, topics.temperatureCommand);
+    if (descriptor.commands.includes('mode')) await subscribe(this.client, topics.modeCommand);
     if (descriptor.commands.includes('percentage') && descriptor.percentage) {
       await subscribe(this.client, topics.percentageCommand);
     }
@@ -368,6 +391,9 @@ export class MqttEntityBridge {
         this.bridgeAvailability,
       );
       const supportedTopics = [topics.command];
+      if (descriptor.commands.includes('temperature'))
+        supportedTopics.push(topics.temperatureCommand);
+      if (descriptor.commands.includes('mode')) supportedTopics.push(topics.modeCommand);
       if (descriptor.commands.includes('percentage') && descriptor.percentage) {
         supportedTopics.push(topics.percentageCommand);
       }
@@ -397,7 +423,11 @@ export class MqttEntityBridge {
             ? 'percentage'
             : topic === topics.presetCommand && descriptor.commands.includes('preset')
               ? 'preset'
-              : undefined;
+              : topic === topics.temperatureCommand && descriptor.commands.includes('temperature')
+                ? 'temperature'
+                : topic === topics.modeCommand && descriptor.commands.includes('mode')
+                  ? 'mode'
+                  : undefined;
       if (!field) return;
       const request = entity.parseCommand(device, field, message);
       await this.sendCommand(device, typeof request === 'number' ? { value: request } : request);

@@ -62,6 +62,18 @@ export interface ProfileEntityDescriptor {
   readonly commands: readonly string[];
   readonly percentage?: { readonly min: number; readonly max: number };
   readonly presets?: readonly string[];
+  readonly temperature?: { readonly min: number; readonly max: number; readonly step: number };
+  readonly controls?: readonly {
+    readonly field: string;
+    readonly label: string;
+    readonly kind: 'number' | 'select' | 'boolean' | 'action';
+    readonly stateKey?: string;
+    readonly min?: number;
+    readonly max?: number;
+    readonly step?: number;
+    readonly nullable?: boolean;
+    readonly options?: readonly { readonly value: string | number; readonly label: string }[];
+  }[];
 }
 
 export interface ProfileEntityState {
@@ -82,6 +94,9 @@ export interface EepProfile {
   readonly entity?: ProfileEntityAdapter;
   readonly transientReportedState?: boolean;
   readonly receiveOnly?: boolean;
+  readonly fourBsTeachIn?: boolean;
+  readonly commandDelivery?: 'onReceive';
+  replyOnReceive?(context: ProfileDeviceContext, packet: ProfilePacket): ProfileCommand | undefined;
 
   defaultCapabilities(): JsonValue;
   validateCapabilities(value: unknown): JsonValue;

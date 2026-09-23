@@ -1,6 +1,19 @@
 import { useActionState, useDeferredValue, useState } from 'react';
 import { Link } from '@tanstack/react-router';
-import { ChevronDown, Cpu, Fan, Power, Radio, Save, Search, Trash2, X } from 'lucide-react';
+import {
+  ChevronDown,
+  Cpu,
+  Fan,
+  Power,
+  Radio,
+  RotateCcw,
+  Save,
+  Search,
+  SlidersHorizontal,
+  Thermometer,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { useAppContext } from '../ui/App';
 import type { Device } from '../ui/types';
 import { deviceTransmitId } from '../devices/types';
@@ -101,6 +114,8 @@ function DeviceRow({ device }: { device: Device }) {
   const entity = device.profile?.entity;
   const state = device.entityState;
   const hasState = device.reportedState !== undefined || device.desiredState !== undefined;
+  const currentTemperature = state?.attributes?.currentTemperature;
+  const valvePosition = state?.attributes?.valvePosition;
   const disabled = busyTargets.has(device.sourceId) || !transport.connected;
   const percentage =
     entity?.percentage && state?.percentage !== undefined
@@ -129,7 +144,13 @@ function DeviceRow({ device }: { device: Device }) {
               className="device-symbol"
               aria-hidden="true"
             >
-              {entity?.kind === 'fan' ? <Fan size={19} /> : <Cpu size={19} />}
+              {entity?.kind === 'fan' ? (
+                <Fan size={19} />
+              ) : entity?.kind === 'climate' ? (
+                <Thermometer size={19} />
+              ) : (
+                <Cpu size={19} />
+              )}
             </span>
             <div>
               <strong>{device.name}</strong>
@@ -142,15 +163,28 @@ function DeviceRow({ device }: { device: Device }) {
         <td data-label="State">
           {!hasState
             ? 'Not reported'
-            : entity?.deviceClass === 'opening'
-              ? state?.isOn
-                ? 'Open'
-                : 'Closed'
-              : (state?.preset ??
-                (state?.isOn ? (levels.length ? `${percentage}%` : 'On') : 'Off'))}
+            : entity?.kind === 'climate'
+              ? `${typeof currentTemperature === 'number' ? currentTemperature : '--'} C / ${typeof valvePosition === 'number' ? valvePosition : '--'}%`
+              : entity?.deviceClass === 'opening'
+                ? state?.isOn
+                  ? 'Open'
+                  : 'Closed'
+                : (state?.preset ??
+                  (state?.isOn ? (levels.length ? `${percentage}%` : 'On') : 'Off'))}
         </td>
         <td data-label="Control">
           <div className="device-controls">
+            {entity?.controls?.length && (
+              <button
+                className="icon-button"
+                type="button"
+                title="Device controls"
+                aria-label={`Controls for ${device.name}`}
+                onClick={() => setExpanded(true)}
+              >
+                <SlidersHorizontal size={16} />
+              </button>
+            )}
             {entity?.power && entity.commands.includes('command') && (
               <button
                 className={`icon-button ${hasState && state?.isOn ? 'active' : ''}`}
@@ -269,6 +303,13 @@ function DeviceRow({ device }: { device: Device }) {
                   <dt>Last seen</dt>
                   <dd>{formatLastSeen(device.lastSeen)}</dd>
                 </dl>
+                {entity?.controls?.length && (
+                  <DeviceCommandForm
+                    key={JSON.stringify(device.desiredState ?? null)}
+                    device={device}
+                    disabled={disabled}
+                  />
+                )}
               </div>
               <div>
                 <h3>Reported state</h3>
@@ -279,6 +320,117 @@ function DeviceRow({ device }: { device: Device }) {
         </tr>
       )}
     </>
+  );
+}
+
+function DeviceCommandForm({ device, disabled }: { device: Device; disabled: boolean }) {
+  const { onCommand } = useAppContext();
+  const controls = device.profile?.entity?.controls ?? [];
+  const attributes = device.entityState?.attributes ?? {};
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        const form = new FormData(
+          event.currentTarget,
+          (event.nativeEvent as SubmitEvent).submitter,
+        );
+        const action = form.get('action');
+        const request: Record<string, unknown> = {};
+        if (typeof action === 'string') request[action] = true;
+        else
+          for (const control of controls) {
+            if (control.kind === 'action') continue;
+            const value = form.get(control.field);
+            request[control.field] =
+              control.kind === 'boolean'
+                ? value === 'on'
+                : control.kind === 'number'
+                  ? value === '' && control.nullable
+                    ? null
+                    : Number(value)
+                  : control.options?.find((option) => String(option.value) === value)?.value;
+          }
+        onCommand(device.sourceId, request);
+      }}
+    >
+      <h3>Control settings</h3>
+      <fieldset
+        className="device-command-grid"
+        disabled={disabled}
+      >
+        {controls
+          .filter((control) => control.kind !== 'action')
+          .map((control) => {
+            const value = attributes[control.stateKey ?? control.field];
+            return (
+              <label
+                className={control.kind === 'boolean' ? 'device-command-toggle' : 'setting-field'}
+                key={control.field}
+              >
+                <span>{control.label}</span>
+                {control.kind === 'select' ? (
+                  <select
+                    name={control.field}
+                    defaultValue={
+                      typeof value === 'string' || typeof value === 'number' ? value : ''
+                    }
+                  >
+                    {control.options?.map((option) => (
+                      <option
+                        key={option.value}
+                        value={option.value}
+                      >
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : control.kind === 'boolean' ? (
+                  <input
+                    type="checkbox"
+                    name={control.field}
+                    defaultChecked={value === true}
+                  />
+                ) : (
+                  <input
+                    type="number"
+                    name={control.field}
+                    defaultValue={typeof value === 'number' ? value : ''}
+                    min={control.min}
+                    max={control.max}
+                    step={control.step}
+                    required={!control.nullable}
+                  />
+                )}
+              </label>
+            );
+          })}
+        <div className="device-command-actions">
+          <button
+            className="save-button"
+            type="submit"
+          >
+            <Save size={16} />
+            Apply
+          </button>
+          {controls
+            .filter((control) => control.kind === 'action')
+            .map((control) => (
+              <button
+                className="secondary-button"
+                type="submit"
+                name="action"
+                value={control.field}
+                key={control.field}
+                formNoValidate
+              >
+                <RotateCcw size={16} />
+                {control.label}
+              </button>
+            ))}
+        </div>
+      </fieldset>
+    </form>
   );
 }
 

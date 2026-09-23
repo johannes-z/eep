@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 
 
+### Features
+
+- Feat: add D2 ventilation measurements and sensor attributes for Home Assistant integration
+feat: implement device profiles for various sensor types and enhance DeviceProfile component
+test: add tests for D2 sensor measurements and Home Assistant sensor attributes
+fix: update MQTT entity bridge to handle new state value templates
+chore: update configuration for new devices and teach-in parameters (cf02aab)
+
+- Add A5-04-02 temperature and humidity sensor profile with decoding and MQTT support (256af5d)
+
+## v1.9.0
+
+
 ### Bug Fixes
 
 - Add temperature and humidity display for sensor devices in DeviceRow (b3fbdd2)
@@ -12,6 +25,11 @@ All notable changes to this project will be documented in this file.
 ### Features
 
 - Implement explicit EEP teach-in requirement for A5 sensor discovery and enhance teach-in manager logic (7ce8658)
+
+
+### Miscellaneous
+
+- Release v1.9.0 (bf95e5b)
 
 ## v1.8.0
 

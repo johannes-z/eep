@@ -184,16 +184,12 @@ test('pushes API snapshots for device, settings, pairing, and packet changes', a
     await teachIn.accept(0x05010203);
     await accepted;
 
-    const listening = nextState((state) => state.listen.active);
-    listener.start();
-    await listening;
     const captured = nextState((state) => state.listen.packets.length === 2);
     const frame = { packetType: 2, data: [0], optionalData: [] };
     listener.capture(frame);
     listener.capture(frame, undefined, 'tx');
     expect((await captured).listen.packets.map((packet) => packet.direction)).toEqual(['rx', 'tx']);
-    const stopped = nextState((state) => !state.listen.active && !state.pairing.active);
-    listener.stop();
+    const stopped = nextState((state) => !state.pairing.active);
     teachIn.stop();
     await stopped;
   } finally {

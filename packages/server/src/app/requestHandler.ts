@@ -184,17 +184,6 @@ export function createRequestHandler(
         return json(options.listener.snapshot());
       }
 
-      if (
-        parts[1] === 'listen' &&
-        request.method === 'POST' &&
-        parts.length === 3 &&
-        (parts[2] === 'start' || parts[2] === 'stop')
-      ) {
-        if (parts[2] === 'start') options.listener.start();
-        else options.listener.stop();
-        return json(options.listener.snapshot());
-      }
-
       if (parts[1] === 'devices' && request.method === 'PUT' && parts.length === 3) {
         const sourceId = parseRouteId(parts[2]);
         const registry = options.registry;

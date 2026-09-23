@@ -1,3 +1,4 @@
+import { Database } from 'bun:sqlite';
 import type { RadioERP1Packet } from '../devices/inbound';
 import { Esp3Parser, parseRadioERP1, type Esp3Frame } from './esp3';
 
@@ -20,8 +21,17 @@ export interface ListenPacket {
 }
 
 export interface ListenSnapshot {
-  active: boolean;
   packets: ListenPacket[];
+}
+
+interface ListenPacketRow {
+  id: number;
+  timestamp: string;
+  direction: ListenDirection;
+  packet_type: number;
+  data: string;
+  optional_data: string;
+  radio: string | null;
 }
 
 function bytesToHex(bytes: ArrayLike<number>): string {
@@ -38,11 +48,52 @@ function teachInEep(value: unknown): string | undefined {
 }
 
 export class PacketListener {
-  private static readonly maxPackets = 100;
-  private active = false;
-  private nextId = 1;
-  private packets: ListenPacket[] = [];
+  private static readonly maxPackets = 1000;
+  private readonly database: Database;
+  private readonly packets: ListenPacket[];
+  private nextId: number;
   private readonly listeners = new Set<() => void>();
+
+  constructor(filePath = ':memory:') {
+    this.database = new Database(filePath);
+    this.database.run(`
+      CREATE TABLE IF NOT EXISTS packet_listener_packets (
+        id INTEGER PRIMARY KEY,
+        timestamp TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        packet_type INTEGER NOT NULL,
+        data TEXT NOT NULL,
+        optional_data TEXT NOT NULL,
+        radio TEXT
+      )
+    `);
+    this.database.run(`
+      DELETE FROM packet_listener_packets
+      WHERE id NOT IN (
+        SELECT id FROM packet_listener_packets ORDER BY id DESC LIMIT ${PacketListener.maxPackets}
+      )
+    `);
+    this.packets = (
+      this.database
+        .query(
+          `
+            SELECT id, timestamp, direction, packet_type, data, optional_data, radio
+            FROM packet_listener_packets
+            ORDER BY id
+          `,
+        )
+        .all() as ListenPacketRow[]
+    ).map((row) => ({
+      id: row.id,
+      timestamp: row.timestamp,
+      direction: row.direction,
+      packetType: row.packet_type,
+      data: row.data,
+      optionalData: row.optional_data,
+      ...(row.radio === null ? {} : { radio: JSON.parse(row.radio) as ListenPacket['radio'] }),
+    }));
+    this.nextId = (this.packets.at(-1)?.id ?? 0) + 1;
+  }
 
   onChange(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -53,19 +104,8 @@ export class PacketListener {
     for (const listener of this.listeners) listener();
   }
 
-  start(): void {
-    this.packets = [];
-    this.active = true;
-    this.notify();
-  }
-
-  stop(): void {
-    this.active = false;
-    this.notify();
-  }
-
   snapshot(): ListenSnapshot {
-    return { active: this.active, packets: this.packets.map((packet) => ({ ...packet })) };
+    return { packets: this.packets.map((packet) => ({ ...packet })) };
   }
 
   capture(
@@ -73,7 +113,6 @@ export class PacketListener {
     radioPacket?: RadioERP1Packet,
     direction: ListenDirection = 'rx',
   ): void {
-    if (!this.active) return;
     const eep = teachInEep(radioPacket?.teachInInfo);
     const radio = radioPacket
       ? {
@@ -84,27 +123,51 @@ export class PacketListener {
           ...(eep ? { eep } : {}),
         }
       : undefined;
-    this.packets = [
-      ...this.packets,
-      {
-        id: this.nextId,
-        timestamp: new Date().toISOString(),
-        direction,
-        packetType: frame.packetType,
-        data: bytesToHex(frame.data),
-        optionalData: bytesToHex(frame.optionalData),
-        ...(radio ? { radio } : {}),
-      },
-    ].slice(-PacketListener.maxPackets);
+    const packet: ListenPacket = {
+      id: this.nextId,
+      timestamp: new Date().toISOString(),
+      direction,
+      packetType: frame.packetType,
+      data: bytesToHex(frame.data),
+      optionalData: bytesToHex(frame.optionalData),
+      ...(radio ? { radio } : {}),
+    };
+    this.database.run(
+      `
+        INSERT INTO packet_listener_packets (
+          id, timestamp, direction, packet_type, data, optional_data, radio
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        packet.id,
+        packet.timestamp,
+        packet.direction,
+        packet.packetType,
+        packet.data,
+        packet.optionalData,
+        packet.radio ? JSON.stringify(packet.radio) : null,
+      ],
+    );
+    this.database.run(`
+      DELETE FROM packet_listener_packets
+      WHERE id NOT IN (
+        SELECT id FROM packet_listener_packets ORDER BY id DESC LIMIT ${PacketListener.maxPackets}
+      )
+    `);
+    this.packets.push(packet);
+    if (this.packets.length > PacketListener.maxPackets) this.packets.shift();
     this.nextId += 1;
     this.notify();
   }
 
   captureOutgoing(payload: ArrayLike<number>): void {
-    if (!this.active) return;
     const parser = new Esp3Parser();
     for (const frame of parser.push(payload)) {
       this.capture(frame, parseRadioERP1(frame), 'tx');
     }
+  }
+
+  close(): void {
+    this.database.close();
   }
 }

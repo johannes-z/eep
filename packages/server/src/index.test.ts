@@ -376,13 +376,9 @@ test('lists the devices from the initial configuration', async () => {
   expect(devices.map((device) => device.targetId)).toContain(0x0513cefe);
 });
 
-test('starts, reads, and stops the packet listener', async () => {
+test('reads packets from the always-on packet listener', async () => {
   const listener = new PacketListener();
   const handler = createRequestHandler(new FakeTransport(), { listener });
-
-  const start = await handler(new Request('http://localhost/api/listen/start', { method: 'POST' }));
-  expect(start.status).toBe(200);
-  expect(await start.json()).toMatchObject({ active: true, packets: [] });
 
   listener.capture(
     { packetType: 1, data: [0xd2, 1, 2], optionalData: [3, 4] },
@@ -394,7 +390,6 @@ test('starts, reads, and stops the packet listener', async () => {
   );
   const current = await handler(new Request('http://localhost/api/listen'));
   expect(await current.json()).toMatchObject({
-    active: true,
     packets: [
       {
         direction: 'rx',
@@ -409,9 +404,6 @@ test('starts, reads, and stops the packet listener', async () => {
   expect(await (await handler(new Request('http://localhost/api/listen'))).json()).toMatchObject({
     packets: [{ direction: 'rx' }, { direction: 'tx', packetType: 5, data: '08' }],
   });
-
-  const stop = await handler(new Request('http://localhost/api/listen/stop', { method: 'POST' }));
-  expect(await stop.json()).toMatchObject({ active: false });
 });
 
 test('renames and persists a device through the API', async () => {

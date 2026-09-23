@@ -57,7 +57,6 @@ test('automatically answers actuator wakes and captures RX/TX without repeating 
   const teachIn = new TeachInManager(registry, 0xffe76685);
   const transport = new TransportRuntime(connection, registry, teachIn, () => undefined);
   const listener = new PacketListener();
-  listener.start();
   transport.onPacket((frame, radio, direction) => listener.capture(frame, radio, direction));
   try {
     const device = await registry.upsert({

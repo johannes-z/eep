@@ -104,6 +104,7 @@ async function startServer(
   let initialTransport: TransportConnection | undefined;
   let transportRuntime: TransportRuntime | undefined;
   let mqttRuntime: MqttRuntime | undefined;
+  let packetListener: PacketListener | undefined;
   let server: ReturnType<typeof Bun.serve> | undefined;
   let stateUpdates: ReturnType<typeof createStateUpdates> | undefined;
   const subscriptions: Array<() => void> = [];
@@ -131,6 +132,7 @@ async function startServer(
     } catch (error) {
       console.error('Registry shutdown error:', error);
     }
+    packetListener?.close();
   };
 
   try {
@@ -176,8 +178,10 @@ async function startServer(
     const defaultSourceId = baseId !== undefined && baseId < 0xffffffff ? baseId + 1 : 1;
     const startId = serverConfig.startId ?? defaultSourceId;
     let activeTransportRuntime: TransportRuntime;
-    const packetListener = new PacketListener();
-    const captureTransmit = (payload: Uint8Array): void => packetListener.captureOutgoing(payload);
+    const activePacketListener = new PacketListener(join(dataDir, 'state.db'));
+    packetListener = activePacketListener;
+    const captureTransmit = (payload: Uint8Array): void =>
+      activePacketListener.captureOutgoing(payload);
     const teachIn = new TeachInManager(
       loadedRegistry,
       startId,
@@ -195,7 +199,7 @@ async function startServer(
     transportRuntime = activeTransportRuntime;
     initialTransport = undefined;
     activeTransportRuntime.onPacket((frame, radioPacket, direction) =>
-      packetListener.capture(frame, radioPacket, direction),
+      activePacketListener.capture(frame, radioPacket, direction),
     );
     await activeTransportRuntime.start(serverConfig.transport);
 
@@ -257,7 +261,7 @@ async function startServer(
       saveMqttSettings: (settings) => saveMqttSettings(configurationPath, settings),
       applyMqttSettings,
       mqttStatus: () => ({ ...mqttStatus }),
-      listener: packetListener,
+      listener: activePacketListener,
       onTransmit: captureTransmit,
       profiles,
       onChange: () => stateUpdates?.notify(),
@@ -268,7 +272,7 @@ async function startServer(
       loadedRegistry.onChange(updates.notify),
       loadedRegistry.onRemove(updates.notify),
       teachIn.onChange(updates.notify),
-      packetListener.onChange(updates.notify),
+      activePacketListener.onChange(updates.notify),
       activeMqttRuntime.onStatusChange(updates.notify),
       activeTransportRuntime.onStatusChange(() => {
         baseId = undefined;

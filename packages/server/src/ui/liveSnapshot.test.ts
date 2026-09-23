@@ -67,7 +67,7 @@ test('loads the snapshot from GET endpoints through the query cache', async () =
     homeassistant: { enabled: false },
     mqtt: { configured: false },
     pairing: { active: false, candidates: [], ignoredDevices: [] },
-    listen: { active: false, packets: [] },
+    listen: { packets: [] },
   };
   const fetchMock = spyOn(globalThis, 'fetch').mockImplementation(
     Object.assign(

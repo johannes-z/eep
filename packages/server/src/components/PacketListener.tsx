@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Activity, Download, Pause, Play, Search } from 'lucide-react';
+import { Activity, Download, Search } from 'lucide-react';
 import type { ListenPacket, ListenResponse } from '../ui/types';
 import type { Device } from '../ui/types';
 import { parseEnOceanId } from '../util';
@@ -8,11 +8,9 @@ import { formatTargetId } from './deviceUtils';
 export function PacketListener({
   listen,
   devices,
-  onListen,
 }: {
   listen: ListenResponse;
   devices: Device[];
-  onListen: () => void;
 }) {
   const [direction, setDirection] = useState<'all' | 'rx' | 'tx'>('all');
   const [query, setQuery] = useState('');
@@ -42,28 +40,8 @@ export function PacketListener({
       <div className="settings-heading listener-heading">
         <div>
           <h2>Packet listener</h2>
-          <p>
-            {listen.packets.length} captured / {listen.active ? 'Listening' : 'Stopped'}
-          </p>
+          <p>{listen.packets.length} captured</p>
         </div>
-        <button
-          className="save-button"
-          onClick={onListen}
-          type="button"
-        >
-          {listen.active ? (
-            <Pause
-              size={16}
-              aria-hidden="true"
-            />
-          ) : (
-            <Play
-              size={16}
-              aria-hidden="true"
-            />
-          )}
-          {listen.active ? 'Stop listening' : 'Start listening'}
-        </button>
       </div>
       <div className="list-toolbar">
         <div
@@ -130,11 +108,7 @@ export function PacketListener({
               aria-hidden="true"
             />
             <h3>
-              {listen.packets.length
-                ? 'No matching packets'
-                : listen.active
-                  ? 'Waiting for packets'
-                  : 'No packets captured'}
+              {listen.packets.length ? 'No matching packets' : 'No packets captured'}
             </h3>
           </div>
         )}

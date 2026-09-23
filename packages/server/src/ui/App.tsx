@@ -20,7 +20,6 @@ interface AppContextValue extends AppSnapshot {
   onRejectCandidate: (candidate: TeachInCandidate) => void;
   onIgnoreCandidate: (candidate: TeachInCandidate) => void;
   onClearIgnoredDevice: (targetId: number) => void;
-  onListen: () => void;
   pairingSourceId: number | null;
   pairingMessage: { text: string; error: boolean };
 }
@@ -171,11 +170,6 @@ export function App() {
                       path: '/api/pairing/unignore',
                       body: { targetId },
                       sourceId: targetId,
-                    });
-                  },
-                  onListen: () => {
-                    action.mutate({
-                      path: `/api/listen/${snapshot.listen.active ? 'stop' : 'start'}`,
                     });
                   },
                   pairingSourceId,

@@ -1,22 +1,32 @@
 version: 1
+mqtt:
+  url: mqtt://192.168.0.241:1883
+  baseTopic: eep
+  discoveryPrefix: homeassistant
+  keepalive: 60
+  maximumPacketSize: 1048576
+  rejectUnauthorized: true
+  includeDeviceInformation: true
+  version: 4
+  username: !secret mqtt_username
+  password: !secret mqtt_password
+  tls: false
+  forceDisableRetain: false
+transport:
+  type: tcp
+  path: tcp://192.168.1.49:20109
+  baudRate: 57600
+  rtscts: false
+homeassistant:
+  enabled: true
+  discoveryTopic: homeassistant
+  statusTopic: eep/status
+  logLevel: info
 devices:
-  ffe76681:
-    targetId: '0513cefe'
-    name: Living Room vent
-    profileId: D2-50-00
-    capabilities:
-      - off
-      - level1
-      - level2
-      - level3
-      - level4
-      - automatic
-      - supplyOnly
-      - exhaustOnly
   ffe76682:
-    targetId: '05126787'
     name: E05 Vent
     profileId: D2-50-00
+    targetId: '05126787'
     capabilities:
       - off
       - level1
@@ -26,10 +36,35 @@ devices:
       - automatic
       - supplyOnly
       - exhaustOnly
+    teachIn:
+      eep: D2-50-00
+      channel: 255
+      manufacturerId: 97
+      direction: bidirectional
+      responseExpected: true
+  ffe76681:
+    name: E04 Vent
+    profileId: D2-50-00
+    targetId: 0513cefe
+    capabilities:
+      - off
+      - level1
+      - level2
+      - level3
+      - level4
+      - automatic
+      - supplyOnly
+      - exhaustOnly
+    teachIn:
+      eep: D2-50-00
+      channel: 255
+      manufacturerId: 97
+      direction: bidirectional
+      responseExpected: true
   ffe76683:
-    targetId: '05149bb5'
-    name: Guest Room vent
+    name: E06 Vent
     profileId: D2-50-00
+    targetId: 05149bb5
     capabilities:
       - off
       - level1
@@ -39,10 +74,16 @@ devices:
       - automatic
       - supplyOnly
       - exhaustOnly
+    teachIn:
+      eep: D2-50-00
+      channel: 255
+      manufacturerId: 97
+      direction: bidirectional
+      responseExpected: true
   ffe76684:
-    targetId: '0513cdf8'
-    name: Bed Room vent
+    name: E07 Vent
     profileId: D2-50-00
+    targetId: 0513cdf8
     capabilities:
       - off
       - level1
@@ -52,3 +93,68 @@ devices:
       - automatic
       - supplyOnly
       - exhaustOnly
+    teachIn:
+      eep: D2-50-00
+      channel: 255
+      manufacturerId: 97
+      direction: bidirectional
+      responseExpected: true
+  002fc19f:
+    name: Rocker
+    profileId: F6-02-01
+    targetId: 002fc19f
+    transmitId: null
+    capabilities:
+      - rocker
+    teachIn:
+      eep: F6-02-01
+      direction: unidirectional
+      responseExpected: false
+  058f4fdc:
+    name: E01 Front Door
+    profileId: D5-00-01
+    targetId: 058f4fdc
+    transmitId: null
+    capabilities:
+      - contact
+    teachIn:
+      eep: D5-00-01
+      direction: unidirectional
+      responseExpected: false
+  058e52cc:
+    name: E08 TF
+    profileId: A5-04-01
+    targetId: 058e52cc
+    transmitId: null
+    capabilities:
+      - temperature
+      - humidity
+    teachIn:
+      eep: A5-04-01
+      direction: unidirectional
+      responseExpected: false
+  051a8f95:
+    name: E09 TF
+    profileId: A5-04-01
+    targetId: 051a8f95
+    transmitId: null
+    capabilities:
+      - temperature
+      - humidity
+    teachIn:
+      eep: A5-04-01
+      direction: unidirectional
+      responseExpected: false
+  ffe76685:
+    name: E08 Valve
+    profileId: A5-20-06
+    targetId: 05145ad7
+    capabilities:
+      - valvePosition
+      - temperature
+      - referenceRun
+    teachIn:
+      eep: A5-20-06
+      manufacturerId: 73
+      direction: bidirectional
+      responseExpected: true

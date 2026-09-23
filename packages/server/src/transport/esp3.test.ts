@@ -101,6 +101,23 @@ test.each([0x20, 0x30, 0x21, 0x32])(
   },
 );
 
+test('classifies a broadcast D5 learn telegram separately from contact state', () => {
+  const radio = parseRadioERP1({
+    packetType: 1,
+    data: [0xd5, 0x00, ...toHex(0x058f4fdc), 0],
+    optionalData: [0, ...toHex(0xffffffff), 0x41, 0],
+  });
+
+  expect(radio).toEqual({
+    RORG: 0xd5,
+    payload: [0],
+    senderId: '058f4fdc',
+    status: 0,
+    destinationId: 'ffffffff',
+    teachIn: true,
+  });
+});
+
 test('builds a successful UTE teach-in response', () => {
   const response = buildUteTeachInResponse(0xffe76681, 0x05010203, [0, 0, 0, 0, 0, 0x50, 0xd2]);
   const parser = new Esp3Parser();

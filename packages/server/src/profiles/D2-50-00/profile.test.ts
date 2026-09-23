@@ -51,6 +51,77 @@ test('decodes D2-50-00 basic status modes through the profile contract', () => {
   ).toEqual({ kind: 'ignored' });
 });
 
+test('decodes Type 00 sensor measurements from basic status', () => {
+  const result = d2Profile.decodeIngress(context, {
+    RORG: 0xd2,
+    payload: [0x41, 0x03, 0x00, 0x16, 0x00, 0x9f, 0x50, 0x00, 0x00, 0x44, 0x11, 0x23, 0x41, 0xe0],
+    senderId: '05126787',
+  });
+
+  expect(result).toMatchObject({
+    kind: 'reported',
+    reportedState: {
+      airQuality: 22,
+      outdoorTemperature: 15,
+      supplyAirTemperature: 20,
+      supplyAirFlow: 17,
+      exhaustAirFlow: 17,
+      supplyFanSpeed: 564,
+      exhaustFanSpeed: 480,
+    },
+  });
+});
+
+test('publishes D2 measurements as Home Assistant sensor attributes', () => {
+  const descriptor = d2Profile.entity!.describe(context);
+  const state = d2Profile.entity!.projectState({
+    ...context,
+    reportedState: {
+      isOn: true,
+      percentage: 25,
+      d2Value: 1,
+      airQuality: 22,
+      outdoorTemperature: 15,
+      supplyAirTemperature: 20,
+      supplyAirFlow: 0,
+      exhaustAirFlow: 68,
+      supplyFanSpeed: 564,
+      exhaustFanSpeed: 480,
+    },
+  });
+
+  expect(descriptor.jsonState).toBe(true);
+  expect(descriptor.discoveryEntities).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        key: 'air_quality',
+        kind: 'sensor',
+        valueTemplate: '{{ value_json.airQuality }}',
+        unit: '%',
+      }),
+      expect.objectContaining({
+        key: 'outdoor_temperature',
+        valueTemplate: '{{ value_json.outdoorTemperature }}',
+        unit: '\u00b0C',
+      }),
+      expect.objectContaining({
+        key: 'exhaust_fan_speed',
+        valueTemplate: '{{ value_json.exhaustFanSpeed }}',
+        unit: 'rpm',
+      }),
+    ]),
+  );
+  expect(state.attributes).toEqual({
+    airQuality: 22,
+    outdoorTemperature: 15,
+    supplyAirTemperature: 20,
+    supplyAirFlow: 0,
+    exhaustAirFlow: 68,
+    supplyFanSpeed: 564,
+    exhaustFanSpeed: 480,
+  });
+});
+
 test('parses a command and encodes the D2 ERP1 frame through the profile contract', () => {
   const command = d2Profile.parseCommand(context, { percentage: 75 });
   const frame = d2Profile.encodeCommand(context, command);

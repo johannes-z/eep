@@ -1,22 +1,10 @@
 import { useActionState, useDeferredValue, useState } from 'react';
 import { Link } from '@tanstack/react-router';
-import {
-  ChevronDown,
-  Cpu,
-  Fan,
-  Power,
-  Radio,
-  RotateCcw,
-  Save,
-  Search,
-  SlidersHorizontal,
-  Thermometer,
-  Trash2,
-  X,
-} from 'lucide-react';
+import { ChevronDown, Radio, RotateCcw, Save, Search, Trash2, X } from 'lucide-react';
 import { useAppContext } from '../ui/App';
 import type { Device } from '../ui/types';
 import { deviceTransmitId } from '../devices/types';
+import { DeviceProfile } from './DeviceProfiles';
 import { formatLastSeen, formatTargetId } from './deviceUtils';
 
 export function Devices() {
@@ -112,160 +100,21 @@ function DeviceRow({ device }: { device: Device }) {
   const { busyTargets, transport, onCommand, onDeleteDevice, onRenameDevice } = useAppContext();
   const [expanded, setExpanded] = useState(false);
   const entity = device.profile?.entity;
-  const state = device.entityState;
   const hasState = device.reportedState !== undefined || device.desiredState !== undefined;
-  const currentTemperature = state?.attributes?.currentTemperature;
-  const valvePosition = state?.attributes?.valvePosition;
-  const temperature = state?.attributes?.temperature;
-  const humidity = state?.attributes?.humidity;
   const disabled =
     busyTargets.has(device.sourceId) ||
     (!transport.connected && device.profile?.commandDelivery !== 'onReceive');
-  const percentage =
-    entity?.percentage && state?.percentage !== undefined
-      ? Math.round((state.percentage / entity.percentage.max) * 100)
-      : 0;
-  const levels =
-    entity?.percentage && entity.commands.includes('percentage')
-      ? Array.from({ length: entity.percentage.max - entity.percentage.min + 1 }, (_, index) => {
-          const level = entity.percentage!.min + index;
-          return Math.round((level / entity.percentage!.max) * 100);
-        })
-      : [];
-  const presets = entity?.commands.includes('preset') ? (entity.presets ?? []) : [];
-  const control = !hasState
-    ? ''
-    : state?.preset
-      ? `preset:${state.preset}`
-      : `percentage:${state?.isOn ? percentage : 0}`;
 
   return (
     <>
       <tr>
-        <td>
-          <div className="device-name">
-            <span
-              className="device-symbol"
-              aria-hidden="true"
-            >
-              {entity?.kind === 'fan' ? (
-                <Fan size={19} />
-              ) : entity?.kind === 'climate' ? (
-                <Thermometer size={19} />
-              ) : (
-                <Cpu size={19} />
-              )}
-            </span>
-            <div>
-              <strong>{device.name}</strong>
-              <span>
-                <code>{formatTargetId(device.targetId)}</code> / {device.profileId}
-              </span>
-            </div>
-          </div>
-        </td>
-        <td data-label="State">
-          {!hasState
-            ? 'Not reported'
-            : entity?.kind === 'climate'
-              ? `${typeof currentTemperature === 'number' ? currentTemperature : '--'} C / ${typeof valvePosition === 'number' ? valvePosition : '--'}%`
-              : entity?.kind === 'sensor'
-                ? [
-                    typeof temperature === 'number' ? `${temperature} \u00b0C` : undefined,
-                    typeof humidity === 'number' ? `${humidity} %` : undefined,
-                  ]
-                    .filter((value): value is string => value !== undefined)
-                    .join(' / ') || 'Not reported'
-                : entity?.deviceClass === 'opening'
-                  ? state?.isOn
-                    ? 'Open'
-                    : 'Closed'
-                  : (state?.preset ??
-                    (state?.isOn ? (levels.length ? `${percentage}%` : 'On') : 'Off'))}
-        </td>
-        <td data-label="Control">
-          <div className="device-controls">
-            {entity?.controls?.length && (
-              <button
-                className="icon-button"
-                type="button"
-                title="Device controls"
-                aria-label={`Controls for ${device.name}`}
-                onClick={() => setExpanded(true)}
-              >
-                <SlidersHorizontal size={16} />
-              </button>
-            )}
-            {entity?.power && entity.commands.includes('command') && (
-              <button
-                className={`icon-button ${hasState && state?.isOn ? 'active' : ''}`}
-                type="button"
-                disabled={disabled}
-                title={state?.isOn ? 'Turn off' : 'Turn on'}
-                aria-label={`${state?.isOn ? 'Turn off' : 'Turn on'} ${device.name}`}
-                onClick={() => {
-                  void onCommand(device.sourceId, { isOn: !state?.isOn }).catch(() => undefined);
-                }}
-              >
-                <Power size={16} />
-              </button>
-            )}
-            {(levels.length > 0 || presets.length > 0) && (
-              <select
-                aria-label={`${device.name} mode`}
-                disabled={disabled}
-                value={control}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  void onCommand(
-                    device.sourceId,
-                    value.startsWith('preset:')
-                      ? { preset: value.slice(7) }
-                      : { percentage: Number(value.slice(11)) },
-                  ).catch(() => undefined);
-                }}
-              >
-                <option
-                  value=""
-                  disabled
-                >
-                  Not reported
-                </option>
-                <option
-                  value="percentage:0"
-                  disabled={!levels.length}
-                >
-                  Off
-                </option>
-                {levels.length > 0 && (
-                  <optgroup label="Speed">
-                    {levels.map((level) => (
-                      <option
-                        key={level}
-                        value={`percentage:${level}`}
-                      >
-                        {level}%
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-                {presets.length > 0 && (
-                  <optgroup label="Mode">
-                    {presets.map((preset) => (
-                      <option
-                        key={preset}
-                        value={`preset:${preset}`}
-                      >
-                        {preset}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
-            )}
-            {!entity && <span className="muted-copy">Unsupported profile</span>}
-          </div>
-        </td>
+        <DeviceProfile
+          device={device}
+          disabled={disabled}
+          hasState={hasState}
+          onCommand={onCommand}
+          onOpenControls={() => setExpanded(true)}
+        />
         <td className="device-expand-cell">
           <button
             className="icon-button"

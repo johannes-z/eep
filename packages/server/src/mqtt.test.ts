@@ -701,6 +701,108 @@ test('publishes Home Assistant fan discovery for seeded devices', async () => {
   ).toBeUndefined();
 });
 
+test('publishes D2 ventilation measurements as Home Assistant sensors', async () => {
+  const { bridge, client, registry } = await createBridge();
+  try {
+    const fanDiscovery = client.published.find(
+      (entry) => entry.topic === 'homeassistant/fan/ffe76681/config' && entry.payload,
+    );
+    expect(fanDiscovery).toBeDefined();
+    expect(JSON.parse(fanDiscovery?.payload ?? '{}')).toMatchObject({
+      command_topic: 'eep/fan/ffe76681/command',
+      state_value_template: '{{ value_json.state }}',
+      percentage_command_topic: 'eep/fan/ffe76681/percentage/set',
+      speed_range_min: 1,
+      speed_range_max: 4,
+      preset_mode_command_topic: 'eep/fan/ffe76681/preset/set',
+      preset_modes: ['Automatic', 'Supply', 'Exhaust'],
+    });
+    const sensors = [
+      ['air_quality', { unit_of_measurement: '%', value_template: '{{ value_json.airQuality }}' }],
+      [
+        'outdoor_temperature',
+        {
+          device_class: 'temperature',
+          unit_of_measurement: '\u00b0C',
+          value_template: '{{ value_json.outdoorTemperature }}',
+        },
+      ],
+      [
+        'supply_air_temperature',
+        {
+          device_class: 'temperature',
+          unit_of_measurement: '\u00b0C',
+          value_template: '{{ value_json.supplyAirTemperature }}',
+        },
+      ],
+      [
+        'supply_air_flow',
+        { unit_of_measurement: 'm3/h', value_template: '{{ value_json.supplyAirFlow }}' },
+      ],
+      [
+        'exhaust_air_flow',
+        { unit_of_measurement: 'm3/h', value_template: '{{ value_json.exhaustAirFlow }}' },
+      ],
+      [
+        'supply_fan_speed',
+        { unit_of_measurement: 'rpm', value_template: '{{ value_json.supplyFanSpeed }}' },
+      ],
+      [
+        'exhaust_fan_speed',
+        { unit_of_measurement: 'rpm', value_template: '{{ value_json.exhaustFanSpeed }}' },
+      ],
+    ] as const;
+
+    for (const [key, fields] of sensors) {
+      const message = client.published
+        .filter((entry) => entry.topic === `homeassistant/sensor/ffe76681_${key}/config`)
+        .at(-1);
+      expect(message).toBeDefined();
+      expect(JSON.parse(message?.payload ?? '{}')).toMatchObject({
+        ...fields,
+        state_topic: 'eep/fan/ffe76681/state',
+        unique_id: `eep_sensor_ffe76681_${key}`,
+      });
+    }
+
+    await registry.update(0xffe76681, {
+      availability: 'online',
+      reportedState: {
+        isOn: true,
+        percentage: 25,
+        d2Value: 1,
+        airQuality: 22,
+        outdoorTemperature: 15,
+        supplyAirTemperature: 20,
+        supplyAirFlow: 17,
+        exhaustAirFlow: 17,
+        supplyFanSpeed: 564,
+        exhaustFanSpeed: 480,
+      },
+    });
+    await bridge.publishAll();
+
+    expect(
+      JSON.parse(
+        client.published.filter((entry) => entry.topic === 'eep/fan/ffe76681/state').at(-1)!
+          .payload,
+      ),
+    ).toMatchObject({
+      state: 'ON',
+      airQuality: 22,
+      outdoorTemperature: 15,
+      supplyAirTemperature: 20,
+      supplyAirFlow: 17,
+      exhaustAirFlow: 17,
+      supplyFanSpeed: 564,
+      exhaustFanSpeed: 480,
+    });
+  } finally {
+    await bridge.stop({ publishOffline: false });
+    await registry.close();
+  }
+});
+
 test('shutdown waits for in-flight discovery before publishing final offline state', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-mqtt-stop-inflight-'));
   const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));

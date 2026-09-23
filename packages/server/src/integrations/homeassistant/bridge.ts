@@ -186,7 +186,10 @@ export class MqttEntityBridge {
             ...(descriptor.commands.includes('command') ? { command_topic: topics.command } : {}),
             state_topic: topics.state,
             ...(descriptor.jsonState
-              ? { value_template: '{{ value_json.state }}', json_attributes_topic: topics.state }
+              ? {
+                  state_value_template: '{{ value_json.state }}',
+                  json_attributes_topic: topics.state,
+                }
               : {}),
           }),
       ...(descriptor.percentage

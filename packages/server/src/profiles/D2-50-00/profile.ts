@@ -35,6 +35,18 @@ import type {
 const profileId = 'D2-50-00';
 const protocolFunctions = getProtocolFunctions();
 
+interface D2SensorState {
+  airQuality?: number;
+  outdoorTemperature: number;
+  supplyAirTemperature: number;
+  supplyAirFlow: number;
+  exhaustAirFlow: number;
+  supplyFanSpeed: number;
+  exhaustFanSpeed: number;
+}
+
+type D2State = D2FanState & Partial<D2SensorState>;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -45,6 +57,27 @@ function isBasicStatusPayload(payload: ArrayLike<number>): boolean {
     Array.from(payload).every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 0xff) &&
     payload[0] >> 5 === 2
   );
+}
+
+function readBits(payload: ArrayLike<number>, offset: number, size: number): number {
+  let value = 0;
+  for (let bit = offset; bit < offset + size; bit += 1) {
+    value = (value << 1) | ((payload[Math.floor(bit / 8)] >> (7 - (bit % 8))) & 1);
+  }
+  return value;
+}
+
+function decodeSensors(payload: ArrayLike<number>): D2SensorState {
+  const airQuality = readBits(payload, 25, 7);
+  return {
+    ...(airQuality <= 100 ? { airQuality } : {}),
+    outdoorTemperature: readBits(payload, 40, 7) - 64,
+    supplyAirTemperature: readBits(payload, 47, 7) - 64,
+    supplyAirFlow: readBits(payload, 68, 10),
+    exhaustAirFlow: readBits(payload, 78, 10),
+    supplyFanSpeed: readBits(payload, 88, 12),
+    exhaustFanSpeed: readBits(payload, 100, 12),
+  };
 }
 
 export function decodeD2Value(payload: ArrayLike<number>): number | undefined {
@@ -66,7 +99,7 @@ function supportedFunctions(value: unknown): string[] {
   return [...value];
 }
 
-function stateValue(value: unknown, field: ProfileStateField, capabilities: unknown): D2FanState {
+function stateValue(value: unknown, field: ProfileStateField, capabilities: unknown): D2State {
   if (!isRecord(value)) throw new Error(`Invalid ${field}`);
   const { isOn, percentage, preset, d2Value } = value;
   if (typeof isOn !== 'boolean') throw new Error(`Invalid ${field}.isOn`);
@@ -95,7 +128,31 @@ function stateValue(value: unknown, field: ProfileStateField, capabilities: unkn
   if (preset !== undefined && preset !== state.preset) {
     throw new Error(`Invalid ${field}.preset`);
   }
-  return { ...state, percentage };
+  const sensorState: Partial<D2SensorState> = {};
+  if (field === 'reportedState') {
+    for (const [key, minimum, maximum] of [
+      ['airQuality', 0, 100],
+      ['outdoorTemperature', -64, 63],
+      ['supplyAirTemperature', -64, 63],
+      ['supplyAirFlow', 0, 1023],
+      ['exhaustAirFlow', 0, 1023],
+      ['supplyFanSpeed', 0, 4095],
+      ['exhaustFanSpeed', 0, 4095],
+    ] as const) {
+      const sensorValue = value[key];
+      if (
+        sensorValue !== undefined &&
+        (typeof sensorValue !== 'number' ||
+          !Number.isFinite(sensorValue) ||
+          sensorValue < minimum ||
+          sensorValue > maximum)
+      ) {
+        throw new Error(`Invalid ${field}.${key}`);
+      }
+      if (sensorValue !== undefined) sensorState[key] = sensorValue;
+    }
+  }
+  return { ...state, percentage, ...sensorState };
 }
 
 function commandValue(value: unknown, capabilities: unknown): number {
@@ -140,7 +197,7 @@ function previousPercentage(context: ProfileDeviceContext): number {
   return typeof desired === 'number' ? desired : typeof reported === 'number' ? reported : 0;
 }
 
-function currentState(context: ProfileEntityContext): D2FanState {
+function currentState(context: ProfileEntityContext): D2State {
   const desired = isRecord(context.desiredState) ? context.desiredState : undefined;
   const reported = isRecord(context.reportedState) ? context.reportedState : undefined;
   const desiredValue = desired?.d2Value;
@@ -165,6 +222,71 @@ const entity = {
     const presets = fanSupportedPresets(functions);
     return {
       kind: 'fan',
+      jsonState: true,
+      discoveryEntities: [
+        {
+          key: '',
+          name: null,
+        },
+        {
+          key: 'air_quality',
+          name: 'Air quality',
+          kind: 'sensor',
+          unit: '%',
+          stateClass: 'measurement',
+          valueTemplate: '{{ value_json.airQuality }}',
+        },
+        {
+          key: 'outdoor_temperature',
+          name: 'Outdoor temperature',
+          kind: 'sensor',
+          deviceClass: 'temperature',
+          unit: '\u00b0C',
+          stateClass: 'measurement',
+          valueTemplate: '{{ value_json.outdoorTemperature }}',
+        },
+        {
+          key: 'supply_air_temperature',
+          name: 'Supply air temperature',
+          kind: 'sensor',
+          deviceClass: 'temperature',
+          unit: '\u00b0C',
+          stateClass: 'measurement',
+          valueTemplate: '{{ value_json.supplyAirTemperature }}',
+        },
+        {
+          key: 'supply_air_flow',
+          name: 'Supply air flow',
+          kind: 'sensor',
+          unit: 'm3/h',
+          stateClass: 'measurement',
+          valueTemplate: '{{ value_json.supplyAirFlow }}',
+        },
+        {
+          key: 'exhaust_air_flow',
+          name: 'Exhaust air flow',
+          kind: 'sensor',
+          unit: 'm3/h',
+          stateClass: 'measurement',
+          valueTemplate: '{{ value_json.exhaustAirFlow }}',
+        },
+        {
+          key: 'supply_fan_speed',
+          name: 'Supply fan speed',
+          kind: 'sensor',
+          unit: 'rpm',
+          stateClass: 'measurement',
+          valueTemplate: '{{ value_json.supplyFanSpeed }}',
+        },
+        {
+          key: 'exhaust_fan_speed',
+          name: 'Exhaust fan speed',
+          kind: 'sensor',
+          unit: 'rpm',
+          stateClass: 'measurement',
+          valueTemplate: '{{ value_json.exhaustFanSpeed }}',
+        },
+      ],
       protocol: 'D2-50-00 ventilation fan',
       power: true,
       commands: ['command', 'percentage', 'preset'],
@@ -175,10 +297,24 @@ const entity = {
 
   projectState(context: ProfileEntityContext): ProfileEntityState {
     const state = currentState(context);
+    const reported = isRecord(context.reportedState) ? context.reportedState : undefined;
+    const attributes: Record<string, JsonValue> = {};
+    for (const key of [
+      'airQuality',
+      'outdoorTemperature',
+      'supplyAirTemperature',
+      'supplyAirFlow',
+      'exhaustAirFlow',
+      'supplyFanSpeed',
+      'exhaustFanSpeed',
+    ] as const) {
+      if (typeof reported?.[key] === 'number') attributes[key] = reported[key];
+    }
     return {
       isOn: state.isOn,
       percentage: fanD2ValueToSpeed(state.d2Value, supportedFunctions(context.capabilities)),
       ...(state.preset ? { preset: state.preset } : {}),
+      ...(Object.keys(attributes).length ? { attributes } : {}),
     };
   },
 
@@ -230,7 +366,7 @@ export const d2Profile: EepProfile = {
     return {
       kind: 'reported',
       value,
-      reportedState,
+      reportedState: { ...reportedState, ...decodeSensors(packet.payload) },
       clearDesiredState: true,
     };
   },

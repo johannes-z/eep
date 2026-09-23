@@ -236,9 +236,12 @@ export class MqttEntityBridge {
               ...(entry.deviceClass ? { device_class: entry.deviceClass } : {}),
               ...(entry.unit ? { unit_of_measurement: entry.unit } : {}),
               ...(entry.stateClass ? { state_class: entry.stateClass } : {}),
+              ...(entry.entityCategory ? { entity_category: entry.entityCategory } : {}),
               ...(entry.kind === 'number'
                 ? { min: entry.min, max: entry.max, step: entry.step, mode: 'slider' }
                 : {}),
+              ...(entry.kind === 'select' ? { options: entry.options ?? [] } : {}),
+              ...(entry.kind === 'button' ? { payload_press: 'PRESS' } : {}),
               ...(entry.kind === 'binary_sensor' || entry.kind === 'switch'
                 ? { payload_on: 'ON', payload_off: 'OFF' }
                 : {}),

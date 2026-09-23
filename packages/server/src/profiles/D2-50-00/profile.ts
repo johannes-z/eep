@@ -1,4 +1,5 @@
 import { changeState } from './changeState';
+import { DirectOperationModeControl } from './DirectOperationModeControl';
 import {
   d2ValueToFanState,
   fanPercentageToD2Value,
@@ -37,6 +38,7 @@ const protocolFunctions = getProtocolFunctions();
 
 interface D2SensorState {
   airQuality?: number;
+  filterMaintenance: boolean;
   outdoorTemperature: number;
   supplyAirTemperature: number;
   supplyAirFlow: number;
@@ -45,7 +47,37 @@ interface D2SensorState {
   exhaustFanSpeed: number;
 }
 
-type D2State = D2FanState & Partial<D2SensorState>;
+type D2OperationModeControl = 'none' | 'next' | 'previous';
+
+interface D2ControlSettings {
+  operationMode: D2OperationModeControl;
+  co2Threshold: number | null;
+  humidityThreshold: number | null;
+  airQualityThreshold: number | null;
+}
+
+interface D2ControlRequest {
+  value: number;
+  settings: D2ControlSettings;
+  timerOperationMode: boolean;
+}
+
+type D2State = D2FanState & Partial<D2SensorState> & Partial<D2ControlSettings>;
+
+const controlFields = [
+  'operationMode',
+  'timerOperationMode',
+  'co2Threshold',
+  'humidityThreshold',
+  'airQualityThreshold',
+] as const;
+
+const defaultControlSettings: D2ControlSettings = {
+  operationMode: 'none',
+  co2Threshold: null,
+  humidityThreshold: null,
+  airQualityThreshold: null,
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -71,12 +103,87 @@ function decodeSensors(payload: ArrayLike<number>): D2SensorState {
   const airQuality = readBits(payload, 25, 7);
   return {
     ...(airQuality <= 100 ? { airQuality } : {}),
+    filterMaintenance: readBits(payload, 22, 1) === 1,
     outdoorTemperature: readBits(payload, 40, 7) - 64,
     supplyAirTemperature: readBits(payload, 47, 7) - 64,
     supplyAirFlow: readBits(payload, 68, 10),
     exhaustAirFlow: readBits(payload, 78, 10),
     supplyFanSpeed: readBits(payload, 88, 12),
     exhaustFanSpeed: readBits(payload, 100, 12),
+  };
+}
+
+function hasControlFields(value: Record<string, unknown>): boolean {
+  return controlFields.some((field) => Object.hasOwn(value, field));
+}
+
+function threshold(value: unknown, name: string): number | null {
+  if (value === null) return null;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 100) {
+    throw new Error(`Invalid D2-50-00 ${name}: expected null or an integer from 0 to 100`);
+  }
+  return value;
+}
+
+function operationMode(value: unknown): D2OperationModeControl {
+  if (value !== 'none' && value !== 'next' && value !== 'previous') {
+    throw new Error(`Invalid D2-50-00 operation mode control: ${String(value)}`);
+  }
+  return value;
+}
+
+function controlSettings(
+  value: Record<string, unknown>,
+  fallback: D2ControlSettings = defaultControlSettings,
+): D2ControlSettings {
+  return {
+    operationMode: Object.hasOwn(value, 'operationMode')
+      ? operationMode(value.operationMode)
+      : fallback.operationMode,
+    co2Threshold: Object.hasOwn(value, 'co2Threshold')
+      ? threshold(value.co2Threshold, 'CO2 threshold')
+      : fallback.co2Threshold,
+    humidityThreshold: Object.hasOwn(value, 'humidityThreshold')
+      ? threshold(value.humidityThreshold, 'humidity threshold')
+      : fallback.humidityThreshold,
+    airQualityThreshold: Object.hasOwn(value, 'airQualityThreshold')
+      ? threshold(value.airQualityThreshold, 'air quality threshold')
+      : fallback.airQualityThreshold,
+  };
+}
+
+function timerOperationMode(value: unknown): boolean {
+  if (value !== undefined && value !== true) {
+    throw new Error('D2-50-00 timer operation mode must be true');
+  }
+  return value === true;
+}
+
+function currentControlSettings(context: ProfileDeviceContext): D2ControlSettings {
+  const desired = isRecord(context.desiredState) ? context.desiredState : undefined;
+  return desired && hasControlFields(desired)
+    ? controlSettings(desired)
+    : { ...defaultControlSettings };
+}
+
+function hasDesiredControlSettings(context: ProfileDeviceContext): boolean {
+  return isRecord(context.desiredState) && hasControlFields(context.desiredState);
+}
+
+function operationModeValue(value: D2OperationModeControl): number {
+  return value === 'next' ? 1 : value === 'previous' ? 2 : 0;
+}
+
+function encodedThreshold(value: number | null): number {
+  return value ?? 127;
+}
+
+function controlOptions(settings: D2ControlSettings) {
+  return {
+    operationMode: operationModeValue(settings.operationMode),
+    co2Threshold: encodedThreshold(settings.co2Threshold),
+    humidityThreshold: encodedThreshold(settings.humidityThreshold),
+    airQualityThreshold: encodedThreshold(settings.airQualityThreshold),
   };
 }
 
@@ -128,6 +235,8 @@ function stateValue(value: unknown, field: ProfileStateField, capabilities: unkn
   if (preset !== undefined && preset !== state.preset) {
     throw new Error(`Invalid ${field}.preset`);
   }
+  const controlState =
+    field === 'desiredState' && hasControlFields(value) ? controlSettings(value) : {};
   const sensorState: Partial<D2SensorState> = {};
   if (field === 'reportedState') {
     for (const [key, minimum, maximum] of [
@@ -151,8 +260,14 @@ function stateValue(value: unknown, field: ProfileStateField, capabilities: unkn
       }
       if (sensorValue !== undefined) sensorState[key] = sensorValue;
     }
+    if (value.filterMaintenance !== undefined && typeof value.filterMaintenance !== 'boolean') {
+      throw new Error(`Invalid ${field}.filterMaintenance`);
+    }
+    if (value.filterMaintenance !== undefined) {
+      sensorState.filterMaintenance = value.filterMaintenance;
+    }
   }
-  return { ...state, percentage, ...sensorState };
+  return { ...state, percentage, ...controlState, ...sensorState };
 }
 
 function commandValue(value: unknown, capabilities: unknown): number {
@@ -167,9 +282,43 @@ function commandValue(value: unknown, capabilities: unknown): number {
   return parsed;
 }
 
-function requestValue(request: unknown, context: ProfileDeviceContext): number {
+function requestValue(request: unknown, context: ProfileDeviceContext): number | D2ControlRequest {
   if (!isRecord(request)) throw new Error('D2-50-00 command must be an object');
-  if ('value' in request) return commandValue(request.value, context.capabilities);
+  if (Object.hasOwn(request, 'resetThresholds')) {
+    if (
+      request.resetThresholds !== true ||
+      Object.keys(request).some((key) => key !== 'resetThresholds')
+    ) {
+      throw new Error('Invalid D2-50-00 reset thresholds command');
+    }
+    return {
+      value: DirectOperationModeControl.NoAction,
+      settings: {
+        operationMode: 'none',
+        co2Threshold: null,
+        humidityThreshold: null,
+        airQualityThreshold: null,
+      },
+      timerOperationMode: false,
+    };
+  }
+  const structured = hasControlFields(request);
+  if (
+    structured &&
+    Object.keys(request).some((key) => !['value', ...controlFields].includes(key))
+  ) {
+    throw new Error('Unsupported D2-50-00 command field');
+  }
+  if ('value' in request) {
+    const value = commandValue(request.value, context.capabilities);
+    if (!structured) return value;
+    const settings = controlSettings(request, currentControlSettings(context));
+    return {
+      value,
+      settings,
+      timerOperationMode: timerOperationMode(request.timerOperationMode),
+    };
+  }
   if ('preset' in request) {
     if (typeof request.preset !== 'string') throw new Error('preset must be a string');
     return commandValue(fanPresetToD2Value(request.preset), context.capabilities);
@@ -187,6 +336,14 @@ function requestValue(request: unknown, context: ProfileDeviceContext): number {
       fanPowerToD2Value(request.isOn, supportedFunctions(context.capabilities)),
       context.capabilities,
     );
+  }
+  if (structured) {
+    const settings = controlSettings(request, currentControlSettings(context));
+    return {
+      value: DirectOperationModeControl.NoAction,
+      settings,
+      timerOperationMode: timerOperationMode(request.timerOperationMode),
+    };
   }
   throw new Error('Expected value, percentage, preset, or isOn');
 }
@@ -235,6 +392,13 @@ const entity = {
           unit: '%',
           stateClass: 'measurement',
           valueTemplate: '{{ value_json.airQuality }}',
+        },
+        {
+          key: 'filter_maintenance',
+          name: 'Filter maintenance',
+          kind: 'binary_sensor',
+          valueTemplate: "{{ 'ON' if value_json.filterMaintenance else 'OFF' }}",
+          entityCategory: 'diagnostic',
         },
         {
           key: 'outdoor_temperature',
@@ -286,12 +450,106 @@ const entity = {
           stateClass: 'measurement',
           valueTemplate: '{{ value_json.exhaustFanSpeed }}',
         },
+        {
+          key: 'co2_threshold',
+          name: 'CO2 threshold',
+          kind: 'number',
+          unit: '%',
+          min: 0,
+          max: 100,
+          step: 1,
+          valueTemplate: '{{ value_json.co2Threshold }}',
+          commandTemplate: '{"co2Threshold":{{ value }}}',
+        },
+        {
+          key: 'humidity_threshold',
+          name: 'Humidity threshold',
+          kind: 'number',
+          unit: '%',
+          min: 0,
+          max: 100,
+          step: 1,
+          valueTemplate: '{{ value_json.humidityThreshold }}',
+          commandTemplate: '{"humidityThreshold":{{ value }}}',
+        },
+        {
+          key: 'air_quality_threshold',
+          name: 'Air quality threshold',
+          kind: 'number',
+          unit: '%',
+          min: 0,
+          max: 100,
+          step: 1,
+          valueTemplate: '{{ value_json.airQualityThreshold }}',
+          commandTemplate: '{"airQualityThreshold":{{ value }}}',
+        },
+        {
+          key: 'operation_mode',
+          name: 'Operation mode control',
+          kind: 'select',
+          options: ['none', 'next', 'previous'],
+          valueTemplate: '{{ value_json.operationMode }}',
+          commandTemplate: '{"operationMode":"{{ value }}"}',
+        },
+        {
+          key: 'timer_operation_mode',
+          name: 'Start timer operation',
+          kind: 'button',
+          commandTemplate: '{"timerOperationMode":true}',
+        },
+        {
+          key: 'reset_thresholds',
+          name: 'Reset thresholds',
+          kind: 'button',
+          commandTemplate: '{"resetThresholds":true}',
+        },
       ],
       protocol: 'D2-50-00 ventilation fan',
       power: true,
       commands: ['command', 'percentage', 'preset'],
       ...(speedCount ? { percentage: { min: 1, max: speedCount } } : {}),
       ...(presets.length ? { presets } : {}),
+      controls: [
+        {
+          field: 'operationMode',
+          label: 'Next / previous mode',
+          kind: 'select',
+          options: [
+            { value: 'none', label: 'No action' },
+            { value: 'next', label: 'Next mode' },
+            { value: 'previous', label: 'Previous mode' },
+          ],
+        },
+        {
+          field: 'co2Threshold',
+          label: 'CO2 threshold (%)',
+          kind: 'number',
+          min: 0,
+          max: 100,
+          step: 1,
+          nullable: true,
+        },
+        {
+          field: 'humidityThreshold',
+          label: 'Humidity threshold (%)',
+          kind: 'number',
+          min: 0,
+          max: 100,
+          step: 1,
+          nullable: true,
+        },
+        {
+          field: 'airQualityThreshold',
+          label: 'Air quality threshold (%)',
+          kind: 'number',
+          min: 0,
+          max: 100,
+          step: 1,
+          nullable: true,
+        },
+        { field: 'timerOperationMode', label: 'Start timer operation', kind: 'action' },
+        { field: 'resetThresholds', label: 'Reset thresholds', kind: 'action' },
+      ],
     };
   },
 
@@ -299,8 +557,11 @@ const entity = {
     const state = currentState(context);
     const reported = isRecord(context.reportedState) ? context.reportedState : undefined;
     const attributes: Record<string, JsonValue> = {};
+    const controls = currentControlSettings(context);
+    Object.assign(attributes, controls);
     for (const key of [
       'airQuality',
+      'filterMaintenance',
       'outdoorTemperature',
       'supplyAirTemperature',
       'supplyAirFlow',
@@ -308,7 +569,10 @@ const entity = {
       'supplyFanSpeed',
       'exhaustFanSpeed',
     ] as const) {
-      if (typeof reported?.[key] === 'number') attributes[key] = reported[key];
+      const sensorValue = reported?.[key];
+      if (typeof sensorValue === 'number' || typeof sensorValue === 'boolean') {
+        attributes[key] = sensorValue;
+      }
     }
     return {
       isOn: state.isOn,
@@ -323,6 +587,10 @@ const entity = {
     if (field === 'command') {
       if (value === 'ON') return fanPowerToD2Value(true, functions);
       if (value === 'OFF') return fanPowerToD2Value(false, functions);
+      try {
+        const request = JSON.parse(value);
+        if (isRecord(request)) return request;
+      } catch {}
       throw new Error(`Invalid fan power command: ${value}`);
     }
     if (field === 'percentage') {
@@ -372,22 +640,56 @@ export const d2Profile: EepProfile = {
   },
 
   parseCommand(context: ProfileDeviceContext, request: unknown): ProfileCommand {
-    const value = requestValue(request, context);
+    const parsed = requestValue(request, context);
+    const value = typeof parsed === 'number' ? parsed : parsed.value;
+    const fanState =
+      value === 15
+        ? undefined
+        : d2ValueToFanState(
+            value,
+            previousPercentage(context),
+            supportedFunctions(context.capabilities),
+          );
     return {
-      value,
+      value: parsed,
       desiredState:
-        value === 15
-          ? undefined
-          : d2ValueToFanState(
-              value,
-              previousPercentage(context),
-              supportedFunctions(context.capabilities),
-            ),
+        typeof parsed === 'number'
+          ? fanState && hasDesiredControlSettings(context)
+            ? { ...fanState, ...currentControlSettings(context) }
+            : fanState
+          : {
+              ...currentState(context),
+              ...parsed.settings,
+              operationMode: 'none',
+            },
     };
   },
 
   encodeCommand(context: ProfileDeviceContext, command: ProfileCommand): Uint8Array {
-    const value = commandValue(command.value, context.capabilities);
-    return changeState(toHex(context.sourceId), toHex(context.targetId), value);
+    const commandRecord = isRecord(command.value) ? command.value : undefined;
+    const settingsRecord =
+      commandRecord !== undefined && isRecord(commandRecord.settings)
+        ? commandRecord.settings
+        : undefined;
+    const value = commandValue(
+      settingsRecord !== undefined ? commandRecord!.value : command.value,
+      context.capabilities,
+    );
+    if (settingsRecord === undefined) {
+      return changeState(
+        toHex(context.sourceId),
+        toHex(context.targetId),
+        value,
+        hasDesiredControlSettings(context)
+          ? controlOptions(currentControlSettings(context))
+          : undefined,
+      );
+    }
+    const structuredCommand = commandRecord!;
+    const settings = controlSettings(settingsRecord);
+    return changeState(toHex(context.sourceId), toHex(context.targetId), value, {
+      ...controlOptions(settings),
+      timerOperationMode: structuredCommand.timerOperationMode === true,
+    });
   },
 };

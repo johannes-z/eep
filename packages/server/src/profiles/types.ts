@@ -54,12 +54,14 @@ export interface ProfileEntityDescriptor {
   readonly discoveryEntities?: readonly {
     readonly key: string;
     readonly name: string | null;
-    readonly kind?: 'sensor' | 'binary_sensor' | 'number' | 'switch';
+    readonly kind?: 'sensor' | 'binary_sensor' | 'number' | 'switch' | 'select' | 'button';
     readonly valueTemplate?: string;
     readonly commandTemplate?: string;
+    readonly options?: readonly (string | number)[];
     readonly deviceClass?: string;
     readonly unit?: string;
     readonly stateClass?: 'measurement';
+    readonly entityCategory?: 'diagnostic';
     readonly min?: number;
     readonly max?: number;
     readonly step?: number;

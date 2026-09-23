@@ -270,14 +270,14 @@ test('publishes A5-04-02 sensor entities, status, and diagnostics', async () => 
     bridge.start();
     await bridge.publishAll();
     await applyRadioPacket(
-      { RORG: 0xa5, senderId: 0x0582fd3c, payload: [0, 0xa4, 0x88, 0x0f] },
+      { RORG: 0xa5, senderId: 0x0582fd3c, payload: [0xa4, 0x98, 0x70, 0x0f] },
       registry,
     );
     await bridge.publishAll();
 
     expect(
       JSON.parse(client.published.filter((item) => item.topic === stateTopic).at(-1)!.payload),
-    ).toEqual({ temperature: 23.52, humidity: 65.6, state: 'ON' });
+    ).toEqual({ temperature: 15.84, humidity: 60.8, state: 'ON' });
     for (const [kind, key, fields] of [
       ['sensor', 'temperature', { device_class: 'temperature', unit_of_measurement: '\u00b0C' }],
       ['sensor', 'humidity', { device_class: 'humidity', unit_of_measurement: '%' }],
@@ -815,6 +815,40 @@ test('publishes D2 ventilation measurements as Home Assistant sensors', async ()
         { unit_of_measurement: 'rpm', value_template: '{{ value_json.exhaustFanSpeed }}' },
       ],
     ] as const;
+
+    const operationMode = client.published
+      .filter((entry) => entry.topic === 'homeassistant/select/ffe76681_operation_mode/config')
+      .at(-1);
+    expect(JSON.parse(operationMode?.payload ?? '{}')).toMatchObject({
+      options: ['none', 'next', 'previous'],
+      value_template: '{{ value_json.operationMode }}',
+      command_template: '{"operationMode":"{{ value }}"}',
+    });
+    const timer = client.published
+      .filter(
+        (entry) => entry.topic === 'homeassistant/button/ffe76681_timer_operation_mode/config',
+      )
+      .at(-1);
+    expect(JSON.parse(timer?.payload ?? '{}')).toMatchObject({
+      payload_press: 'PRESS',
+      command_template: '{"timerOperationMode":true}',
+    });
+    const resetThresholds = client.published
+      .filter((entry) => entry.topic === 'homeassistant/button/ffe76681_reset_thresholds/config')
+      .at(-1);
+    expect(JSON.parse(resetThresholds?.payload ?? '{}')).toMatchObject({
+      payload_press: 'PRESS',
+      command_template: '{"resetThresholds":true}',
+    });
+    const filterMaintenance = client.published
+      .filter(
+        (entry) => entry.topic === 'homeassistant/binary_sensor/ffe76681_filter_maintenance/config',
+      )
+      .at(-1);
+    expect(JSON.parse(filterMaintenance?.payload ?? '{}')).toMatchObject({
+      entity_category: 'diagnostic',
+      value_template: "{{ 'ON' if value_json.filterMaintenance else 'OFF' }}",
+    });
 
     for (const [key, fields] of sensors) {
       const message = client.published

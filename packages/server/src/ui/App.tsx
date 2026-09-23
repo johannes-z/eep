@@ -3,7 +3,6 @@ import { Outlet, useRouterState } from '@tanstack/react-router';
 import { createContext, useContext, useState } from 'react';
 import { Sidebar, TopBar } from '../components/Navigation';
 import { formatEnOceanId } from '../util';
-import { deviceTransmitId } from '../devices/types';
 import { request, snapshotQueryOptions } from './api';
 import { useLiveSnapshot } from './liveSnapshot';
 import { findAppRoute } from './routes';
@@ -11,15 +10,14 @@ import type { AppSnapshot, CommandBody, TeachInCandidate } from './types';
 
 interface AppContextValue extends AppSnapshot {
   busyTargets: ReadonlySet<number>;
-  onCommand: (sourceId: number, body: CommandBody) => Promise<void>;
+  onCommand: (sourceId: number, body: CommandBody) => void;
   onDeleteDevice: (sourceId: number) => Promise<void>;
   onRenameDevice: (sourceId: number, name: string) => Promise<void>;
   onPairChannel: (sourceId: number) => void;
   onCancelPairing: () => void;
   onAcceptCandidate: (candidate: TeachInCandidate, profileId?: string) => void;
   onRejectCandidate: (candidate: TeachInCandidate) => void;
-  onIgnoreCandidate: (candidate: TeachInCandidate) => void;
-  onClearIgnoredDevice: (targetId: number) => void;
+  onListen: () => void;
   pairingSourceId: number | null;
   pairingMessage: { text: string; error: boolean };
 }
@@ -88,7 +86,7 @@ export function App() {
 
   const paired =
     pairingRequest &&
-    snapshot?.devices.some((device) => deviceTransmitId(device) === pairingRequest.sourceId);
+    snapshot?.devices.some((device) => device.sourceId === pairingRequest.sourceId);
   const pairingSourceId =
     pairingRequest && !paired && (pairingRequest.sending || snapshot?.pairing.active)
       ? pairingRequest.sourceId
@@ -133,7 +131,9 @@ export function App() {
                 value={{
                   ...snapshot,
                   busyTargets,
-                  onCommand: (sourceId, body) => deviceRequest(sourceId, 'POST', body, true),
+                  onCommand: (sourceId, body) => {
+                    void deviceRequest(sourceId, 'POST', body, true).catch(() => undefined);
+                  },
                   onDeleteDevice: (sourceId) => deviceRequest(sourceId, 'DELETE'),
                   onRenameDevice: (sourceId, name) => deviceRequest(sourceId, 'PUT', { name }),
                   onPairChannel: (sourceId) => {
@@ -143,31 +143,14 @@ export function App() {
                     action.mutate({ path: '/api/pairing/stop' });
                   },
                   onAcceptCandidate: ({ targetId }, profileId) => {
-                    action.mutate({
-                      path: '/api/pairing/accept',
-                      body: { targetId, profileId },
-                      sourceId: targetId,
-                    });
+                    action.mutate({ path: '/api/pairing/accept', body: { targetId, profileId } });
                   },
                   onRejectCandidate: ({ targetId }) => {
-                    action.mutate({
-                      path: '/api/pairing/reject',
-                      body: { targetId },
-                      sourceId: targetId,
-                    });
+                    action.mutate({ path: '/api/pairing/reject', body: { targetId } });
                   },
-                  onIgnoreCandidate: ({ targetId }) => {
+                  onListen: () => {
                     action.mutate({
-                      path: '/api/pairing/ignore',
-                      body: { targetId },
-                      sourceId: targetId,
-                    });
-                  },
-                  onClearIgnoredDevice: (targetId) => {
-                    action.mutate({
-                      path: '/api/pairing/unignore',
-                      body: { targetId },
-                      sourceId: targetId,
+                      path: `/api/listen/${snapshot.listen.active ? 'stop' : 'start'}`,
                     });
                   },
                   pairingSourceId,

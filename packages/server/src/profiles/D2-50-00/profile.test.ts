@@ -54,7 +54,7 @@ test('decodes D2-50-00 basic status modes through the profile contract', () => {
 test('decodes Type 00 sensor measurements from basic status', () => {
   const result = d2Profile.decodeIngress(context, {
     RORG: 0xd2,
-    payload: [0x41, 0x03, 0x00, 0x16, 0x00, 0x9f, 0x50, 0x00, 0x00, 0x44, 0x11, 0x23, 0x41, 0xe0],
+    payload: [0x41, 0x03, 0x02, 0x16, 0x00, 0x9f, 0x50, 0x00, 0x00, 0x44, 0x11, 0x23, 0x41, 0xe0],
     senderId: '05126787',
   });
 
@@ -62,6 +62,7 @@ test('decodes Type 00 sensor measurements from basic status', () => {
     kind: 'reported',
     reportedState: {
       airQuality: 22,
+      filterMaintenance: true,
       outdoorTemperature: 15,
       supplyAirTemperature: 20,
       supplyAirFlow: 17,
@@ -81,6 +82,7 @@ test('publishes D2 measurements as Home Assistant sensor attributes', () => {
       percentage: 25,
       d2Value: 1,
       airQuality: 22,
+      filterMaintenance: true,
       outdoorTemperature: 15,
       supplyAirTemperature: 20,
       supplyAirFlow: 0,
@@ -109,17 +111,144 @@ test('publishes D2 measurements as Home Assistant sensor attributes', () => {
         valueTemplate: '{{ value_json.exhaustFanSpeed }}',
         unit: 'rpm',
       }),
+      expect.objectContaining({
+        key: 'filter_maintenance',
+        kind: 'binary_sensor',
+        entityCategory: 'diagnostic',
+        valueTemplate: "{{ 'ON' if value_json.filterMaintenance else 'OFF' }}",
+      }),
     ]),
   );
   expect(state.attributes).toEqual({
     airQuality: 22,
+    filterMaintenance: true,
+    airQualityThreshold: null,
+    co2Threshold: null,
     outdoorTemperature: 15,
     supplyAirTemperature: 20,
     supplyAirFlow: 0,
     exhaustAirFlow: 68,
     supplyFanSpeed: 564,
     exhaustFanSpeed: 480,
+    humidityThreshold: null,
+    operationMode: 'none',
   });
+});
+
+test('encodes D2-50-00 Type 0x00 ventilation controls', () => {
+  const command = d2Profile.parseCommand(context, {
+    operationMode: 'next',
+    timerOperationMode: true,
+    co2Threshold: 45,
+    humidityThreshold: 61,
+    airQualityThreshold: 72,
+  });
+  const frame = new Esp3Parser().push(d2Profile.encodeCommand(context, command));
+
+  expect(frame[0]?.data).toEqual([0xd2, 0x2f, 0x40, 0xad, 61, 72, 0, 0xff, 0xe7, 0x66, 0x81, 0]);
+  expect(command.desiredState).toMatchObject({
+    d2Value: 0,
+    operationMode: 'none',
+    co2Threshold: 45,
+    humidityThreshold: 61,
+    airQualityThreshold: 72,
+  });
+});
+
+test('uses device D2 thresholds by default and preserves settings for partial commands', () => {
+  const first = d2Profile.parseCommand(context, { airQualityThreshold: 38 });
+  const firstFrame = new Esp3Parser().push(d2Profile.encodeCommand(context, first));
+  expect(firstFrame[0]?.data.slice(0, 7)).toEqual([0xd2, 0x2f, 0, 0x7f, 0x7f, 38, 0]);
+
+  const nextContext = { ...context, desiredState: first.desiredState };
+  const second = d2Profile.parseCommand(nextContext, { humidityThreshold: 55 });
+  const secondFrame = new Esp3Parser().push(d2Profile.encodeCommand(nextContext, second));
+  expect(secondFrame[0]?.data.slice(0, 7)).toEqual([0xd2, 0x2f, 0, 0x7f, 55, 38, 0]);
+});
+
+test('resets custom D2 thresholds to the device defaults', () => {
+  const custom = d2Profile.parseCommand(context, {
+    co2Threshold: 45,
+    humidityThreshold: 61,
+    airQualityThreshold: 72,
+  });
+  const reset = d2Profile.parseCommand(
+    { ...context, desiredState: custom.desiredState },
+    { resetThresholds: true },
+  );
+  const frame = new Esp3Parser().push(
+    d2Profile.encodeCommand({ ...context, desiredState: custom.desiredState }, reset),
+  );
+
+  expect(frame[0]?.data.slice(0, 7)).toEqual([0xd2, 0x2f, 0, 0x7f, 0x7f, 0x7f, 0]);
+  expect(reset.desiredState).toMatchObject({
+    co2Threshold: null,
+    humidityThreshold: null,
+    airQualityThreshold: null,
+  });
+});
+
+test('preserves D2 ventilation settings when changing fan speed', () => {
+  const settings = d2Profile.parseCommand(context, { airQualityThreshold: 38 });
+  const speed = d2Profile.parseCommand(
+    { ...context, desiredState: settings.desiredState },
+    { percentage: 75 },
+  );
+  const frame = new Esp3Parser().push(
+    d2Profile.encodeCommand({ ...context, desiredState: settings.desiredState }, speed),
+  );
+
+  expect(frame[0]?.data.slice(0, 7)).toEqual([0xd2, 0x23, 0, 0x7f, 0x7f, 38, 0]);
+  expect(speed.desiredState).toMatchObject({ d2Value: 3, airQualityThreshold: 38 });
+});
+
+test('rejects invalid D2 ventilation control settings', () => {
+  expect(() => d2Profile.parseCommand(context, { airQualityThreshold: 101 })).toThrow(
+    'air quality threshold',
+  );
+  expect(() => d2Profile.parseCommand(context, { timerOperationMode: false })).toThrow(
+    'timer operation mode',
+  );
+});
+
+test('describes D2 ventilation control settings and Home Assistant threshold entities', () => {
+  const descriptor = d2Profile.entity!.describe(context);
+
+  expect(descriptor.controls).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ field: 'operationMode', kind: 'select' }),
+      expect.objectContaining({ field: 'co2Threshold', kind: 'number', nullable: true }),
+      expect.objectContaining({ field: 'humidityThreshold', kind: 'number', nullable: true }),
+      expect.objectContaining({ field: 'airQualityThreshold', kind: 'number', nullable: true }),
+      expect.objectContaining({ field: 'timerOperationMode', kind: 'action' }),
+      expect.objectContaining({ field: 'resetThresholds', kind: 'action' }),
+    ]),
+  );
+  expect(descriptor.discoveryEntities).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        key: 'air_quality_threshold',
+        kind: 'number',
+        commandTemplate: '{"airQualityThreshold":{{ value }}}',
+      }),
+      expect.objectContaining({
+        key: 'operation_mode',
+        kind: 'select',
+        options: ['none', 'next', 'previous'],
+        commandTemplate: '{"operationMode":"{{ value }}"}',
+      }),
+      expect.objectContaining({
+        key: 'timer_operation_mode',
+        kind: 'button',
+        commandTemplate: '{"timerOperationMode":true}',
+      }),
+      expect.objectContaining({
+        key: 'reset_thresholds',
+        kind: 'button',
+        commandTemplate: '{"resetThresholds":true}',
+      }),
+    ]),
+  );
 });
 
 test('parses a command and encodes the D2 ERP1 frame through the profile contract', () => {
@@ -170,7 +299,6 @@ test.each([0, 1, 2, 3, 4, 11, 12, 13, 14, 15])(
     if (value === 15) expect(command.desiredState).toBeUndefined();
   },
 );
-
 test('rejects invalid control values and address bytes', () => {
   for (const value of [5, 10, 16, -1, 1.5, Number.NaN]) {
     expect(() => changeState([1, 2, 3, 4], [5, 6, 7, 8], value)).toThrow('Unsupported');

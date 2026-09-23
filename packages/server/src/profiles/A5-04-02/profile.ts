@@ -40,7 +40,6 @@ function decode(packet: ProfilePacket): TemperatureHumidityState | undefined {
     packet.teachIn ||
     data.length !== 4 ||
     data.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255) ||
-    data[0] !== 0 ||
     (data[3] & 0x08) === 0 ||
     data[1] > 250 ||
     data[2] > 250

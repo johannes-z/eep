@@ -23,6 +23,12 @@ test('decodes A5-04-02 temperature and humidity values', () => {
   expect(decode([0, 0, 250, 8])).toMatchObject({
     reportedState: { temperature: 60, humidity: 0 },
   });
+  expect(decode([0xa4, 0x98, 0x70, 0x0f])).toEqual({
+    kind: 'reported',
+    value: { temperature: 15.84, humidity: 60.8 },
+    reportedState: { temperature: 15.84, humidity: 60.8 },
+    clearDesiredState: true,
+  });
 });
 
 test('rejects teach-in, reserved values, wrong RORG, and malformed payloads', () => {
@@ -30,7 +36,6 @@ test('rejects teach-in, reserved values, wrong RORG, and malformed payloads', ()
     { RORG: 0xa5, senderId: context.targetId, teachIn: true, payload: [0, 125, 125, 0] },
     { RORG: 0xa5, senderId: context.targetId, payload: [0, 251, 125, 8] },
     { RORG: 0xa5, senderId: context.targetId, payload: [0, 125, 251, 8] },
-    { RORG: 0xa5, senderId: context.targetId, payload: [1, 125, 125, 8] },
     { RORG: 0xd2, senderId: context.targetId, payload: [0, 125, 125, 8] },
     { RORG: 0xa5, senderId: context.targetId, payload: [0, 125, 125] },
   ]) {

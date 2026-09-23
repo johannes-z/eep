@@ -6,6 +6,13 @@ All notable changes to this project will be documented in this file.
 
 ### Features
 
+- Enhance A5-04-01 and A5-04-02 profiles with T-Sensor support and update related tests (67902f2)
+
+## v1.10.0
+
+
+### Features
+
 - Feat: add D2 ventilation measurements and sensor attributes for Home Assistant integration
 feat: implement device profiles for various sensor types and enhance DeviceProfile component
 test: add tests for D2 sensor measurements and Home Assistant sensor attributes
@@ -13,6 +20,11 @@ fix: update MQTT entity bridge to handle new state value templates
 chore: update configuration for new devices and teach-in parameters (cf02aab)
 
 - Add A5-04-02 temperature and humidity sensor profile with decoding and MQTT support (256af5d)
+
+
+### Miscellaneous
+
+- Release v1.10.0 (b5430be)
 
 ## v1.9.0
 

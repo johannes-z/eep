@@ -110,7 +110,11 @@ test.each([true, false])(
       });
       bridge.start();
       await bridge.publishAll();
-      expect(client.published.some((message) => message.topic === `${base}/state`)).toBe(false);
+      expect(
+        JSON.parse(
+          client.published.filter((message) => message.topic === `${base}/state`).at(-1)!.payload,
+        ),
+      ).toMatchObject({ targetTemperature: 21, currentTemperature: null, valvePosition: null });
       const discovery = client.published
         .filter((message) => message.topic === 'homeassistant/climate/ffe76685/config')
         .at(-1)!;
@@ -126,6 +130,32 @@ test.each([true, false])(
         });
         expect(JSON.parse(discovery.payload).state_topic).toBeUndefined();
       } else expect(discovery.payload).toBe('');
+      for (const [kind, key, fields] of [
+        ['number', 'valve_target', { min: 0, max: 100, step: 1, command_topic: `${base}/command` }],
+        ['sensor', 'valve_position', { unit_of_measurement: '%' }],
+        ['sensor', 'ambient_temperature', { device_class: 'temperature' }],
+        ['sensor', 'flow_temperature', { device_class: 'temperature' }],
+        ['sensor', 'local_offset', { unit_of_measurement: 'K' }],
+        ['binary_sensor', 'energy_storage_low', { device_class: 'battery' }],
+        ['switch', 'summer_mode', { command_topic: `${base}/command` }],
+      ] as const) {
+        const config = client.published
+          .filter((message) => message.topic === `homeassistant/${kind}/ffe76685_${key}/config`)
+          .at(-1)!;
+        if (enabled) {
+          const payload = JSON.parse(config.payload);
+          expect(payload).toMatchObject({
+            ...fields,
+            state_topic: `${base}/state`,
+            unique_id: `eep_${kind}_ffe76685_${key}`,
+            default_entity_id: `${kind}.heating_${key}`,
+            device: JSON.parse(discovery.payload).device,
+            availability: JSON.parse(discovery.payload).availability,
+          });
+          expect(payload.temperature_command_topic).toBeUndefined();
+          expect(payload.modes).toBeUndefined();
+        } else expect(config.payload).toBe('');
+      }
       expect(client.subscribed).toContain(`${base}/command`);
       expect(client.subscribed).toContain(`${base}/temperature/set`);
       expect(client.subscribed).toContain(`${base}/mode/set`);
@@ -139,14 +169,39 @@ test.each([true, false])(
           client.published.filter((message) => message.topic === `${base}/state`).at(-1)!.payload,
         ),
       ).toMatchObject({ currentTemperature: 20, targetTemperature: 21, valvePosition: 22 });
+      await applyRadioPacket(
+        { RORG: 0xa5, senderId: 0x05010203, payload: [35, 0x7d, 51, 0xa8] },
+        registry,
+      );
+      await bridge.publishAll();
+      expect(
+        JSON.parse(
+          client.published.filter((message) => message.topic === `${base}/state`).at(-1)!.payload,
+        ),
+      ).toMatchObject({
+        currentTemperature: null,
+        flowTemperature: 25.5,
+        localTemperatureOffset: -3,
+        energyStorageLow: false,
+        valvePosition: 35,
+        requestedValvePosition: 35,
+        targetTemperature: 21,
+        hvacMode: 'off',
+      });
       for (const [topic, payload, expected] of [
         ['temperature/set', '23.5', { mode: 'temperature', setpoint: 23.5 }],
         ['mode/set', 'off', { mode: 'valvePosition', setpoint: 0, standby: false }],
-        ['mode/set', 'heat', { mode: 'temperature', setpoint: 21, standby: false }],
+        ['mode/set', 'heat', { mode: 'temperature', setpoint: 23.5, standby: false }],
         [
           'command',
           '{"mode":"valvePosition","setpoint":45,"communicationInterval":10}',
           { mode: 'valvePosition', setpoint: 45, communicationInterval: 10 },
+        ],
+        ['command', '{"summerMode":true}', { summerMode: true, setpoint: 45 }],
+        [
+          'command',
+          '{"mode":"valvePosition","setpoint":70,"standby":false,"summerMode":false}',
+          { mode: 'valvePosition', setpoint: 70, summerMode: false },
         ],
       ] as const) {
         const updated = new Promise<void>((resolve) => {
@@ -167,6 +222,80 @@ test.each([true, false])(
     }
   },
 );
+
+test('maintains mixed-domain actuator discovery on rename, reconnect and removal', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-mqtt-heating-lifecycle-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  const client = new FakeMqttClient();
+  const bridge = new MqttEntityBridge(client, registry, async () => undefined, {
+    baseTopic: 'custom',
+    forceDisableRetain: true,
+    homeAssistant: { enabled: true, discoveryTopic: 'ha/custom', statusTopic: 'custom/status' },
+  });
+  const entries = [
+    ['climate', ''],
+    ['number', '_valve_target'],
+    ['sensor', '_valve_position'],
+    ['sensor', '_ambient_temperature'],
+    ['sensor', '_flow_temperature'],
+    ['sensor', '_local_offset'],
+    ['binary_sensor', '_energy_storage_low'],
+    ['switch', '_summer_mode'],
+  ];
+  try {
+    await registry.upsert({
+      sourceId: 0xffe76685,
+      targetId: 0x05010203,
+      name: 'Heating',
+      profileId: 'A5-20-06',
+      capabilities: a5Profile.defaultCapabilities(),
+      availability: 'online',
+    });
+    bridge.start();
+    await bridge.publishAll();
+    client.published = [];
+    await registry.update(0xffe76685, { name: 'Bathroom valve' });
+    await bridge.publishAll();
+    for (const [kind, suffix] of entries) {
+      const messages = client.published.filter(
+        (message) => message.topic === `ha/custom/${kind}/ffe76685${suffix}/config`,
+      );
+      expect(messages[0]).toMatchObject({ payload: '', options: { retain: true } });
+      expect(messages.at(-1)?.options.retain).toBe(false);
+      expect(JSON.parse(messages.at(-1)!.payload)).toMatchObject({
+        unique_id: `eep_${kind}_ffe76685${suffix}`,
+        default_entity_id: `${kind}.bathroom_valve${suffix}`,
+        availability: [
+          { topic: 'custom/status' },
+          { topic: 'custom/climate/ffe76685/availability' },
+        ],
+      });
+    }
+    client.published = [];
+    client.reconnect();
+    await bridge.publishAll();
+    for (const [kind, suffix] of entries) {
+      const messages = client.published.filter(
+        (message) => message.topic === `ha/custom/${kind}/ffe76685${suffix}/config`,
+      );
+      expect(messages.at(-1)?.payload).not.toBe('');
+    }
+    client.published = [];
+    await registry.remove(0xffe76685);
+    await bridge.publishAll();
+    for (const [kind, suffix] of entries) {
+      expect(
+        client.published
+          .filter((message) => message.topic === `ha/custom/${kind}/ffe76685${suffix}/config`)
+          .at(-1),
+      ).toMatchObject({ payload: '', options: { qos: 1, retain: true } });
+    }
+  } finally {
+    await bridge.stop();
+    await registry.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test.each([true, false])(
   'publishes D5-00-01 contact state (Home Assistant: %s)',

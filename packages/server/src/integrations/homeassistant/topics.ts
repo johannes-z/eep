@@ -61,12 +61,13 @@ export function entityDiscoveryEntries(
   return entities.map((entity) => {
     const suffix = entity.key ? `_${entity.key}` : '';
     const id = `${deviceId(device)}${suffix}`;
+    const kind = entity.kind ?? descriptor.kind;
     return {
-      topic: `${discoveryPrefix}/${descriptor.kind}/${id}/config`,
-      uniqueId: `eep_${descriptor.kind}_${id}`,
+      ...entity,
+      kind,
+      topic: `${discoveryPrefix}/${kind}/${id}/config`,
+      uniqueId: `eep_${kind}_${id}`,
       objectId: `${entityObjectId(device)}${suffix}`,
-      name: entity.name,
-      valueTemplate: entity.valueTemplate,
     };
   });
 }

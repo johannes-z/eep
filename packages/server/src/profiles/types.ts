@@ -53,8 +53,16 @@ export interface ProfileEntityDescriptor {
   readonly jsonState?: boolean;
   readonly discoveryEntities?: readonly {
     readonly key: string;
-    readonly name: string;
-    readonly valueTemplate: string;
+    readonly name: string | null;
+    readonly kind?: 'sensor' | 'binary_sensor' | 'number' | 'switch';
+    readonly valueTemplate?: string;
+    readonly commandTemplate?: string;
+    readonly deviceClass?: string;
+    readonly unit?: string;
+    readonly stateClass?: 'measurement';
+    readonly min?: number;
+    readonly max?: number;
+    readonly step?: number;
   }[];
   readonly publishInitialState?: boolean;
   readonly protocol: string;

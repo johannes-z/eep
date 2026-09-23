@@ -214,15 +214,36 @@ export class MqttEntityBridge {
         : {}),
     };
     for (const entry of entityDiscoveryEntries(device, descriptor, this.discoveryPrefix)) {
+      const entityPayload =
+        entry.kind === descriptor.kind
+          ? payload
+          : {
+              state_topic: topics.state,
+              availability: payload.availability,
+              availability_mode: payload.availability_mode,
+              ...(payload.device ? { device: payload.device } : {}),
+              ...(entry.commandTemplate
+                ? { command_topic: topics.command, command_template: entry.commandTemplate }
+                : {}),
+              ...(entry.deviceClass ? { device_class: entry.deviceClass } : {}),
+              ...(entry.unit ? { unit_of_measurement: entry.unit } : {}),
+              ...(entry.stateClass ? { state_class: entry.stateClass } : {}),
+              ...(entry.kind === 'number'
+                ? { min: entry.min, max: entry.max, step: entry.step, mode: 'slider' }
+                : {}),
+              ...(entry.kind === 'binary_sensor' || entry.kind === 'switch'
+                ? { payload_on: 'ON', payload_off: 'OFF' }
+                : {}),
+            };
       await publish(
         this.client,
         entry.topic,
         JSON.stringify({
-          ...payload,
+          ...entityPayload,
           name: entry.name,
           unique_id: entry.uniqueId,
           object_id: entry.objectId,
-          default_entity_id: `${descriptor.kind}.${entry.objectId}`,
+          default_entity_id: `${entry.kind}.${entry.objectId}`,
           ...(entry.valueTemplate ? { value_template: entry.valueTemplate } : {}),
         }),
         this.bridgePublishOptions,

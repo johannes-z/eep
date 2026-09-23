@@ -41,6 +41,7 @@ function selection<const Choice extends string>(
 const defaults = {
   mode: 'temperature' as 'temperature' | 'valvePosition',
   setpoint: 21,
+  temperatureSetpoint: 21,
   roomTemperature: null as number | null,
   referenceRun: false,
   communicationInterval: 0,
@@ -64,14 +65,22 @@ function settings(value: unknown) {
       'A5-20-06 external roomTemperature must be above zero; use null for the internal sensor',
     );
   }
+  const setpoint = number(
+    state.setpoint,
+    'setpoint',
+    mode === 'temperature' ? 40 : 100,
+    mode === 'temperature' ? 0.5 : 1,
+  );
+  const temperatureSetpoint = number(
+    state.temperatureSetpoint ?? defaults.temperatureSetpoint,
+    'temperatureSetpoint',
+    40,
+    0.5,
+  );
   return {
     mode,
-    setpoint: number(
-      state.setpoint,
-      'setpoint',
-      mode === 'temperature' ? 40 : 100,
-      mode === 'temperature' ? 0.5 : 1,
-    ),
+    setpoint,
+    temperatureSetpoint: mode === 'temperature' ? setpoint : temperatureSetpoint,
     roomTemperature,
     referenceRun: boolean(state.referenceRun, 'referenceRun'),
     communicationInterval,
@@ -161,7 +170,7 @@ function currentSettings(context: ProfileDeviceContext) {
   if (context.reportedState !== undefined) {
     const state = reported(context.reportedState);
     if (state.localOffsetMode === 'absolute' && state.localOffset !== null) {
-      return { ...defaults, setpoint: state.localOffset };
+      return { ...defaults, setpoint: state.localOffset, temperatureSetpoint: state.localOffset };
     }
     if (state.localOffsetMode === 'relative' && state.valvePosition !== null) {
       return { ...defaults, mode: 'valvePosition' as const, setpoint: state.valvePosition };
@@ -242,8 +251,72 @@ export const a5Profile: EepProfile = {
       power: false,
       commands: ['command', 'temperature', 'mode'],
       jsonState: true,
-      publishInitialState: false,
+      publishInitialState: true,
       temperature: { min: 0, max: 40, step: 0.5 },
+      discoveryEntities: [
+        { key: '', name: null },
+        {
+          key: 'valve_target',
+          name: 'Valve target',
+          kind: 'number',
+          unit: '%',
+          min: 0,
+          max: 100,
+          step: 1,
+          valueTemplate: '{{ value_json.requestedValvePosition }}',
+          commandTemplate:
+            '{"mode":"valvePosition","setpoint":{{ value }},"standby":false,"summerMode":false}',
+        },
+        {
+          key: 'valve_position',
+          name: 'Valve position',
+          kind: 'sensor',
+          unit: '%',
+          stateClass: 'measurement',
+          valueTemplate: '{{ value_json.valvePosition }}',
+        },
+        {
+          key: 'ambient_temperature',
+          name: 'Ambient temperature',
+          kind: 'sensor',
+          deviceClass: 'temperature',
+          unit: '\u00b0C',
+          stateClass: 'measurement',
+          valueTemplate: '{{ value_json.currentTemperature }}',
+        },
+        {
+          key: 'flow_temperature',
+          name: 'Flow temperature',
+          kind: 'sensor',
+          deviceClass: 'temperature',
+          unit: '\u00b0C',
+          stateClass: 'measurement',
+          valueTemplate: '{{ value_json.flowTemperature }}',
+        },
+        {
+          key: 'local_offset',
+          name: 'Local temperature offset',
+          kind: 'sensor',
+          unit: 'K',
+          stateClass: 'measurement',
+          valueTemplate: '{{ value_json.localTemperatureOffset }}',
+        },
+        {
+          key: 'energy_storage_low',
+          name: 'Energy storage low',
+          kind: 'binary_sensor',
+          deviceClass: 'battery',
+          valueTemplate:
+            "{{ 'None' if value_json.energyStorageLow is none else 'ON' if value_json.energyStorageLow else 'OFF' }}",
+        },
+        {
+          key: 'summer_mode',
+          name: 'Summer mode',
+          kind: 'switch',
+          valueTemplate: "{{ 'ON' if value_json.summerMode else 'OFF' }}",
+          commandTemplate: '{"summerMode":{{ "true" if value == "ON" else "false" }}}',
+        },
+      ],
       controls: [
         {
           field: 'mode',
@@ -305,10 +378,21 @@ export const a5Profile: EepProfile = {
           ...desired,
           ...state,
           requestedTemperatureSensor: desired.temperatureSensor,
+          requestedValvePosition: desired.mode === 'valvePosition' ? desired.setpoint : null,
           valvePosition: state?.valvePosition ?? null,
+          energyStorageLow: state?.energyStorageLow ?? null,
+          localTemperatureOffset: state?.localOffsetMode === 'relative' ? state.localOffset : null,
           currentTemperature: state?.temperatureSensor === 'ambient' ? state.temperature : null,
-          targetTemperature: desired.mode === 'temperature' ? desired.setpoint : null,
-          hvacMode: desired.standby || desired.setpoint === 0 ? 'off' : 'heat',
+          flowTemperature: state?.temperatureSensor === 'flow' ? state.temperature : null,
+          targetTemperature: desired.temperatureSetpoint,
+          hvacMode:
+            (context.desiredState === undefined && state === undefined) ||
+            desired.mode !== 'temperature' ||
+            desired.standby ||
+            desired.summerMode ||
+            desired.setpoint === 0
+              ? 'off'
+              : 'heat',
         },
       };
     },
@@ -319,6 +403,7 @@ export const a5Profile: EepProfile = {
           mode: 'temperature',
           setpoint: number(Number(value), 'setpoint', 40, 0.5),
           standby: false,
+          summerMode: false,
         };
       }
       if (field === 'mode' && value === 'off')
@@ -327,9 +412,9 @@ export const a5Profile: EepProfile = {
         const previous = currentSettings(context);
         return {
           mode: 'temperature',
-          setpoint:
-            previous.mode === 'temperature' && previous.setpoint > 0 ? previous.setpoint : 21,
+          setpoint: previous.temperatureSetpoint > 0 ? previous.temperatureSetpoint : 21,
           standby: false,
+          summerMode: false,
         };
       }
       throw new Error(`Invalid A5-20-06 entity command: ${field}`);

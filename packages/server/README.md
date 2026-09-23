@@ -176,10 +176,43 @@ Device details expose control settings and reference-run. HTTP commands use
 
 MQTT additionally accepts numeric temperatures at `.../temperature/set` and
 `heat`/`off` at `.../mode/set`. Off requests a closed valve, not hardware standby;
-heat restores temperature control (21 C if no active temperature setpoint exists).
-Home Assistant discovers a climate entity. JSON state at `.../state` includes all
-diagnostics, desired settings, `currentTemperature`, `targetTemperature`, and
-`valvePosition`. Flow readings are never published as current room temperature.
+heat restores the last temperature-control setpoint (21 C if none was saved).
+The persisted `temperatureSetpoint` retains that value while `setpoint` represents
+a valve percentage. Selecting heat or a temperature through MQTT clears summer
+mode and standby. The climate entity shows off during direct valve control: the
+internal temperature controller is inactive, even if the valve is open.
+
+Home Assistant discovers the following entities under the same device:
+
+| Entity                   | Meaning                                                                               |
+| ------------------------ | ------------------------------------------------------------------------------------- |
+| Climate                  | Internal temperature control, target 0..40 C in 0.5 C steps                           |
+| Valve target             | Direct valve control, 0..100%; a command selects valve mode and clears summer/standby |
+| Valve position           | Actual reported valve opening, independent of the requested target                    |
+| Ambient temperature      | Reported room-side temperature, also used by the climate entity                       |
+| Flow temperature         | Reported heating-flow temperature, never treated as room temperature                  |
+| Local temperature offset | Reported relative wheel adjustment in K, not an absolute target or writable setting   |
+| Energy storage low       | Binary low-energy indication, equivalent to the ETS low-battery object                |
+| Summer mode              | Switch for the desired summer-mode setting                                            |
+
+This separates the functions often exposed as ETS objects (valve percentage,
+actual temperature, low battery, relative setpoint, summer mode). ETS group
+addresses are not MQTT identifiers; no KNX routing is implemented here.
+Only the requested ambient or flow sensor is present in each telegram. The
+other temperature entity is unknown. In absolute local-offset mode the relative
+offset entity is also unknown; `localOffset` and `localOffsetMode` remain in the
+JSON attributes.
+
+JSON state at `.../state` includes diagnostics, desired settings,
+`currentTemperature`, `flowTemperature`, `targetTemperature`, `valvePosition`,
+and `requestedValvePosition`. The remembered temperature target is published
+even before the first status report and in valve mode so HA can offer temperature
+control. It is not an acknowledgement from the actuator. Measurements remain
+`null` until reported. After teach-in the MVA005 stays in mounting position;
+activate it locally with a brief end-stop turn and release, as described in the
+manual, to start its reference run and periodic reports. A queued MQTT reference
+run cannot wake an inactive actuator.
+
 Reserved readings and sensor faults produce `null` readings rather than misleading
 temperatures; `temperatureError` distinguishes the explicit sensor-error code.
 MQTT remains usable with Home Assistant disabled.

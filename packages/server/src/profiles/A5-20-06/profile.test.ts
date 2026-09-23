@@ -130,6 +130,7 @@ test('rejects invalid commands and malformed persisted settings', () => {
     { roomTemperature: 20.1 },
     { communicationInterval: 3 },
     { standby: 1 },
+    { temperatureSetpoint: 40.5 },
     { extra: true },
   ])
     expect(() => a5Profile.parseCommand(context, request)).toThrow();
@@ -174,4 +175,51 @@ test('projects MQTT state without confusing flow temperature with room temperatu
   expect(
     entity.parseCommand(context, 'command', '{"mode":"valvePosition","setpoint":45}'),
   ).toMatchObject({ setpoint: 45 });
+});
+
+test('keeps a temperature target before first reception and across valve control and off', () => {
+  const entity = a5Profile.entity!;
+  expect(entity.describe(context).publishInitialState).toBe(true);
+  expect(entity.projectState(context).attributes).toMatchObject({
+    currentTemperature: null,
+    valvePosition: null,
+    targetTemperature: 21,
+    hvacMode: 'off',
+  });
+  const temperature = a5Profile.parseCommand(context, { setpoint: 23.5 });
+  const temperatureContext = { ...context, desiredState: temperature.desiredState };
+  for (const setpoint of [0, 45]) {
+    const valve = a5Profile.parseCommand(temperatureContext, { mode: 'valvePosition', setpoint });
+    const valveContext = { ...context, desiredState: valve.desiredState };
+    expect(entity.projectState(valveContext).attributes).toMatchObject({
+      mode: 'valvePosition',
+      setpoint,
+      targetTemperature: 23.5,
+      hvacMode: 'off',
+      currentTemperature: null,
+    });
+    expect(entity.parseCommand(valveContext, 'mode', 'heat')).toMatchObject({
+      mode: 'temperature',
+      setpoint: 23.5,
+      standby: false,
+      summerMode: false,
+    });
+    expect(
+      new Esp3Parser().push(a5Profile.encodeCommand(valveContext, valve))[0].data.slice(1, 5),
+    ).toEqual([setpoint, 255, 0, 8]);
+  }
+  const { temperatureSetpoint: _previousTarget, ...legacy } = temperature.desiredState as Record<
+    string,
+    unknown
+  >;
+  expect(a5Profile.validateState(legacy, 'desiredState', context.capabilities)).toMatchObject({
+    temperatureSetpoint: 23.5,
+  });
+  expect(
+    a5Profile.validateState(
+      { ...legacy, mode: 'valvePosition', setpoint: 70 },
+      'desiredState',
+      context.capabilities,
+    ),
+  ).toMatchObject({ mode: 'valvePosition', setpoint: 70, temperatureSetpoint: 21 });
 });

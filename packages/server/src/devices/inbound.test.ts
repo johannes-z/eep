@@ -45,10 +45,25 @@ test('queues actuator commands, replies on wake, persists settings, and does not
     expect(writes[1][3]).toBe(4);
     await replyToRadioPacket(socket, registry, { ...packet, payload: [0x80, 0x30, 0x49, 0x80] });
     expect(writes).toHaveLength(2);
+    await sendDeviceCommand(socket, registry, registry.findBySourceId(device.sourceId)!, {
+      mode: 'valvePosition',
+      setpoint: 0,
+    });
     await registry.close();
     registry = await DeviceRegistry.load(filePath);
     expect(registry.findBySourceId(device.sourceId)).toMatchObject({
-      desiredState: { setpoint: 24, referenceRun: false },
+      desiredState: { setpoint: 0, temperatureSetpoint: 24, referenceRun: false },
+    });
+    const restored = registry.findBySourceId(device.sourceId)!;
+    await sendDeviceCommand(
+      socket,
+      registry,
+      restored,
+      a5Profile.entity!.parseCommand(restored, 'mode', 'heat'),
+    );
+    expect(writes).toHaveLength(2);
+    expect(registry.findBySourceId(device.sourceId)).toMatchObject({
+      desiredState: { mode: 'temperature', setpoint: 24, temperatureSetpoint: 24 },
     });
   } finally {
     await registry.close();

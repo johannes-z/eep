@@ -6,9 +6,23 @@ All notable changes to this project will be documented in this file.
 
 ### Features
 
+- Enhance A5-20-06 profile with valve setpoint management and improve command handling (6eec586)
+
+- Add A5-04-01 temperature and humidity sensor profile with decoding and testing (163049e)
+
+## v1.7.0
+
+
+### Features
+
 - Enhance A5-20-06 profile with temperature setpoint management and improve MQTT entity discovery (ef00315)
 
 - Enhance command delivery handling and improve device command management (5d96d1f)
+
+
+### Miscellaneous
+
+- Release v1.7.0 (a813558)
 
 ## v1.6.0
 

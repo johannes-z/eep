@@ -59,6 +59,17 @@ test.each([false, true])(
         teachIn: { manufacturerId: 0x49, direction: 'bidirectional', responseExpected: true },
       });
       expect(manager.isActive()).toBe(!targeted);
+      expect(await registry.remove(targeted ? 0xffe76686 : 0xffe76685)).toBe(true);
+      expect(registry.listIgnoredDevices()).toEqual([]);
+      manager.stop();
+      manager.start();
+      if (targeted) await manager.transmit(0xffe76686);
+      expect(manager.observe({ ...query, payload: [0x00, 0xaa, 0x39, 0x68] })).toBeUndefined();
+      expect(manager.listCandidates()).toEqual([]);
+      expect(manager.observe(query)).toMatchObject({ eep: 'A5-20-06', protocol: '4bs' });
+      await manager.accept(query.senderId);
+      expect(replies).toHaveLength(2);
+      expect(replies[1]).toEqual(replies[0]);
       await registry.close();
       registry = await DeviceRegistry.load(filePath);
       expect(registry.findByTargetId(query.senderId)?.profileId).toBe('A5-20-06');
@@ -69,6 +80,50 @@ test.each([false, true])(
     }
   },
 );
+
+test('requires explicit EEP teach-in for passive A5 sensor discovery', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-a5-sensor-'));
+  const registry = await DeviceRegistry.load(join(directory, 'configuration.yaml'));
+  const responses: string[] = [];
+  const manager = new TeachInManager(registry, 0xffe76685, async (_candidate, response) => {
+    responses.push(response);
+  });
+  const packet = { RORG: 0xa5, senderId: 0x051a8f95, payload: [0x10, 0x08, 0x46, 0x80] };
+  try {
+    for (const payload of [
+      [0x00, 0x85, 0x91, 0x0a],
+      [0x00, 0xaa, 0x39, 0x68],
+      [0x00, 0x00, 0x00, 0x00],
+      [0x10, 0x08, 0x46, 0xf0],
+      [0x80, 0x30, 0x49, 0x80],
+    ]) {
+      expect(manager.observe({ ...packet, payload })).toBeUndefined();
+    }
+    expect(manager.listCandidates()).toEqual([]);
+    expect(manager.observe(packet)).toMatchObject({
+      targetId: packet.senderId,
+      receiveOnly: true,
+      eep: 'A5-04-01',
+      profileOptions: ['A5-04-01'],
+    });
+    await manager.accept(packet.senderId);
+    expect(registry.findByTargetId(packet.senderId)).toMatchObject({
+      sourceId: packet.senderId,
+      transmitId: null,
+      profileId: 'A5-04-01',
+    });
+    expect(responses).toEqual([]);
+    await applyRadioPacket({ ...packet, payload: [0x00, 125, 125, 0x0a] }, registry);
+    expect(registry.findByTargetId(packet.senderId)?.reportedState).toEqual({
+      temperature: 20,
+      humidity: 50,
+    });
+  } finally {
+    manager.stop();
+    await registry.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test('does not persist a 4BS device when the handshake write fails', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'eep-teachin-mva005-failure-'));

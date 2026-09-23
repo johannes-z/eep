@@ -178,6 +178,7 @@ export class TeachInManager {
       return undefined;
     }
     if (this.registry.isDiscoveryIgnored(targetId) || this.ignoring.has(targetId)) return undefined;
+    const fourBs = packet.RORG === 0xa5 ? parse4bsTeachIn(packet.payload) : undefined;
     const is1bsTeachIn =
       packet.RORG === 0xd5 &&
       packet.payload.length === 1 &&
@@ -190,11 +191,13 @@ export class TeachInManager {
       .filter(
         (profile) =>
           profile.receiveOnly &&
-          (is1bsTeachIn ||
-            profile.decodeIngress(
-              { sourceId: targetId, targetId, capabilities: profile.defaultCapabilities() },
-              packet,
-            ).kind === 'reported'),
+          (packet.RORG === 0xa5
+            ? fourBs?.command === 'query' && fourBs.eep === profile.metadata.id
+            : is1bsTeachIn ||
+              profile.decodeIngress(
+                { sourceId: targetId, targetId, capabilities: profile.defaultCapabilities() },
+                packet,
+              ).kind === 'reported'),
       );
     if (passiveProfiles.length) {
       if (this.registry.findByTargetId(targetId) || this.accepting.has(targetId)) return undefined;
@@ -204,7 +207,7 @@ export class TeachInManager {
         sourceId: targetId,
         targetId,
         receiveOnly: true,
-        eep: undefined,
+        eep: fourBs?.eep,
         profileOptions: passiveProfiles.map((profile) => profile.metadata.id),
         direction: 'unidirectional',
         responseExpected: false,
@@ -234,7 +237,6 @@ export class TeachInManager {
           )
         : [];
     const isRpsTeachIn = rpsProfiles.length > 0;
-    const fourBs = packet.RORG === 0xa5 ? parse4bsTeachIn(packet.payload) : undefined;
     if (
       packet.RORG === 0xa5 &&
       (!fourBs?.eep || fourBs.command !== 'query' || !this.profiles.get(fourBs.eep)?.fourBsTeachIn)

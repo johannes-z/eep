@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 
 
+### Features
+
+- Enhance A5-20-06 profile with temperature setpoint management and improve MQTT entity discovery (ef00315)
+
+- Enhance command delivery handling and improve device command management (5d96d1f)
+
+## v1.6.0
+
+
 ### Bug Fixes
 
 - Correct targetId usage in PacketRow and ensure proper formatting in PacketListener (9cd2809)
@@ -16,6 +25,11 @@ All notable changes to this project will be documented in this file.
 - Refactor packet listener to use SQLite for persistent storage and improve packet management (10e258a)
 
 - Update A5-20-06 teach-in instructions and add revision-specific details in documentation (ab2018b)
+
+
+### Miscellaneous
+
+- Release v1.6.0 (88435ab)
 
 ## v1.5.0
 

@@ -5,13 +5,7 @@ import type { Device } from '../ui/types';
 import { parseEnOceanId } from '../util';
 import { formatTargetId } from './deviceUtils';
 
-export function PacketListener({
-  listen,
-  devices,
-}: {
-  listen: ListenResponse;
-  devices: Device[];
-}) {
+export function PacketListener({ listen, devices }: { listen: ListenResponse; devices: Device[] }) {
   const [direction, setDirection] = useState<'all' | 'rx' | 'tx'>('all');
   const [query, setQuery] = useState('');
   const packets = [...listen.packets]
@@ -107,9 +101,7 @@ export function PacketListener({
               strokeWidth={1.25}
               aria-hidden="true"
             />
-            <h3>
-              {listen.packets.length ? 'No matching packets' : 'No packets captured'}
-            </h3>
+            <h3>{listen.packets.length ? 'No matching packets' : 'No packets captured'}</h3>
           </div>
         )}
       </section>
@@ -120,7 +112,7 @@ export function PacketListener({
 function PacketRow({ packet, devices }: { packet: ListenPacket; devices: Device[] }) {
   const radio = packet.radio;
   const senderId = radio ? parseEnOceanId(radio.senderId) : undefined;
-  const device = radio ? devices.find((candidate) => candidate.sourceId === senderId) : undefined;
+  const device = radio ? devices.find((candidate) => candidate.targetId === senderId) : undefined;
   const title = device?.name ?? radio?.senderId ?? `ESP3 type ${packet.packetType}`;
   return (
     <details className="packet-row">
@@ -131,7 +123,7 @@ function PacketRow({ packet, devices }: { packet: ListenPacket; devices: Device[
           <strong>{title}</strong>
           {device && (
             <span>
-              <code>{formatTargetId(device.sourceId)}</code> / {device.profileId}
+              <code>{formatTargetId(device.targetId)}</code> / {device.profileId}
             </span>
           )}
         </div>

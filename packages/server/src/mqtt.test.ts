@@ -112,7 +112,15 @@ test.each([true, false])(
         JSON.parse(
           client.published.filter((message) => message.topic === `${base}/state`).at(-1)!.payload,
         ),
-      ).toMatchObject({ targetTemperature: 21, currentTemperature: null, valvePosition: null });
+      ).toMatchObject({
+        targetTemperature: 21,
+        requestedValvePosition: null,
+        currentTemperature: null,
+        flowTemperature: null,
+        localTemperatureOffset: null,
+        energyStorageLow: null,
+        valvePosition: null,
+      });
       const discovery = client.published
         .filter((message) => message.topic === 'homeassistant/climate/ffe76685/config')
         .at(-1)!;
@@ -199,7 +207,14 @@ test.each([true, false])(
         [
           'command',
           '{"mode":"valvePosition","setpoint":70,"standby":false,"summerMode":false}',
-          { mode: 'valvePosition', setpoint: 70, summerMode: false },
+          { mode: 'valvePosition', setpoint: 70, summerMode: false, valveSetpoint: 70 },
+        ],
+        ['mode/set', 'heat', { mode: 'temperature', setpoint: 23.5, valveSetpoint: 70 }],
+        ['mode/set', 'off', { mode: 'valvePosition', setpoint: 0, valveSetpoint: 0 }],
+        [
+          'command',
+          '{"mode":"valvePosition","setpoint":45,"standby":false,"summerMode":false}',
+          { mode: 'valvePosition', setpoint: 45, valveSetpoint: 45 },
         ],
       ] as const) {
         const updated = new Promise<void>((resolve) => {
@@ -212,6 +227,19 @@ test.each([true, false])(
         await updated;
         expect(registry.findBySourceId(0xffe76685)?.desiredState).toMatchObject(expected);
         await bridge.publishAll();
+        if ('valveSetpoint' in expected) {
+          expect(
+            JSON.parse(
+              client.published.filter((message) => message.topic === `${base}/state`).at(-1)!
+                .payload,
+            ),
+          ).toMatchObject({
+            requestedValvePosition: expected.valveSetpoint,
+            hvacMode: expected.mode === 'temperature' ? 'heat' : 'off',
+            targetTemperature: 23.5,
+            valvePosition: 35,
+          });
+        }
       }
     } finally {
       await bridge.stop();

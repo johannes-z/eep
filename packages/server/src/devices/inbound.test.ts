@@ -32,6 +32,7 @@ test('queues actuator commands, replies on wake, persists settings, and does not
     });
     await sendDeviceCommand(socket, registry, device, { setpoint: 24, referenceRun: true });
     expect(writes).toEqual([]);
+    expect(registry.findBySourceId(device.sourceId)?.reportedState).toBeUndefined();
     await replyToRadioPacket(socket, registry, { ...packet, destinationId: 0xffe76685 });
     expect(writes).toEqual([]);
     await replyToRadioPacket(socket, registry, packet);
@@ -65,6 +66,27 @@ test('queues actuator commands, replies on wake, persists settings, and does not
     expect(registry.findBySourceId(device.sourceId)).toMatchObject({
       desiredState: { mode: 'temperature', setpoint: 24, temperatureSetpoint: 24 },
     });
+    await sendDeviceCommand(socket, registry, registry.findBySourceId(device.sourceId)!, {
+      mode: 'valvePosition',
+      setpoint: 65,
+    });
+    const manual = registry.findBySourceId(device.sourceId)!;
+    await sendDeviceCommand(
+      socket,
+      registry,
+      manual,
+      a5Profile.entity!.parseCommand(manual, 'mode', 'heat'),
+    );
+    await registry.close();
+    registry = await DeviceRegistry.load(filePath);
+    expect(registry.findBySourceId(device.sourceId)).toMatchObject({
+      desiredState: { mode: 'temperature', setpoint: 24, valveSetpoint: 65 },
+      reportedState: { valvePosition: 22, temperature: 20 },
+    });
+    expect(
+      a5Profile.entity!.projectState(registry.findBySourceId(device.sourceId)!).attributes,
+    ).toMatchObject({ requestedValvePosition: 65, targetTemperature: 24, valvePosition: 22 });
+    expect(writes).toHaveLength(2);
   } finally {
     await registry.close();
     await rm(directory, { recursive: true, force: true });

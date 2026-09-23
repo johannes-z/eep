@@ -42,6 +42,7 @@ const defaults = {
   mode: 'temperature' as 'temperature' | 'valvePosition',
   setpoint: 21,
   temperatureSetpoint: 21,
+  valveSetpoint: null as number | null,
   roomTemperature: null as number | null,
   referenceRun: false,
   communicationInterval: 0,
@@ -77,10 +78,15 @@ function settings(value: unknown) {
     40,
     0.5,
   );
+  const valveSetpoint =
+    state.valveSetpoint === undefined || state.valveSetpoint === null
+      ? null
+      : number(state.valveSetpoint, 'valveSetpoint', 100);
   return {
     mode,
     setpoint,
     temperatureSetpoint: mode === 'temperature' ? setpoint : temperatureSetpoint,
+    valveSetpoint: mode === 'valvePosition' ? setpoint : valveSetpoint,
     roomTemperature,
     referenceRun: boolean(state.referenceRun, 'referenceRun'),
     communicationInterval,
@@ -173,7 +179,12 @@ function currentSettings(context: ProfileDeviceContext) {
       return { ...defaults, setpoint: state.localOffset, temperatureSetpoint: state.localOffset };
     }
     if (state.localOffsetMode === 'relative' && state.valvePosition !== null) {
-      return { ...defaults, mode: 'valvePosition' as const, setpoint: state.valvePosition };
+      return {
+        ...defaults,
+        mode: 'valvePosition' as const,
+        setpoint: state.valvePosition,
+        valveSetpoint: state.valvePosition,
+      };
     }
   }
   return { ...defaults };
@@ -378,7 +389,7 @@ export const a5Profile: EepProfile = {
           ...desired,
           ...state,
           requestedTemperatureSensor: desired.temperatureSensor,
-          requestedValvePosition: desired.mode === 'valvePosition' ? desired.setpoint : null,
+          requestedValvePosition: desired.valveSetpoint,
           valvePosition: state?.valvePosition ?? null,
           energyStorageLow: state?.energyStorageLow ?? null,
           localTemperatureOffset: state?.localOffsetMode === 'relative' ? state.localOffset : null,

@@ -131,6 +131,9 @@ test('rejects invalid commands and malformed persisted settings', () => {
     { communicationInterval: 3 },
     { standby: 1 },
     { temperatureSetpoint: 40.5 },
+    { valveSetpoint: -1 },
+    { valveSetpoint: 100.5 },
+    { valveSetpoint: 20.5 },
     { extra: true },
   ])
     expect(() => a5Profile.parseCommand(context, request)).toThrow();
@@ -221,5 +224,62 @@ test('keeps a temperature target before first reception and across valve control
       'desiredState',
       context.capabilities,
     ),
-  ).toMatchObject({ mode: 'valvePosition', setpoint: 70, temperatureSetpoint: 21 });
+  ).toMatchObject({
+    mode: 'valvePosition',
+    setpoint: 70,
+    temperatureSetpoint: 21,
+    valveSetpoint: 70,
+  });
+});
+
+test('retains the valve target in heat mode without transmitting it as a temperature', () => {
+  const entity = a5Profile.entity!;
+  expect(entity.projectState(context).attributes).toMatchObject({ requestedValvePosition: null });
+  const valve = a5Profile.parseCommand(context, { mode: 'valvePosition', setpoint: 65 });
+  const valveContext = { ...context, desiredState: valve.desiredState };
+  const heat = a5Profile.parseCommand(
+    valveContext,
+    entity.parseCommand(valveContext, 'mode', 'heat'),
+  );
+  const heatContext = { ...context, desiredState: heat.desiredState };
+  expect(entity.projectState(heatContext).attributes).toMatchObject({
+    hvacMode: 'heat',
+    targetTemperature: 21,
+    requestedValvePosition: 65,
+    valvePosition: null,
+    currentTemperature: null,
+    flowTemperature: null,
+    energyStorageLow: null,
+    localTemperatureOffset: null,
+  });
+  expect(
+    new Esp3Parser().push(a5Profile.encodeCommand(heatContext, heat))[0].data.slice(1, 5),
+  ).toEqual([42, 255, 4, 8]);
+  const off = a5Profile.parseCommand(heatContext, entity.parseCommand(heatContext, 'mode', 'off'));
+  const offContext = { ...context, desiredState: off.desiredState };
+  expect(entity.projectState(offContext).attributes).toMatchObject({
+    hvacMode: 'off',
+    requestedValvePosition: 0,
+  });
+  const manual = a5Profile.parseCommand(
+    offContext,
+    entity.parseCommand(
+      offContext,
+      'command',
+      '{"mode":"valvePosition","setpoint":45,"standby":false,"summerMode":false}',
+    ),
+  );
+  expect(
+    entity.projectState({ ...context, desiredState: manual.desiredState }).attributes,
+  ).toMatchObject({ hvacMode: 'off', mode: 'valvePosition', requestedValvePosition: 45 });
+  expect(
+    new Esp3Parser().push(a5Profile.encodeCommand(context, manual))[0].data.slice(1, 5),
+  ).toEqual([45, 255, 0, 8]);
+  const { valveSetpoint: _savedValve, ...legacyHeat } = heat.desiredState as Record<
+    string,
+    unknown
+  >;
+  expect(a5Profile.validateState(legacyHeat, 'desiredState', context.capabilities)).toMatchObject({
+    valveSetpoint: null,
+  });
 });

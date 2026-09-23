@@ -188,6 +188,16 @@ a valve percentage. Selecting heat or a temperature through MQTT clears summer
 mode and standby. The climate entity shows off during direct valve control: the
 internal temperature controller is inactive, even if the valve is open.
 
+The persisted `valveSetpoint` likewise retains the last direct valve target when
+switching to heat. The `Valve target` number stays visible in heat mode, but is
+inactive until a new valve command selects direct control. Before any valve
+target is known, it remains unknown rather than assuming a measured position.
+An explicit climate off command sets the valve target to 0%; a subsequent
+`Valve target` command overrides that request and can open the valve even while
+the climate entity still displays off. Climate off is not a global lockout.
+Only the latest selected control mode and its setpoint are transmitted on wake;
+the remembered target for the other mode is not transmitted.
+
 Home Assistant discovers the following entities under the same device:
 
 | Entity                   | Meaning                                                                               |
@@ -218,6 +228,17 @@ control. It is not an acknowledgement from the actuator. Measurements remain
 activate it locally with a brief end-stop turn and release, as described in the
 manual, to start its reference run and periodic reports. A queued MQTT reference
 run cannot wake an inactive actuator.
+
+If all reported sensors remain unknown and no normal A5 telegram arrives after
+teach-in, first verify local activation, not the HA target values. On a mounted
+MVA005 REV1.5, turn the wheel briefly to either end stop and immediately release
+(do not hold for the five-second teach-in gesture). Section 6.1 of the
+[REV1.5 manual](https://www.manualslib.de/manual/1106929/Micropelt-Mva005-Rev1-5-Enocean.html?page=11#manual)
+describes a reference run, one green flash for success or three red flashes for
+failure, and two-minute radio intervals during the first 30 minutes. An
+unmounted actuator returns to mounting position. If activation fails or RX is
+still absent, inspect the current installation's logs; changing desired settings
+cannot create sensor readings or confirm physical execution.
 
 Reserved readings and sensor faults produce `null` readings rather than misleading
 temperatures; `temperatureError` distinguishes the explicit sensor-error code.
